@@ -84,7 +84,7 @@ La documentation est également publiée en Markdown (`/docs/<page>.md`), ce qui
 | --- | --- | --- |
 | `api.getBlock` | `getBlock(x, y, z)` ou `getBlock([x, y, z]) → BlockName` | Lecture de vérification après écriture, réchauffement de chunk, détection de modification externe. |
 | `api.setBlock` | `setBlock(x, y, z, blockName)` ou `setBlock([x,y,z], blockName)` | Écriture unique du constructeur. La doc précise qu'elle est optimisée pour de grandes quantités de blocs écrits dans des boucles imbriquées. |
-| `api.setBlockRect` | `setBlockRect(pos1, pos2, blockName)` | Remplissage du sol et du plafond d'un rectangle logique en un appel. |
+| `api.setBlockRect` | **`setBlockRect(pos1, pos2, blockName)` — exactement 3 arguments** (deux triplets `[x,y,z]` et un nom) | **Limité à 360 blocs par appel** (constat en jeu). **Non utilisé pour la structure** : le sol, les murs et le plafond sont écrits **bloc par bloc**, sinon la texture par bloc (§13.2) est impossible et un rectangle trop grand est refusé. Réservé aux remplissages massifs et uniformes, découpés alors en morceaux de 360 blocs au plus. |
 | `api.setBlockWalls` | `setBlockWalls(pos1, pos2, blockName, hasFloor, hasCeiling)` | **Non utilisé** pour les murs de salles : crée une coque pleine, incompatible avec l'exigence « jamais de mur plein puis percé ». Réservé aux volumes aveugles (roche d'emprise), après découpe des passages. |
 | `api.getBlockSolidity` | `getBlockSolidity(x, y, z) → boolean` | **Non utilisé pour valider** : la doc dit « *Will be true if the block is unloaded* », donc un chunk non chargé est indiscernable d'un bloc plein. |
 | `api.isBlockInLoadedChunk` | `isBlockInLoadedChunk(x, y, z) → boolean` | Garde avant toute écriture : le constructeur reporte la salle tant que les chunks du volume ne sont pas chargés. |
@@ -110,7 +110,7 @@ La documentation est également publiée en Markdown (`/docs/<page>.md`), ce qui
 | callback `onWorldChangeBlock` | `(x, y, z, fromBlock, toBlock, initiatorDbId, extraInfo, dropsPrevented)` | Filet de sécurité pour les changements de bloc non initiés par un joueur (`extraInfo.cause`). `initiatorDbId` vaut `null` pour du code de jeu. |
 | callback `onPlayerJoin` / `onPlayerLeave` | voir doc | Chargement/déchargement des données de joueur, allocation d'origine, réapplication des protections. |
 | callback `onPlayerRequestChunk` | `(playerId, chunkX, chunkY, chunkZ, chunkId)` | Connaissance des chunks demandés par un joueur. |
-| `api.setCantChangeBlockRect` | `(playerId, pos1, pos2)` | Protection optionnelle de la coque du donjon. La doc avertit que `setCantChangeBlock` sur des milliers de blocs provoque du lag et conseille les variantes `Rect`/`Type`. |
+| `api.setCantChangeBlockRect` | `(playerId, pos1, pos2)` | Protection de la coque du donjon. La doc avertit que `setCantChangeBlock` sur des milliers de blocs provoque du lag et conseille les variantes `Rect`/`Type`. **À vérifier en jeu** : la signature réellement acceptée (le premier argument `playerId` est documenté, mais n'a pas encore été exercé). |
 | `api.setCallbackValueFallback` | `(cbName, value)` | Valeur de repli par défaut si un callback lève une erreur. |
 | `api.log` | voir « Getting started » | Journalisation d'erreur, jamais dans une boucle chaude. |
 | `@plugins/helpers` | `setTimeout`, `setInterval`, `clearTimeout`, `clearInterval`, `forceLoadChunk`, `randomInt`, `shuffleArray`, `getRandomItem` | Non utilisés : le projet a déjà son scheduler piloté par `tick` (`src/utils/scheduler.js`), plus testable hors Bloxd et sans dépendance. `forceLoadChunk` est noté comme piste si le chargement de chunk devient un goulot. |
@@ -766,6 +766,8 @@ Si une précondition manque, la salle est reportée, pas abandonnée.
 | 4 | plafond, cellules de passage sautées | ferme le volume, ne bloque rien |
 | 5 | **pose du pad** de difficulté, si la salle en porte un | après la géométrie, sur une cellule de sol connue et jamais dans un passage (§15.2) |
 | 6 | vérification : relecture déterministe, pads et passages toujours, le reste un bloc sur huit | ne jamais faire confiance à une écriture |
+
+**Texture, décidée en Phase 4** : chaque bloc structurel est tiré **un par un** dans la palette `"Stone"`, `"Messy Stone"`, `"Smooth Stone"`, `"Stone Bricks"`, `"Cracked Stone Bricks"`, `"Mossy Stone Bricks"`. Le sol reste dans la famille des briques (`Stone Bricks`, `Cracked Stone Bricks`) et le plafond en `Smooth Stone`, pour que la variété soit sur les murs, là où elle se voit. Le tirage est un **hachage de la graine de la salle et de la cellule**, jamais un générateur aléatoire : une salle interrompue puis reprise, ou reconstruite depuis sa graine, doit avoir exactement les mêmes pierres. C'est aussi la raison pour laquelle `setBlockRect` ne peut pas servir à la structure : un rectangle uniforme efface la texture, et il est plafonné à 360 blocs par appel.
 
 **Livré ainsi en Phase 4, avec une différence assumée sur la proposition initiale** : la phase 1 ne vide plus le volume du sol au plafond. Une cellule écrite deux fois — effacée par le dégagement puis reposée par le sol — rend le monde dépendant du découpage en lots, et c'est exactement le bug qui a été observé. Le dégagement est limité aux niveaux au-dessus du plafond, et un test vérifie qu'aucune cellule n'est écrite deux fois (`tests/engine/builder.test.js`).
 

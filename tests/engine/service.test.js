@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { DUNGEON_CONFIG, DIFFICULTIES, findDifficulty } from "../../src/dungeon/engine/config.js";
+import { BLOCKS } from "../../src/dungeon/builder.js";
 import { step as stepScheduler } from "../../src/utils/scheduler.js";
 import {
   LOBBY_POSITION,
@@ -47,11 +48,16 @@ function fakeApi() {
       const position = positions.get(playerId);
       return position || null;
     },
+    // Recorded with its arity: a protection called with the wrong number of
+    // arguments protects nothing and throws nothing, which is the worst case.
     setCantChangeBlockRect(...args) { calls.setCantChangeBlockRect.push(args); },
     sendMessage(playerId, message) { calls.sendMessage.push({ playerId, message }); },
     log() {},
   };
 }
+
+/** A cell under the player counts as floor if it carries any floor block. */
+const FLOOR_BLOCKS = BLOCKS.FLOOR_POOL;
 
 /** Steps the shared scheduler until `done()` holds, or fails the test. */
 function runUntil(done, label, limit = 4000) {
@@ -104,9 +110,11 @@ test("a player enters: the floor exists before anything is announced", () => {
 
   // The floor under the landing cell must exist at the moment `onReady` fires.
   const cell = ready.spawn.cell;
-  assert.equal(api.cells.get(`${cell.x},${DUNGEON_CONFIG.floorY},${cell.z}`), "Stone Bricks",
+  assert.ok(FLOOR_BLOCKS.includes(api.cells.get(`${cell.x},${DUNGEON_CONFIG.floorY},${cell.z}`)),
     "the player was told the dungeon was ready while standing over a hole");
   assert.equal(api.calls.setCantChangeBlockRect.length, 1, "the entrance was never protected");
+  assert.equal(api.calls.setCantChangeBlockRect[0].length, 2,
+    "the protection must take two positions, like setBlockRect");
 });
 
 test("two players of the same difficulty share one dungeon", () => {

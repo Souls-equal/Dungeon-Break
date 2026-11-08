@@ -12,6 +12,11 @@ const worldCode = fs.readFileSync(new URL("../world-code/worldCode.js", import.m
  */
 const FLOOR_Y = -1000;
 const LOBBY_POSITION = [10, 21, 10];
+/**
+ * The stones the builder is allowed to use. The floor is textured, so "the floor
+ * is solid" means "a floor block is there", not "one particular name is there".
+ */
+const FLOOR_FAMILY = new Set(["Stone Bricks", "Cracked Stone Bricks"]);
 
 /**
  * Runs the bundled world code against a fake Bloxd server.
@@ -57,7 +62,11 @@ function createWorld(onlinePlayerIds, options = {}) {
         }
         blocks.push({ x, y, z, blockName });
       },
-      setCantChangeBlockRect: () => {},
+      // Two positions, like setBlockRect. A fake that accepts anything would let
+      // a mis-shaped call pass every test in this file.
+      setCantChangeBlockRect: (...args) => {
+        if (args.length !== 2) throw new Error(`setCantChangeBlockRect got ${args.length} arguments`);
+      },
       setPosition: (playerId, position) => {
         positions.push({ playerId, position: Array.from(position) });
         playerLocations[playerId] = Array.from(position);
@@ -221,8 +230,8 @@ test("the player is placed on a floor cell, and nothing is announced before it e
   const landingKey = `${spawnX - 0.5},${FLOOR_Y},${spawnZ - 0.5}`;
   assert.ok(blocks.some(({ x, y, z }) => `${x},${y},${z}` === landingKey),
     "the landing cell is never floored, so the player stands over the void");
-  assert.ok(blocks.slice(0, 25).every(({ blockName }) => blockName === "Stone Bricks"),
-    "the landing pad is not made of the documented floor block");
+  assert.ok(blocks.slice(0, 25).every(({ blockName }) => FLOOR_FAMILY.has(blockName)),
+    "the landing pad is not made of floor blocks");
 
   // No message may claim readiness before the floor exists.
   const readyMessages = messages.filter(({ message }) => /ready/i.test(message || ""));
@@ -268,6 +277,15 @@ test("no block is written into a chunk the player has not loaded", () => {
   }
 
   assert.ok(blocks.length > 0, "nothing was built at all, so the test proves nothing");
+  // Every structural block must come from the stone family: a texture drawn from
+  // outside the list is a block nobody signed off on.
+  const STONE = new Set([
+    "Stone", "Messy Stone", "Smooth Stone", "Stone Bricks", "Cracked Stone Bricks", "Mossy Stone Bricks",
+  ]);
+  const offPalette = blocks.filter(({ blockName }) => blockName !== "Air" && blockName !== "Gold Block"
+    && !STONE.has(blockName));
+  assert.deepEqual(offPalette.slice(0, 3), [],
+    "the builder wrote a block that is not part of the stone palette");
   assert.deepEqual(
     violations.map(({ x, z, playerZ }) => `${x},${z} at player z=${playerZ}`),
     [],
@@ -299,7 +317,7 @@ test("the world around the player stays walkable as the dungeon grows", () => {
     for (let dz = -2; dz <= 2; dz += 1) {
       const x = spawnX - 0.5 + dx;
       const z = spawnZ - 0.5 + dz;
-      assert.equal(finalName(x, floorY, z), "Stone Bricks", `the floor at ${x},${z} is not solid`);
+      assert.ok(FLOOR_FAMILY.has(finalName(x, floorY, z)), `the floor at ${x},${z} is not solid`);
     }
   }
 });

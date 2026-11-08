@@ -12,6 +12,7 @@ import {
   doorwaySet,
   padCell,
   roomBlocks,
+  STONE_PALETTE,
 } from "../../src/dungeon/builder.js";
 
 function grow(seed, targetRooms) {
@@ -205,7 +206,11 @@ test("the audit finds a hole and names it, without rebuilding the room", () => {
   const wrong = auditRoom(room, worldOf(room), world, { sample: 1 });
   assert.ok(wrong.length > 0, "the audit missed a broken floor");
   assert.equal(wrong[0].x, floor.x);
-  assert.equal(wrong[0].expected, BLOCKS.FLOOR);
+  // The floor is textured, so the expectation is "a floor block", not one
+  // hard-coded name: asserting a single name would make the audit pass only for
+  // the first cell of the palette.
+  assert.ok(BLOCKS.FLOOR_POOL.includes(wrong[0].expected),
+    `the audit expected ${wrong[0].expected}, which is not a floor block`);
 });
 
 test("the same room always produces the same blocks", () => {
@@ -252,4 +257,60 @@ test("a joint is floored exactly once, by neither room twice", () => {
   for (const [cell, owners] of floorOwners) {
     assert.equal(owners.length, 1, `the floor cell ${cell} is claimed by ${owners.join(" and ")}`);
   }
+});
+
+// ------------------------------------------------------------- the texture --
+
+test("every structural cell is drawn from the stone palette, one block at a time", () => {
+  const manager = grow(12345, 12);
+  for (const room of manager.allRooms()) {
+    for (const block of roomBlocks(room, worldOf(room))) {
+      if (block.phase === BUILD_PHASE.CLEAR || block.phase === BUILD_PHASE.PAD) continue;
+      assert.ok(STONE_PALETTE.includes(block.name),
+        `${room.id}: ${block.name} at ${block.x},${block.y},${block.z} is not a stone block`);
+    }
+  }
+});
+
+test("a wall is textured, not flat: a palette of five names must actually be used", () => {
+  const manager = grow(4242, 6);
+  const room = manager.allRooms()[1];
+  const walls = roomBlocks(room, worldOf(room)).filter((block) => block.phase === BUILD_PHASE.WALL);
+  const names = new Set(walls.map((block) => block.name));
+  assert.ok(names.size >= 3,
+    `the walls only use ${names.size} block(s) (${[...names].join(", ")}), so the texture is flat`);
+});
+
+test("the texture never depends on the order of the writes", () => {
+  // The block of a cell is a property of the room, not of the build. Two runs,
+  // two batch sizes, two entry points: the same cell must get the same stone.
+  const manager = grow(777, 8);
+  const room = manager.allRooms()[2];
+  const planned = roomBlocks(room, worldOf(room));
+  const collected = new Map();
+  const writer = createRoomWriter(
+    { setBlock: (x, y, z, name) => collected.set(`${x},${y},${z}`, name) },
+    { batchSize: 13 },
+  );
+  let cursor = null;
+  for (let guard = 0; guard < 500; guard += 1) {
+    const step = writer.writeRoom(room, worldOf(room), cursor);
+    cursor = step.cursor;
+    if (step.done) break;
+  }
+  for (const block of planned) {
+    assert.equal(collected.get(`${block.x},${block.y},${block.z}`), block.name,
+      `the cell ${block.x},${block.y},${block.z} got a different stone when written in batches`);
+  }
+});
+
+test("two rooms do not get the same texture", () => {
+  // A hash of the room seed is what makes the walls read as different stone in
+  // different rooms; a single shared pattern would look like wallpaper.
+  const manager = grow(31415, 10);
+  const signature = (room) => roomBlocks(room, worldOf(room))
+    .filter((block) => block.phase === BUILD_PHASE.WALL)
+    .map((block) => block.name[0]).join("");
+  const signatures = manager.allRooms().map(signature);
+  assert.ok(new Set(signatures).size > 1, "every room has exactly the same wall texture");
 });

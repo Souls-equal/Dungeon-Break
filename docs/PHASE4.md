@@ -18,10 +18,17 @@ Cette séparation n'est pas décorative : `builder.js` est testé dans Node cont
 | Phase | Écrit | Raison |
 | --- | --- | --- |
 | 1 | `Air` **au-dessus du plafond** (niveaux `wallHeight+2` à `+4`) | idempotence d'une reconstruction |
-| 2 | sol, toutes les cellules de la forme | on marche avant d'avoir des murs |
+| 2 | sol, toutes les cellules de la forme, pierre tirée une par une | on marche avant d'avoir des murs |
 | 3 | murs, linteau compris, cellules de passage sautées jusqu'à `passageHeight` | le mur n'est jamais plein puis percé |
 | 4 | plafond, cellules de passage sautées | ferme le volume sans bloquer |
 | 5 | pad de difficulté, sur une cellule de sol connue | dernier, pour ne jamais retarder une salle marchable |
+
+**Texture.** Chaque bloc structurel est tiré **un par un** dans `"Stone"`, `"Messy Stone"`, `"Smooth Stone"`, `"Stone Bricks"`, `"Cracked Stone Bricks"`, `"Mossy Stone Bricks"`. Sol : famille des briques ; plafond : `Smooth Stone` ; murs et linteaux : la palette entière. Le tirage est un hachage de `(graine de salle, cellule, niveau)`, donc :
+- une salle interrompue puis reprise a les mêmes pierres qu'une salle construite d'un trait ;
+- une salle reconstruite depuis sa graine est identique ;
+- deux salles voisines ne se ressemblent pas.
+
+Cela interdit `setBlockRect` pour la structure — un rectangle est uniforme, et il est **plafonné à 360 blocs par appel**, avec **exactement trois arguments** : `setBlockRect([x,y,z],[x1,y1,z1], "Air")`.
 
 La décision de conception qui compte : **aucune cellule n'est écrite deux fois**. La passe `clear` de la proposition initiale vidait le volume du sol au plafond, puis la passe `floor` réécrivait le sol — la même cellule, deux valeurs, donc un monde qui dépend du découpage en lots. Elle est limitée aux niveaux au-dessus du plafond, et un test l'assure : 0 doublon sur toutes les salles d'un donjon.
 
