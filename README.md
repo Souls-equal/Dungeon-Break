@@ -40,7 +40,7 @@ Tous les textes visibles par les joueurs sont en anglais.
 
 ## Génération actuelle du donjon
 
-- Après le compte à rebours, les sols et escaliers sont construits en **Stone Bricks**. Chaque segment de mur choisit aléatoirement un matériau parmi **Stone**, **Messy Stone**, **Smooth Stone**, **Stone Bricks**, **Cracked Stone Bricks** et **Mossy Stone Bricks**. La première opération pose un sol 5×5 sous la position d'arrivée; le joueur n'est téléporté qu'après la construction complète. Chaque appel à `setBlockRect` reste limité à 360 blocs.
+- Après le compte à rebours, les sols et escaliers sont construits en **Stone Bricks**. Chaque bloc mural choisit individuellement un matériau parmi **Stone**, **Messy Stone**, **Smooth Stone**, **Stone Bricks**, **Cracked Stone Bricks** et **Mossy Stone Bricks**. La première opération pose un sol 5×5 sous la position d'arrivée; le joueur n'est téléporté qu'après la construction complète. Tous les blocs sont posés avec `api.setBlock(x, y, z, blockName)`, à raison de 120 blocs maximum par tick.
 - La taille évolue de 4×4 salles en Very Easy à 11×11 en Hell. Les difficultés prévoient respectivement 2 niveaux (Very Easy/Easy), 3 (Medium/Normal/Hard), 4 (Insane/Ultra Insane) ou 5 (Hell), avec des labyrinthes distincts à chaque niveau.
 - Les salles de 5×5 blocs varient : espaces ouverts, piliers simples ou doubles, et alcôves. Dans chaque niveau, les passages sont parfois étroits (3 blocs), parfois ouverts sur toute la largeur.
 - Une cage d'escalier en spirale, faite de blocs pleins Stone Bricks, relie les étages à travers un puits de 3×3 blocs. L'entrée se trouve au niveau inférieur, la sortie au niveau supérieur, et de petites plateformes Stone Bricks prolongent ces ouvertures.
