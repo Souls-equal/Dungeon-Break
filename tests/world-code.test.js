@@ -89,8 +89,15 @@ test("the generated World Code builds every floor in batches before teleporting 
   assert.ok(blockRects.some(({ from, to }) => from[1] === -992 && to[1] === -992), "an upper floor is built");
   assert.equal(positions.length, 1);
   assert.equal(positions[0].playerId, "player-1");
+  const [spawnX, spawnY, spawnZ] = positions[0].position;
+  assert.deepEqual(Array.from(blockRects[0].from), [spawnX - 2.5, spawnY - 1, spawnZ - 2.5]);
+  assert.deepEqual(Array.from(blockRects[0].to), [spawnX + 1.5, spawnY - 1, spawnZ + 1.5]);
+  assert.equal(blockCallVolumes[0], 25, "the spawn room floor is placed before the rest of the build");
+  assert.equal(blockRects[0].blockName, "Stone Bricks");
   assert.ok(messages.some(({ message }) => message.includes("Very Easy dungeon ready: 2 floors")));
   assert.ok(messages.some(({ message }) => message.includes("Keep advancing to generate more rooms")));
+  context.onBlockStandStop("player-1", 2, 10, 3, "Lime Concrete");
+  assert.equal(messages.some(({ message }) => message.includes("Countdown cancelled")), false);
   assert.ok(blockRects.every(({ blockName }) => blockName === "Stone Bricks" || WALL_BLOCKS.has(blockName)));
   assert.ok(blockRects.some(({ blockName }) => blockName !== "Stone Bricks"), "wall textures are randomized");
   assert.ok(blockRects.some(({ from, to, blockName }) => (
@@ -128,6 +135,21 @@ test("moving between same-difficulty Concrete pads preserves the active countdow
 
   for (let tick = 0; tick < 1000 && positions.length === 0; tick += 1) context.tick();
   assert.equal(positions.length, 1, "the original countdown completes successfully");
+});
+
+test("a stale pad-stop in the final countdown tick does not cancel dungeon generation", () => {
+  const { context, messages, positions } = createWorld(["player-final-second"]);
+
+  context.onBlockStandStart("player-final-second", 5, 10, 5, "Lime Concrete");
+  for (let tick = 0; tick < 198; tick += 1) context.tick();
+  context.onBlockStandStop("player-final-second", 5, 10, 5, "Lime Concrete");
+  context.tick();
+  context.tick();
+
+  assert.ok(messages.some(({ message }) => message.includes("Building a Very Easy dungeon")));
+  assert.equal(messages.some(({ message }) => message.includes("Countdown cancelled")), false);
+  for (let tick = 0; tick < 1000 && positions.length === 0; tick += 1) context.tick();
+  assert.equal(positions.length, 1);
 });
 
 test("advancing toward the exit streams new rooms without teleporting again", () => {

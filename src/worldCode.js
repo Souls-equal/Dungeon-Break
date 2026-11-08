@@ -59,9 +59,20 @@ function stopLobbyCountdown(playerId) {
 }
 
 function cancelLobbyCountdown(playerId) {
+  const countdown = lobbyCountdowns[playerId];
+  if (countdown && countdown.completed) return;
+
   if (stopLobbyCountdown(playerId)) {
     api.sendMessage(playerId, "Countdown cancelled. Step on a difficulty pad to try again.");
   }
+}
+
+function completeLobbyCountdown(playerId, countdown) {
+  if (lobbyCountdowns[playerId] !== countdown) return;
+
+  countdown.completed = true;
+  stopLobbyCountdown(playerId);
+  onLobbyCountdownComplete(playerId, countdown.difficulty);
 }
 
 function deferLobbyCountdownCancellation(playerId, countdown) {
@@ -69,9 +80,16 @@ function deferLobbyCountdownCancellation(playerId, countdown) {
 
   countdown.cancelTimer = scheduleTimeout(() => {
     countdown.cancelTimer = null;
-    if (lobbyCountdowns[playerId] === countdown && countdown.activePadCount === 0) {
-      cancelLobbyCountdown(playerId);
+    if (lobbyCountdowns[playerId] !== countdown || countdown.activePadCount !== 0) return;
+
+    // A simultaneous final-second tick completes the selection instead of
+    // letting a stale stand-stop callback cancel it just before the build starts.
+    if (countdown.secondsLeft <= 1) {
+      completeLobbyCountdown(playerId, countdown);
+      return;
     }
+
+    cancelLobbyCountdown(playerId);
   }, LOBBY_CONFIG.padSwitchGraceTicks);
 }
 
@@ -101,6 +119,7 @@ function startLobbyCountdown(playerId, x, y, z, blockName) {
     activePads: { [padKey]: true },
     activePadCount: 1,
     secondsLeft: LOBBY_CONFIG.countdownSeconds,
+    completed: false,
     timer: null,
     cancelTimer: null,
   };
@@ -121,8 +140,7 @@ function startLobbyCountdown(playerId, x, y, z, blockName) {
 
     countdown.secondsLeft -= 1;
     if (countdown.secondsLeft <= 0) {
-      stopLobbyCountdown(playerId);
-      onLobbyCountdownComplete(playerId, difficulty);
+      completeLobbyCountdown(playerId, countdown);
       return;
     }
 
