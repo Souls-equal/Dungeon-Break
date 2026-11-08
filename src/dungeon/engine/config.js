@@ -99,6 +99,8 @@ export const DUNGEON_CONFIG = {
   activeRoomDistance: 48,
   // Rooms further than this are suspended when the queues are backlogged.
   suspendDistance: 96,
+  // Hard ceiling on how far ahead the graph may run, whatever the backlog.
+  maxAnticipationDistance: 96,
   backlogThreshold: 60,
 
   // -------------------------------------------------------------- budgets ---
@@ -107,11 +109,14 @@ export const DUNGEON_CONFIG = {
   maxGenerationPerCycle: 24,
   // Graph work is far cheaper than block writes, so it has its own, larger cap.
   maxOpsPerTick: 4000,
+  // The budget bounds the cycle, not the individual room: construction is never
+  // interrupted mid-room, so a cycle may overrun by at most one room.
   maxBlocksPerTick: 800,
   // One cycle every `cycleTicks`; positions are read every
-  // `trackerIntervalTicks`.
+  // `playerScanIntervalTicks` (twice a second is enough: reading every player at
+  // every tick costs more than it brings).
   cycleTicks: 20,
-  trackerIntervalTicks: 10,
+  playerScanIntervalTicks: 10,
 
   // ----------------------------------------------------------- chunk safety --
   chunkWarmupTicks: 3,

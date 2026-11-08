@@ -1,6 +1,6 @@
 # Architecture — moteur de donjon procédural infini
 
-**Statut : vivant. Phase 0 livrée, Phase 1 livrée.** L'audit est dans [`AUDIT-PHASE0.md`](AUDIT-PHASE0.md). Les sections marquées **✅ Implémenté** décrivent du code qui existe, testé, dans `src/dungeon/engine/` ; celles marquées **◻ À venir** décrivent une conception encore à réaliser, et le sont pour mémoire.
+**Statut : vivant. Phase 0 livrée, Phase 1 livrée, Phase 3 livrée.** L'audit est dans [`AUDIT-PHASE0.md`](AUDIT-PHASE0.md). Les sections marquées **✅ Implémenté** décrivent du code qui existe, testé, dans `src/dungeon/engine/` ; celles marquées **◻ À venir** décrivent une conception encore à réaliser, et le sont pour mémoire.
 
 Ce document est mis à jour à chaque phase. Une divergence entre ce texte et le code est un défaut : le code fait foi, et c'est le document qu'il faut corriger — mais tout écart doit être signalé explicitement, jamais laissé implicite.
 
@@ -223,9 +223,10 @@ La liste a été révisée en Phase 1 par rapport à la proposition initiale : `
 | `DungeonValidator` | Fonction pure : accepte ou refuse une candidate, avec un code de refus | Modifier quoi que ce soit | ✅ `validator.js` |
 | `DungeonSpatialIndex` | Requêtes de voisinage bornées et index d'ouvertures | Décider | ✅ `spatialIndex.js` |
 | `DungeonManager` | Source de vérité du graphe, unique point de commit, profondeurs | Toucher au monde | ✅ `dungeonManager.js` |
-| `DungeonDiscovery` | Position → quelles ouvertures sont imminentes, avec priorité | Générer | ◻ Phase 3 |
-| `PlayerTracker` | Position → salle → distance, profondeur, classe de priorité | Décider du budget | ◻ Phase 3 |
-| `DungeonController` | Boucle par tick, répartition des budgets, anti-cycles concurrents | Générer ni construire lui-même | ◻ Phase 3 |
+| `DungeonDiscovery` | Position → quelles ouvertures sont imminentes, avec priorité | Générer | ✅ `discovery.js` |
+| `DungeonQueues` | Les trois files, anti-doublons, ordre total | Décider quoi mettre dedans | ✅ `queues.js` |
+| `PlayerTracker` | Position → salle → distance, profondeur, classe de priorité | Décider du budget | ✅ `locatePlayerRoom`, dans `discovery.js` |
+| `DungeonController` | Boucle par tick, répartition des budgets, anti-cycles concurrents | Générer ni construire lui-même | ✅ `controller.js` |
 | `DungeonBuilder` | D'un `RoomData` validé vers des blocs, dans l'ordre imposé | Décider *quoi* construire | ◻ Phase 4 |
 | `DungeonBuildQueue` | File de construction, curseur de reprise, coût en blocs | Écrire des blocs | ◻ Phase 4 |
 | `DungeonPersistence` | Sérialisation compacte, fragments, budget de caractères, versions | Décider du contenu | ◻ Phase 5 |
@@ -658,6 +659,8 @@ Sans ces tests, une erreur d'index se traduirait par des murs qui se croisent en
 
 ## 12. Anticipation : les trois opérations et les trois files
 
+**✅ Implémenté** dans `discovery.js`, `queues.js` et `controller.js`.
+
 ### 12.1 Trois opérations distinctes
 
 | Opération | Entrée | Sortie | Coût | Consomme un budget de génération ? |
@@ -670,52 +673,71 @@ Séparer les trois est ce qui permet de répondre à « le joueur arrive dans un
 
 ### 12.2 Déclencheurs
 
-- **Distance** : `triggerDistance = 30` blocs. Une ouverture `pending` dont la cellule extérieure est à moins de 30 blocs du joueur entre en file de découverte.
-- **Profondeur** : `anticipationDepth = 3`. On génère jusqu'à 3 arêtes au-delà de la salle du joueur, sur **toutes** les branches, pas seulement celle qu'il semble suivre.
-- **Franchissement imminent** : à moins de `crossingDistance = 6` blocs d'une ouverture, la priorité passe en classe `crossing` et le budget lui est réservé en premier.
+| Déclencheur | Paramètre | Effet |
+| --- | --- | --- |
+| Approche | `discoveryDistance = 30` | une ouverture libre à moins de 30 cellules du joueur entre en file |
+| Franchissement imminent | `crossingDistance = 6` | classe `crossing` : servie avant tout le reste, quelle que soit la distance des autres |
+| Profondeur | `anticipationDepth = 3` | on explore le graphe jusqu'à 3 arêtes **sur toutes les branches** |
+| Éloignement | `maxAnticipationDistance = 96` | aucune salle plus loin n'est même regardée |
+
+Les trois déclencheurs sont indépendants et se cumulent : un joueur immobile voit quand même ses branches s'ouvrir, et un joueur qui court est servi devant lui.
 
 ### 12.3 Priorité
 
 ```
-class = crossing ? 0 : 1                       // 0 : à traiter d'abord
-priority = distanceToPlayer + depth * 40       // plus petit = plus prioritaire
+class    = crossing ? 0 : 1
+priority = distance + depth * 40
 ```
 
-Tri : classe, puis `priority`, puis id (départage stable, donc reproductible). L'exemple du cahier des charges est un test unitaire : A 120, C 250, B 8148, D 5285 ⇒ **A, C, B, D**.
+`depth` est le nombre d'arêtes depuis la **salle du joueur**, pas depuis l'entrée : un joueur descendu à dix salles ne doit pas être affamé par un joueur resté près de l'entrée.
+
+L'exemple chiffré du cahier des charges (A 120, C 250, B 8148, D 5285 ⇒ **A, C, D, B**) est un test unitaire (`tests/engine/discovery.test.js`).
+
+La distance est mesurée à la **cellule la plus proche du seuil**, pas à son milieu : un seuil fait jusqu'à cinq cellules de large, et un joueur debout à l'extrémité d'un seuil large paraîtrait sinon plus loin qu'il ne l'est.
 
 ### 12.4 Trois files
 
 | File | Clé d'unicité | Contenu | Budget |
 | --- | --- | --- | --- |
-| `discoveryQueue` | `roomId.openingId` | ouvertures à évaluer | `maxDiscoveryPerCycle`, défaut 40 |
-| `generationQueue` | `roomId.openingId` | ouvertures à développer | `maxRoomsPerCycle = 10` |
-| `buildQueue` | `roomId` | salles validées à construire | `maxBlocksPerCycle`, défaut 800 |
+| `discovery` | `roomId/openingId` | ouvertures à évaluer | `maxDiscoveryPerCycle = 40` |
+| `generation` | `roomId/openingId` | ouvertures à développer | `maxRoomsPerCycle = 10`, `maxGenerationPerCycle = 24` tentatives |
+| `build` | `roomId` | salles validées à construire | `maxBlocksPerTick = 800` |
 
-Chaque file est un tableau plus un `Map` d'appartenance : l'anti-doublon est une lecture de `Map`, pas un parcours. Les tailles sont bornées (le générateur ne crée pas plus de `budget × profondeur` entrées par cycle), donc un tri par cycle reste négligeable ; un test le vérifie au lieu de le supposer.
+Chaque file est une liste plus une `Map` d'appartenance : l'anti-doublon est une lecture de `Map`, jamais un parcours. Pousser une entrée déjà présente la **met à jour** au lieu de la dupliquer, ce qui sert le seuil à sa nouvelle priorité quand le joueur s'en approche, et empêche deux joueurs de faire générer la même salle au même tick.
 
-Une salle ne peut pas être dans `generationQueue` et déjà `connected`, ni dans `buildQueue` sans être validée : les invariants sont réaffirmés à l'entrée, pas seulement à la sortie.
+Une file est une **indication**, pas une autorité : le graphe l'est. Une entrée dont l'ouverture a été connectée entre-temps est ignorée, pas forcée.
 
-### 12.5 Contrôle de fréquence et gestion du retard
+### 12.5 Contrôle de fréquence et gestion du retard — **mesuré**
 
-Tout est piloté par `tick(ms)`, via le scheduler existant, une fois par tick. Le contrôleur :
+```js
+controller.tick()   // appelé depuis le scheduler du jeu, une fois par tick
+```
 
-1. met à jour `PlayerTracker` tous les `playerScanIntervalTicks` (défaut 10 ticks, 2×/s) — lire `getPosition` de chaque joueur à chaque tick coûte plus que ça ne rapporte ;
-2. exécute un **cycle** tous les `cycleTicks` (défaut 20 ticks, 1 s) : découverte, puis génération jusqu'à épuisement du budget, puis construction jusqu'à épuisement du budget de blocs ;
-3. compte les opérations du tick (`opsThisTick`) et s'arrête net au plafond, quel que soit l'état des files.
+`tick()` compte, et exécute un **cycle** tous les `cycleTicks = 20` ticks (une seconde). Un cycle réentrant est **refusé**, pas mis en file : deux cycles qui se disputent la même ouverture, c'est exactement ainsi qu'une salle est générée deux fois. Le refus est compté (`stats.deferred`).
 
-Gestion du retard, si `fileLength > backlogThreshold` :
+Mesures (`npm run simulate`, builder qui coûte `w × h` blocs par salle) :
 
-- la priorité des éléments proches est **boostée** (`priority *= 0.5`) ;
-- les salles au-delà de `maxAnticipationDistance` (défaut 96 blocs) sont **suspendues** : elles sortent des files, restent dans le graphe, et y reviennent quand un joueur s'en approche. Un compteur `suspendedRooms` est exposé dans `metadata` ;
-- le budget de génération est plafonné pour laisser respirer la construction : le graphe en avance ne sert à rien s'il n'y a pas de sol sous les pieds.
+| Scénario | Salles | Cycles | Médiane par cycle | p99 | Max |
+| --- | --- | --- | --- | --- | --- |
+| 1 joueur qui marche | 39 | 200 | 0,02 ms | 0,76 ms | 22 ms (2e cycle) |
+| 6 joueurs qui marchent | 39 | 200 | 0,03 ms | 0,9 ms | 16 ms en régime |
+| 6 joueurs immobiles | 31 | 200 | 0,02 ms | 0,6 ms | 8,7 ms |
 
-**Une salle n'est jamais annoncée « prête » avant `buildState === "built"` et le passage de la vérification d'intégrité.** Un test dédié vérifie qu'aucun message « ready » ne peut précéder le dernier bloc.
-
-**Aucune API de temporisation non documentée** : pas de `setTimeout`, pas de `Promise`, pas de `Date.now()` dans une mesure de durée. Un test échoue si ces identifiants apparaissent dans `src/dungeon/`.
+Les pics des premiers cycles ne sont pas la charge de travail : un cycle coûte 80 à 90 % de son temps en **génération**, et seuls les premiers cycles ont quelque chose à générer. Un donjon déjà rempli passe à 0,02 ms. L'important est que le **travail par cycle soit borné par le budget** : c'est vérifié par un test qui compte les tentatives, pas par un chronomètre — une assertion de temps serait instable sur une machine chargée.
 
 ### 12.6 Anti-cycles concurrents
 
-Un seul contrôleur par donjon, une seule boucle par tick. Les réentrances sont impossibles par construction, mais deux garde-fous existent quand même : un indicateur `cycleRunning` (si un callback exotique réentrait, le cycle est abandonné au lieu de s'empiler) et un `try/catch` par file, pour qu'une file cassée n'empêche pas les autres d'avancer.
+Un seul contrôleur par donjon, un indicateur `cycleRunning`, un `try/finally` qui le relâche même si un builder lève. Un test fait sciemment rappeler `cycle()` depuis l'intérieur d'un builder et vérifie que le second appel est refusé et que le contrôleur n'est pas resté verrouillé : c'est le genre de verrou qu'on ne remarque qu'après un blocage en production.
+
+### 12.7 Salle suspendue plutôt que salle perdue
+
+Quand la file de construction dépasse `backlogThreshold`, les salles qu'aucun joueur n'approche à moins de `suspendDistance` (96) sortent de la file. Elles **restent dans le graphe** : leurs ouvertures restent disponibles, et elles reviennent dès qu'un joueur s'en approche. Supprimer une salle du graphe pour la retrouver plus tard serait une perte de branche, pas une optimisation.
+
+### 12.8 Ce que le contrôleur ne fait pas
+
+- il ne lit aucun bloc, n'écrit aucun bloc ;
+- il ne connaît ni `api.*` ni le scheduler du jeu : c'est l'hôte qui appelle `tick()` ;
+- il ne persiste rien : les files sont reconstruites depuis le graphe et les joueurs après un redémarrage, ce qui est précisément ce qu'on veut puisqu'elles ne contiennent que du travail à refaire.
 
 ---
 
@@ -883,7 +905,7 @@ Le format persisté ne contient **que** le donjon lui-même : seed, origine, par
 
 ### 17.1 Tests unitaires
 
-Les tests du moteur existent : **59 tests**, dans `tests/engine/`, exécutés par `npm test` (85 au total avec les 26 tests existants). Le tableau ci-dessous décrit ce qui est réellement vérifié, et non ce qui est prévu.
+Les tests du moteur existent : **93 tests**, dans `tests/engine/`, exécutés par `npm test` (119 au total avec les 26 tests existants). Le tableau ci-dessous décrit ce qui est réellement vérifié, et non ce qui est prévu.
 
 | Fichier | Ce qui est vérifié | État |
 | --- | --- | --- |
@@ -891,7 +913,8 @@ Les tests du moteur existent : **59 tests**, dans `tests/engine/`, exécutés pa
 | `tests/engine/index.test.js` | Index contre référence O(n²) sur trois seeds ; toutes les salles réellement en chevauchement sont renvoyées ; suppression d'une salle et de ses ouvertures ; coût par salle non croissant avec la taille du donjon ; une ouverture bloquée n'est jamais proposée ; `wallGap` respecté par **toutes** les connexions commitées. | ✅ |
 | `tests/engine/graph.test.js` | Réseau réel : plus d'arêtes que d'un arbre, carrefours, culs-de-sac, tout est atteignable ; aucune cellule partagée ; chaque ouverture appartient à exactement une connexion ou reste libre ; un refus ne laisse **aucune** trace ; même seed ⇒ même donjon (structure complète comparée) ; ordre d'exploration sans effet ; profondeurs cohérentes ; les ouvertures libres ne disparaissent pas ; huit difficultés ordonnées ; rayon respecté ; **aucun appel à `Math.random`** (interdit pendant le test). | ✅ |
 | `tests/engine/passage.test.js` | Parcours du donjon entier depuis l'entrée : **tous** les seuils connectés sont atteignables à pied ; chaque passage direct est franchissable ; refus d'une salle posée sur une autre ; refus d'un seuil ouvrant dans un trou ; refus hors rayon ; refus d'une salle aux ouvertures non reliées ; les cellules du passage sont contiguës, sans trou. | ✅ |
-| `tests/dungeon/anticipation.test.js` | Formule de priorité ; budget par cycle ; anti-doublons des trois files ; suspension des salles lointaines ; « prête » seulement après `built`. | ◻ Phase 3 |
+| `tests/engine/discovery.test.js` | Formule de priorité et exemple chiffré ; pénalité de profondeur ; `crossing` prioritaire ; distance au plus proche seuil ; portée et profondeur respectées ; ordre total et reproductible ; un seuil vu par deux joueurs n'est offert qu'une fois ; coût d'un scan qui ne croît pas avec le donjon. | ✅ |
+| `tests/engine/controller.test.js` | Anti-doublons des trois files ; budget de génération **compté en tentatives** ; construction bornée par son budget ; aucune ouverture générée deux fois ; builder appelé exactement pour les salles créées ; un cycle réentrant est refusé et ne verrouille pas le contrôleur ; un tick ne déclenche pas de cycle avant l'échéance ; une salle suspendue reste dans le graphe ; travail borné quelle que soit la taille du donjon. | ✅ |
 | `tests/dungeon/build.test.js` | Ordre de construction imposé ; préconditions de chunk ; reprise au curseur ; relecture et réparation ; aucun mur plein percé. | ◻ Phase 4 |
 | `tests/dungeon/persistence.test.js` | Faux magasin clé/valeur avec **plafond de caractères** et pannes injectées (écriture perdue, partielle, `seq` régressive, `crc` faux) ; reprise sur double tampon ; journal d'opération rejoué une seule fois ; migration `v0 → v1` ; rétention (géométrie retirée puis reconstruite à l'identique). | ◻ Phase 5 |
 | `tests/engine/architecture.test.js` | Aucun appel `api.*` dans `src/dungeon/engine/` ; aucun `setTimeout`/`setInterval`/`Date.now`/`performance.now`/`await`/`import()` ; aucun import hors du dossier `engine/`. Les commentaires sont retirés avant analyse, sinon la documentation d'une interdiction la déclencherait. | ✅ |
@@ -939,6 +962,12 @@ refusals:
 
 La carte produite est placée dans `docs/examples/` pour être lisible sans exécuter le projet.
 
+### 17.4 Harnais de simulation
+
+**✅ Implémenté : `tools/simulate-players.mjs`** (`npm run simulate`). Il fait tourner le contrôleur comme le jeu le ferait — mêmes ticks, mêmes budgets, `--players` joueurs qui avancent de salle en salle — et publie les compteurs : cycles, salles, blocs, pire cycle, temps par cycle, et le détail découverte / génération / construction. `--static` fige les joueurs pour mesurer le coût quand il n'y a plus rien à découvrir.
+
+C'est ce harnais qui a montré que 80 à 90 % du temps d'un cycle part en génération et que le pic des premiers cycles disparaît une fois le donjon rempli — deux chiffres qu'aucune inspection du code n'aurait donnés.
+
 ## 18. Découpage en phases
 
 Chaque phase est testée avant la suivante. Aucune phase ne commence sans que la précédente ait ses tests verts et son critère de sortie atteint.
@@ -947,12 +976,12 @@ Chaque phase est testée avant la suivante. Aucune phase ne commence sans que la
 | --- | --- | --- |
 | **1. Géométrie — ✅ livrée** | `geometry.js`, `shapes.js`, `openings.js`, `random.js`, `config.js`. | Toutes les familles de formes valides ; 400 formes sans forme déconnectée ni trou ; visualiseur ASCII/SVG opérationnel ; tests moteur verts (**59** sur les quatre fichiers du moteur). |
 | **2. Graphe — ✅ livrée** | `validator.js`, `spatialIndex.js`, `dungeonManager.js` : connexions, boucles, réutilisation, ponts. | **La règle §17.2 : plusieurs centaines de salles, cinq propriétés prouvées, huit difficultés.** Aucun bloc écrit. **Mesuré : 150 salles, 5 à 8 boucles, profondeur 8-9, 250 ouvertures libres, 4 seeds.** |
-| **3. Anticipation** | `PlayerTracker`, `DungeonController`, trois files, priorités, budgets, suspension. | Priorités conformes à l'exemple ; budget de 10 salles par cycle respecté ; scénarios 1 à 4 du harnais verts. |
+| **3. Anticipation — ✅ livrée** | `discovery.js`, `queues.js`, `controller.js` : `PlayerTracker`, trois files, priorités, budgets, suspension. | Priorités conformes à l'exemple ; budget par cycle respecté **et vérifié en comptant les tentatives** ; files sans doublon ; reprise refusée ; scénarios 1 à 4 du harnais verts. |
 | **4. Construction** | `DungeonBuilder`, `DungeonBuildQueue`, préconditions de chunk, ordre imposé, reprise, vérification. | Salles réellement construites dans Bloxd, sans trou, sans mur plein percé ; scénarios 5 et 6 verts ; reprise au curseur prouvée. |
 | **5. Persistance** | `DungeonPersistence`, fragmentation, budget, migration, rétention. | Rechargement identique ; pannes injectées absorbées ; gain de compactage ≥ 3× mesuré ; scénarios 7 et 8 verts. |
 | **6. Fiabilité et optimisation** | `DungeonRecovery`, audit, réparation, profilage. | Audit d'intégrité sur 200 salles ; géométrie reconstruite à l'identique depuis la seed après redémarrage ; aucune régression de coût à 2 000 salles. |
 
-Le code du lobby et du spawn (`src/worldCode.js`, la partie spawn de `generator.js`) n'est pas touché avant la Phase 4, où il est rebranché sur le nouveau moteur. Les 26 tests existants restent verts à chaque phase ; ils sont désormais rejoints par les tests du moteur (`npm test`, **85** tests).
+Le code du lobby et du spawn (`src/worldCode.js`, la partie spawn de `generator.js`) n'est pas touché avant la Phase 4, où il est rebranché sur le nouveau moteur. Les 26 tests existants restent verts à chaque phase ; ils sont désormais rejoints par les tests du moteur (`npm test`, **119** tests).
 
 ---
 

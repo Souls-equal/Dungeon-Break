@@ -23,7 +23,6 @@ test("the logical engine uses no timers, no promises and no wall clock", () => {
     [/\bsetTimeout\s*\(/, "setTimeout"],
     [/\bsetInterval\s*\(/, "setInterval"],
     [/\bDate\.now\s*\(/, "Date.now"],
-    [/\bperformance\.now\s*\(/, "performance.now"],
     [/\bawait\b/, "await"],
     [/\bimport\s*\(/, "dynamic import"],
   ];
@@ -32,6 +31,21 @@ test("the logical engine uses no timers, no promises and no wall clock", () => {
     for (const [pattern, label] of forbidden) {
       assert.ok(!pattern.test(code), `${file} uses ${label}`);
     }
+  }
+});
+
+test("the only clock in the engine is a measurement, never a decision", () => {
+  // `performance.now()` is allowed in exactly one place — the controller's
+  // per-job counters — and must never be read to decide anything. The rule is
+  // asserted, not trusted: a clock that starts driving behaviour is how a
+  // testable engine becomes untestable.
+  const allowed = new Set(["controller.js"]);
+  for (const file of engineFiles()) {
+    const code = stripComments(readFileSync(join(ENGINE, file), "utf8"));
+    if (!/performance\.now/.test(code)) continue;
+    assert.ok(allowed.has(file), `${file} reads the wall clock`);
+    const occurrences = code.match(/performance\.now/g).length;
+    assert.equal(occurrences, 1, `${file} reads the wall clock in ${occurrences} places`);
   }
 });
 
