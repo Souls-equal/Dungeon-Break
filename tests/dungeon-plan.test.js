@@ -2,6 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createDungeonPlan, createEndlessRoomPlan } from "../src/dungeon/generator.js";
 
+const WALL_BLOCKS = [
+  "Stone",
+  "Messy Stone",
+  "Smooth Stone",
+  "Stone Bricks",
+  "Cracked Stone Bricks",
+  "Mossy Stone Bricks",
+];
+
 function normalizeWalls(plan, floor) {
   return floor.walls.map((wall) => [
     wall.from[0] - plan.originX,
@@ -54,6 +63,7 @@ test("multi-floor plans stay in range and carve each stairwell out of the floor"
     assert.equal(floor.floorY, plan.floorY + levelIndex * plan.levelGap);
     assert.ok(floor.floorRects.length > 0);
     assert.ok(floor.walls.length > 0);
+    assert.ok(floor.walls.every((wall) => WALL_BLOCKS.includes(wall.blockName)));
     assert.ok(floor.floorRects.every((rect) => !rectangleContains(
       rect,
       plan.stairwell.minX + 1,
@@ -109,6 +119,8 @@ test("levels include varied rooms and passages, and seeds change the generated l
 
   assert.ok(planA.pillarCount > 0);
   assert.ok(planA.alcoveCount > 0);
+  const wallMaterials = new Set(planA.floors.flatMap((floor) => floor.walls.map((wall) => wall.blockName)));
+  assert.ok(wallMaterials.size > 1, "wall rectangles use a random mix of the configured stone blocks");
   assert.ok(planA.narrowCorridorCount > 0);
   assert.ok(planA.widePassageCount > 0);
   assert.equal(
@@ -138,6 +150,8 @@ test("endless room modules join door-to-door and close cleanly at the boundary",
   assert.equal(boundary.endZ, 50000);
   assert.equal(boundary.roomDepth, 7, "room depth shrinks when needed to stay within world bounds");
   assert.ok(first.operations.length >= 5);
+  assert.equal(first.operations[0].blockName, undefined, "the room floor keeps the base block material");
+  assert.ok(first.operations.slice(1).every((wall) => WALL_BLOCKS.includes(wall.blockName)));
   assert.ok(last.operations.some((rect) => (
     rect.from[1] === -983 && rect.to[1] === -981
       && rect.from[2] === last.endZ && rect.to[2] === last.endZ

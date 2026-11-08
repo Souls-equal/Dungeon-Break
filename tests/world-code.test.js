@@ -4,6 +4,14 @@ import fs from "node:fs";
 import vm from "node:vm";
 
 const worldCode = fs.readFileSync(new URL("../world-code/worldCode.js", import.meta.url), "utf8");
+const WALL_BLOCKS = new Set([
+  "Stone",
+  "Messy Stone",
+  "Smooth Stone",
+  "Stone Bricks",
+  "Cracked Stone Bricks",
+  "Mossy Stone Bricks",
+]);
 
 function createWorld(onlinePlayerIds) {
   const messages = [];
@@ -63,7 +71,11 @@ test("the generated World Code builds every floor in batches before teleporting 
   assert.equal(positions[0].playerId, "player-1");
   assert.ok(messages.some(({ message }) => message.includes("Very Easy dungeon ready: 2 floors")));
   assert.ok(messages.some(({ message }) => message.includes("Keep advancing to generate more rooms")));
-  assert.ok(blockRects.every(({ blockName }) => blockName === "Stone Bricks"));
+  assert.ok(blockRects.every(({ blockName }) => blockName === "Stone Bricks" || WALL_BLOCKS.has(blockName)));
+  assert.ok(blockRects.some(({ blockName }) => blockName !== "Stone Bricks"), "wall textures are randomized");
+  assert.ok(blockRects.some(({ from, to, blockName }) => (
+    from[1] === -1000 && to[1] === -1000 && blockName === "Stone Bricks"
+  )), "floor blocks keep the base material");
   assert.equal(events.at(-1), "position", "teleport happens after the initial dungeon build");
 });
 
@@ -82,7 +94,8 @@ test("advancing toward the exit streams new rooms without teleporting again", ()
   assert.ok(blockRects.length > initialBlockCount, "a new room is added ahead of the player's position");
   assert.equal(positions.length, 1, "streaming rooms does not reset the player's position");
   assert.ok(messages.some(({ message }) => message.includes("Keep advancing to generate more rooms")));
-  assert.ok(blockRects.every(({ blockName }) => blockName === "Stone Bricks"));
+  assert.ok(blockRects.every(({ blockName }) => blockName === "Stone Bricks" || WALL_BLOCKS.has(blockName)));
+  assert.ok(blockRects.some(({ blockName }) => blockName !== "Stone Bricks"), "streamed room walls use stone textures");
 
   context.onPlayerLeave("player-4");
   const finalBlockCount = blockRects.length;
