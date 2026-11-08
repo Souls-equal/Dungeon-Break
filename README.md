@@ -19,7 +19,7 @@ Le code lisible est dans `src/` : `src/worldCode.js` contient le lobby, `src/uti
 - `npm run build` régénère le fichier compact après les changements.
 - `npm run watch` le régénère automatiquement à chaque sauvegarde dans `src/`.
 - `npm run check` vérifie que la version compacte est à jour et valide les syntaxes.
-- `npm test` lance les tests du scheduler, de la génération et du flux de téléportation simulé.
+- `npm test` lance les tests du scheduler, de la génération (salles, portes, sols, flux de salles) et du flux de téléportation simulé.
 
 Le workflow GitHub vérifie la version générée sur les Pull Requests et resynchronise `world-code/` après les changements fusionnés dans `main`. Modifie toujours `src/`, jamais le fichier généré directement.
 
@@ -40,13 +40,19 @@ Tous les textes visibles par les joueurs sont en anglais.
 
 ## Génération actuelle du donjon
 
-- Le donjon reste sur **un seul niveau**. Au déclenchement, un bloc **Stone Bricks** est posé immédiatement sous la future position de téléportation; le reste du sol continu est ensuite construit, puis les murs et les décors des salles. La téléportation ne se produit qu'une fois toute cette construction terminée.
-- La difficulté règle la grille de 4×4 salles en Very Easy à 11×11 en Hell. Les salles sont des modules de plusieurs formes — ouvertes, piliers, alcôves et variantes — qui s'assemblent comme des pièces de puzzle. Leurs portes centrées de 3 blocs s'alignent pour connecter le labyrinthe; chaque connexion reste traversable.
-- Chaque bloc mural choisit individuellement un matériau parmi **Stone**, **Messy Stone**, **Smooth Stone**, **Stone Bricks**, **Cracked Stone Bricks** et **Mossy Stone Bricks**. Tous les blocs sont posés avec `api.setBlock(x, y, z, blockName)`, à raison de 120 blocs maximum par tick.
-- Après la sortie, des salles modulaires 7×7 ou 9×9 sont ajoutées par lots à mesure que le joueur avance, toujours sur le même niveau. La position est vérifiée toutes les 10 ticks et la prochaine salle commence à se construire lorsque le joueur approche à 18 blocs de la limite générée.
+Le donjon est un assemblage de **salles autonomes** posées sur un seul niveau, comme des pièces de puzzle.
+
+- **Salles complètes.** Chaque salle est un module 5×5 dont le sol, les quatre murs et les décors sont générés ensemble. Le sol d'une salle ne dépend donc jamais d'une autre salle, et une salle n'est jamais traversée par un mur qui ne lui appartient pas. Chaque bloc n'est produit qu'une seule fois, coins et linteaux compris.
+- **Portes alignées.** Chaque salle ouvre des portes de 3 blocs, centrées sur ses faces. Deux salles voisines sont séparées par une case libre qui devient leur couloir: la salle existante pose le sol de ce couloir, si bien que la connexion est toujours carrelée et jamais obstruée par un mur. Chaque passage est stocké une seule fois, donc les deux salles s'accordent forcément sur la porte partagée.
+- **Labyrinthe connecté.** Un arbre couvrant aléatoire relie toutes les salles depuis l'entrée, puis quelques passages supplémentaires (12 % de chance) créent des boucles. Un test vérifie par un parcours en largeur que chaque salle reste accessible à pied.
+- **Décors non bloquants.** Les piliers et alcôves restent dans les coins des salles: la croix centrale de 3 blocs qui relie les portes est toujours libre.
+- **Téléportation sur du sol garanti.** Avant toute autre chose, une plaque 3×3 de **Stone Bricks** est posée autour de la case d'arrivée, dans la première salle. C'est le seul travail synchrone du déclenchement. Les sols de toutes les salles sont ensuite posés, puis les murs, puis les décors, et la téléportation n'a lieu qu'une fois le niveau terminé. Un trou de sol sous le joueur n'est donc plus possible, même si la construction est interrompue juste après le téléport.
+- **Construction en flux borné.** Le générateur n'accumule plus la liste complète des blocs en mémoire: des itérateurs produisent les blocs un par un, à raison de 120 `api.setBlock` maximum par tick. Le coût mémoire reste constant, même pour les 121 salles du niveau Hell.
+- **Salles suivantes.** Après la sortie, des salles 7×7 à 9×9 sont construites à la suite, avec les mêmes portes centrées: le couloir de sortie du niveau initial ouvre directement sur la porte d'entrée de la salle suivante. Le joueur peut avancer de 36 blocs avant que la génération ne soit relancée, toutes les 10 ticks, toujours sur le même niveau. La dernière salle ferme sa sortie et la génération s'arrête au bord du monde.
+- **Matériaux.** Chaque bloc mural choisit individuellement un matériau parmi **Stone**, **Messy Stone**, **Smooth Stone**, **Stone Bricks**, **Cracked Stone Bricks** et **Mossy Stone Bricks**. Les sols restent en **Stone Bricks**.
 - Chaque donjon reçoit un emplacement horizontal aléatoire dans les bornes `-50000..50000` en X et Z; le sol est à `Y = -1000`. La génération continue jusqu'à la limite de coordonnées configurée, le monde n'étant pas mathématiquement infini.
 
-C'est volontairement une première version : pas encore de mobs, butin, nettoyage après une partie ni contrôle d'accès au donjon. Le délai est configurable via `countdownSeconds` dans `src/worldCode.js`; dimensions des salles, modules et matériaux sont configurés dans `src/dungeon/generator.js`.
+C'est volontairement une première version : pas encore de mobs, butin, nettoyage après une partie ni contrôle d'accès au donjon. Le délai est configurable via `countdownSeconds` dans `src/worldCode.js`; dimensions des salles, portes, distance de pré-génération et matériaux sont configurés par `DUNGEON_CONFIG` dans `src/dungeon/generator.js`.
 
 ## Documentation Bloxd utilisée
 
