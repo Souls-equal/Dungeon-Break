@@ -1,0 +1,312 @@
+/*
+ * The bridge between the logical engine and the Bloxd world.
+ *
+ * This is the only file that turns a validated room into real blocks, and the
+ * only one that talks to `api` for that. It exists so the engine stays testable
+ * in Node: everything above it takes plain data, everything below it is this
+ * file.
+ *
+ * Three rules, learned the hard way in this project:
+ *
+ *   1. never write into a chunk the server has not loaded — the write is lost
+ *      silently and the player falls through the floor;
+ *   2. never trust a write — read the cell back, and repair it if it is wrong;
+ *   3. never write a whole room in one tick — build in batches, keep a cursor,
+ *      and resume.
+ *
+ * The API is injected rather than read from the global scope, so this file can
+ * be exercised with a fake: a builder that cannot be tested is a builder whose
+ * chunk bugs are only found by players.
+ */
+
+import { DUNGEON_CONFIG } from "./engine/config.js";
+import { BLOCKS, BUILD_PHASE, createRoomWriter, roomBlocks } from "./builder.js";
+
+/** States a room's construction goes through, in order. */
+export const ROOM_BUILD_STATE = {
+  NOT_STARTED: "not_started",
+  WAITING_FOR_CHUNK: "waiting_for_chunk",
+  BUILDING: "building",
+  VERIFYING: "verifying",
+  REPAIRING: "repairing",
+  BUILT: "built",
+  FAILED: "failed",
+};
+
+export function createWorldBuilder(options) {
+  const world = options.api;
+  const log = options.log || (() => {});
+  const floorY = options.floorY === undefined ? DUNGEON_CONFIG.floorY : options.floorY;
+  if (!Number.isFinite(floorY)) {
+    // A missing altitude silently produced writes at `NaN`, which the engine
+    // accepted without complaint. Fail loudly instead.
+    throw new TypeError(`the floor altitude must be a finite number, got ${floorY}`);
+  }
+  const batchSize = options.batchSize || DUNGEON_CONFIG.blocksPerBatch;
+  const verifyEvery = options.verifyEvery || 8;
+  const rooms = new Map();
+
+  /** Chunk identifiers a room's cells touch, so a build can wait for them. */
+  function chunksOf(room) {
+    const size = DUNGEON_CONFIG.chunkSize;
+    const keys = new Set();
+    for (let localZ = 0; localZ < room.mask.h; localZ += 1) {
+      for (let localX = 0; localX < room.mask.w; localX += 1) {
+        if (!room.mask.cells[localZ][localX]) continue;
+        keys.add(`${Math.floor((room.origin.x + localX) / size)},${Math.floor((room.origin.y + localZ) / size)}`);
+      }
+    }
+    return keys;
+  }
+
+  /**
+   * Reads a block, and treats a thrown call as "unknown" rather than as a
+   * failure: the engine can refuse reads before a chunk exists, which is
+   * information about readiness, not an error.
+   */
+  function readBlock(x, y, z) {
+    try {
+      const name = world.getBlock(x, y, z);
+      return typeof name === "string" ? name : null;
+    } catch (error) {
+      log(`getBlock failed at ${x},${y},${z}: ${error && error.message}`);
+      return null;
+    }
+  }
+
+  function writeBlock(x, y, z, name) {
+    world.setBlock(x, y, z, name);
+  }
+
+  /**
+   * Is the room's area loaded?
+   *
+   * `getBlock` is the only reliable probe: the API has no "is this chunk loaded"
+   * call, and `getBlockSolidity` deliberately reports an unloaded chunk as
+   * solid, so it cannot be used here.
+   */
+  function areaLoaded(room) {
+    const probes = [];
+    for (let localZ = 0; localZ < room.mask.h; localZ += 1) {
+      for (let localX = 0; localX < room.mask.w; localX += 1) {
+        if (!room.mask.cells[localZ][localX]) continue;
+        probes.push({ x: room.origin.x + localX, z: room.origin.y + localZ });
+      }
+    }
+    // Four probes are enough to know the chunks are there, and cheap enough to
+    // run every tick.
+    const step = Math.max(1, Math.floor(probes.length / 4));
+    for (let index = 0; index < probes.length; index += step) {
+      if (readBlock(probes[index].x, floorY, probes[index].z) === null) return false;
+    }
+    return true;
+  }
+
+  function stateOf(roomId) {
+    return rooms.get(roomId) || null;
+  }
+
+  function ensureState(roomId) {
+    let state = rooms.get(roomId);
+    if (!state) {
+      state = {
+        state: ROOM_BUILD_STATE.NOT_STARTED,
+        cursor: null,
+        written: 0,
+        total: 0,
+        attempts: 0,
+        repairs: 0,
+      };
+      rooms.set(roomId, state);
+    }
+    return state;
+  }
+
+  /**
+   * Builds one batch of a room, and returns what happened.
+   *
+   * The return value always says whether the room is finished, so a caller
+   * cannot mistake "waiting for a chunk" for "done".
+   */
+  function buildBatch(room, buildOptions = {}) {
+    const state = ensureState(room.id);
+    if (state.state === ROOM_BUILD_STATE.BUILT) {
+      return { roomId: room.id, state: state.state, done: true, written: 0 };
+    }
+    if (state.state === ROOM_BUILD_STATE.FAILED) {
+      return { roomId: room.id, state: state.state, done: false, written: 0 };
+    }
+
+    if (!areaLoaded(room)) {
+      // Nothing is written until the chunks are there: writing earlier loses the
+      // blocks without any error.
+      state.state = ROOM_BUILD_STATE.WAITING_FOR_CHUNK;
+      state.attempts += 1;
+      return { roomId: room.id, state: state.state, done: false, written: 0 };
+    }
+
+    const world_ = { x: room.origin.x, y: floorY, z: room.origin.y };
+    if (!state.writer) {
+      state.writer = createRoomWriter({ setBlock: writeBlock }, { batchSize });
+      state.total = roomBlocks(room, world_, buildOptions).length;
+    }
+
+    state.state = ROOM_BUILD_STATE.BUILDING;
+    const step = state.writer.writeRoom(room, world_, state.cursor, buildOptions);
+    state.cursor = step.cursor;
+    state.written += step.written;
+
+    if (!step.done) {
+      return {
+        roomId: room.id,
+        state: state.state,
+        done: false,
+        written: step.written,
+        progress: state.written / step.total,
+      };
+    }
+
+    state.state = ROOM_BUILD_STATE.VERIFYING;
+    const wrong = verifyRoom(room, world_, buildOptions);
+    if (wrong.length === 0) {
+      state.state = ROOM_BUILD_STATE.BUILT;
+      return { roomId: room.id, state: state.state, done: true, written: step.written };
+    }
+
+    // Repair, once. A second failure is a real failure: the room is reported as
+    // such instead of being quietly marked ready.
+    if (state.repairs >= 1) {
+      state.state = ROOM_BUILD_STATE.FAILED;
+      log(`room ${room.id} failed verification twice, ${wrong.length} cells wrong`);
+      return { roomId: room.id, state: state.state, done: false, written: step.written, wrong };
+    }
+    state.repairs += 1;
+    state.state = ROOM_BUILD_STATE.REPAIRING;
+    for (const cell of wrong) writeBlock(cell.x, cell.y, cell.z, cell.expected);
+    const recheck = verifyRoom(room, world_, buildOptions);
+    if (recheck.length === 0) {
+      state.state = ROOM_BUILD_STATE.BUILT;
+      return { roomId: room.id, state: state.state, done: true, written: step.written + wrong.length };
+    }
+    state.state = ROOM_BUILD_STATE.FAILED;
+    return { roomId: room.id, state: state.state, done: false, wrong: recheck };
+  }
+
+  /**
+   * Reads back a sample of the room: every pad and every doorway, plus one cell
+   * in `verifyEvery`.
+   *
+   * Never a full rebuild: the point is to catch the write that did not land, not
+   * to re-lay the room.
+   */
+  function verifyRoom(room, world_, buildOptions = {}) {
+    const expected = roomBlocks(room, world_, buildOptions);
+    const wrong = [];
+    for (let index = 0; index < expected.length; index += 1) {
+      const block = expected[index];
+      const mustCheck = block.phase === BUILD_PHASE.PAD || isDoorwayCell(room, block);
+      if (!mustCheck && index % verifyEvery !== 0) continue;
+      const actual = readBlock(block.x, block.y, block.z);
+      if (actual !== block.name) {
+        wrong.push({ x: block.x, y: block.y, z: block.z, expected: block.name, actual });
+        if (wrong.length >= 24) break;
+      }
+    }
+    return wrong;
+  }
+
+  function isDoorwayCell(room, block) {
+    const level = block.y - floorY;
+    if (level < 0 || level > DUNGEON_CONFIG.passageHeight) return false;
+    const localX = block.x - room.origin.x;
+    const localZ = block.z - room.origin.y;
+    for (const opening of room.openings) {
+      if (opening.status !== "connected") continue;
+      const along = opening.side === "north" || opening.side === "south" ? localX : localZ;
+      if (along < opening.offsetStart || along > opening.offsetEnd) continue;
+      if (opening.side === "north" && localZ === 0) return true;
+      if (opening.side === "south" && localZ === room.mask.h - 1) return true;
+      if (opening.side === "west" && localX === 0) return true;
+      if (opening.side === "east" && localX === room.mask.w - 1) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Lays a small landing pad and puts the player on it, in the imposed order:
+   * read the cell, teleport to the middle of it, wait, then build.
+   *
+   * The waiting is done by the caller — this returns the ticks to wait — because
+   * the builder has no timer of its own and must not invent one.
+   */
+  function prepareLanding(playerId, cell) {
+    const before = readBlock(cell.x, floorY, cell.z);
+    world.setPosition(playerId, [cell.x + 0.5, floorY + 2, cell.z + 0.5]);
+    return { before, waitTicks: DUNGEON_CONFIG.chunkWarmupTicks };
+  }
+
+  /** Writes the landing pad once the player is standing in the right chunk. */
+  function layLandingPad(cell, radius = 2) {
+    let written = 0;
+    for (let dx = -radius; dx <= radius; dx += 1) {
+      for (let dz = -radius; dz <= radius; dz += 1) {
+        writeBlock(cell.x + dx, floorY, cell.z + dz, BLOCKS.FLOOR);
+        written += 1;
+      }
+    }
+    return written;
+  }
+
+  /**
+   * Protects a room's shell so it cannot be broken.
+   *
+   * `setCantChangeBlockRect` is used rather than the per-block call: the
+   * documentation warns that protecting thousands of blocks one by one lags the
+   * world, and the rectangle variant exists precisely for that case.
+   */
+  function protectRoom(room) {
+    if (typeof world.setCantChangeBlockRect !== "function") return false;
+    const x1 = room.origin.x;
+    const z1 = room.origin.y;
+    const x2 = room.origin.x + room.mask.w - 1;
+    const z2 = room.origin.y + room.mask.h - 1;
+    world.setCantChangeBlockRect(x1, floorY, z1, x2, floorY + DUNGEON_CONFIG.wallHeight + 1, z2);
+    return true;
+  }
+
+  function forget(roomId) {
+    rooms.delete(roomId);
+  }
+
+  return {
+    buildBatch,
+    verifyRoom,
+    areaLoaded,
+    chunksOf,
+    prepareLanding,
+    layLandingPad,
+    protectRoom,
+    forget,
+    stateOf,
+    readBlock,
+    writeBlock,
+    get floorY() { return floorY; },
+    /** The builder object the controller accepts. */
+    asControllerBuilder(buildOptions = {}) {
+      return {
+        buildRoom(room) {
+          const result = buildBatch(room, buildOptions);
+          // The controller's budget is expressed in blocks, so the cost is
+          // reported in blocks — but `done` travels with it. Without it, a room
+          // interrupted after its first batch looked finished, and the rest of
+          // it was never written.
+          return { blocks: result.written || 0, done: result.done === true };
+        },
+        stateOf(roomId) {
+          const state = stateOf(roomId);
+          return state ? state.state : ROOM_BUILD_STATE.NOT_STARTED;
+        },
+      };
+    },
+  };
+}

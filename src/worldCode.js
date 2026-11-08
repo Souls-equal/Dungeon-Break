@@ -9,7 +9,7 @@ import {
   setTimeout as scheduleTimeout,
   step as stepScheduler,
 } from "./utils/scheduler.js";
-import { generateDungeon, stopDungeonForPlayer } from "./dungeon/generator.js";
+import { createDungeonService } from "./dungeon/service.js";
 
 const LOBBY_CONFIG = {
   countdownSeconds: 10,
@@ -29,6 +29,27 @@ const LOBBY_CONFIG = {
     "Black Concrete": "Hell",
   },
 };
+
+// The dungeon service owns one dungeon per difficulty, shared by every player
+// inside it: two players walking into the same branch must see the same walls.
+// It is created once, at load, and never rebuilt.
+let dungeonService = null;
+
+function service() {
+  if (!dungeonService) {
+    dungeonService = createDungeonService({
+      api,
+      log: (message) => {
+        try {
+          api.log(`[Dungeon] ${message}`);
+        } catch (_) {
+          // A logging failure must never break a build.
+        }
+      },
+    });
+  }
+  return dungeonService;
+}
 
 // Active countdowns are per-player, so players can pick independently.
 // Each entry tracks the pads currently supporting the player, so moving
@@ -149,7 +170,10 @@ function startLobbyCountdown(playerId, x, y, z, blockName) {
 }
 
 function onLobbyCountdownComplete(playerId, difficulty) {
-  generateDungeon(playerId, difficulty);
+  // The service reads the landing cell, teleports to the middle of it, waits for
+  // the chunks, lays the pad and builds the entrance — in that order. Nothing is
+  // announced before the floor exists.
+  service().enterDifficulty(playerId, difficulty);
 }
 
 onBlockStandStart = (playerId, x, y, z, blockName) => {
@@ -174,11 +198,16 @@ onBlockStandStop = (playerId, x, y, z, blockName) => {
 
 tick = () => {
   stepScheduler();
+  // One cycle for every dungeon, from the world's own callback: the engine never
+  // keeps a timer of its own.
+  service().tick();
 };
 
 onPlayerLeave = (playerId) => {
   stopLobbyCountdown(playerId);
-  stopDungeonForPlayer(playerId);
+  // The dungeon keeps existing — other players may be inside it — but this
+  // player is no longer tracked in it, and every exit goes through the lobby.
+  service().leave(playerId);
 };
 
 onPlayerJoin = (playerId) => {

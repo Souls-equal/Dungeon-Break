@@ -59,6 +59,38 @@ test("the logical engine imports nothing from the game side", () => {
   }
 });
 
+test("the block planner owns its block names, but never the world", () => {
+  // The builder is the boundary: it plans writes and executes them through an
+  // injected writer. It must stay free of the global `api`, of timers and of the
+  // wall clock, for the same reason the engine does — it is tested in Node.
+  const source = readFileSync(new URL("../../src/dungeon/builder.js", import.meta.url).pathname, "utf8");
+  const code = stripComments(source);
+  assert.ok(!/\bapi\./.test(code), "builder.js calls the Bloxd api");
+  for (const [pattern, label] of [
+    [/\bsetTimeout\s*\(/, "setTimeout"],
+    [/\bDate\.now\s*\(/, "Date.now"],
+  ]) {
+    assert.ok(!pattern.test(code), `builder.js uses ${label}`);
+  }
+});
+
+test("only the bridge and the service touch the Bloxd api", () => {
+  // Everything above the bridge is pure data. If a second file starts calling
+  // `api.setBlock`, the dungeon becomes untestable in Node again.
+  const files = ["builder.js", "worldBuilder.js", "service.js"];
+  for (const file of files) {
+    const code = stripComments(readFileSync(new URL(`../../src/dungeon/${file}`, import.meta.url).pathname, "utf8"));
+    const calls = (code.match(/\bapi\.\w+/g) || []).filter((call) => call !== "api.log");
+    if (file === "builder.js") {
+      assert.equal(calls.length, 0, "builder.js is not allowed to touch the api");
+      continue;
+    }
+    // The bridge and the service are the game-facing layer: they may call the
+    // api, but only through the `api` object they were given.
+    assert.ok(!/\bglobalThis\b/.test(code), `${file} reaches for a global instead of its injected api`);
+  }
+});
+
 /** Comments explain why a pattern is forbidden; they must not trigger the test. */
 function stripComments(source) {
   return source

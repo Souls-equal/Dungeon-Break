@@ -218,6 +218,20 @@ test("a player standing in a room is located in it, including on a doorway", () 
   assert.equal(located.room.id, room.id, "a player on a threshold belongs to the room it pierces");
 });
 
+test("a player standing in the middle of a cell is located in that cell", () => {
+  // Players are teleported to `x.5` / `z.5`, never to a whole coordinate. The
+  // mask is indexed by cells, so a fractional position used to throw a
+  // TypeError from inside the spatial index lookup.
+  const manager = grow(777, 12);
+  const room = manager.getRoom(manager.entranceRoomId);
+  for (const offset of [0.5, 1.5, 2.5]) {
+    const point = { x: room.origin.x + 1 + offset, y: room.origin.y + 1 + offset };
+    const located = locatePlayerRoom(manager, point);
+    assert.ok(located, `the player at ${point.x},${point.y} was located nowhere`);
+    assert.equal(located.room.id, room.id);
+  }
+});
+
 test("discovery cost does not grow with the size of the dungeon", () => {
   const measure = (rooms) => {
     const manager = grow(8888, rooms);
