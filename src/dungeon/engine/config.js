@@ -118,6 +118,14 @@ export const DUNGEON_CONFIG = {
   cycleTicks: 20,
   playerScanIntervalTicks: 10,
 
+  // ----------------------------------------------------------- construction --
+  // Altitude of the walkable floor. Same value as the current generator, so the
+  // new engine builds where the old one built.
+  floorY: -1000,
+  // Blocks written per batch, so a room is spread over several ticks instead of
+  // freezing one.
+  blocksPerBatch: 80,
+
   // ----------------------------------------------------------- chunk safety --
   chunkWarmupTicks: 3,
   chunkSize: 32,

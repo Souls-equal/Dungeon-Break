@@ -348,3 +348,46 @@ test("the controller reports where its time went, without needing a clock of its
   assert.ok(controller.stats.discoverMs >= 0);
   assert.ok(controller.stats.buildMs >= 0);
 });
+
+test("a half-built room is resumed instead of being marked finished", () => {
+  // The integration bug this test locks in: the builder returned a block count
+  // only, so a room interrupted after one batch looked complete and its remains
+  // were never written. The player walked into a half-dug hole.
+  const manager = grow(12345, 4);
+  const room = manager.allRooms()[1];
+  let passes = 0;
+  const builder = {
+    buildRoom() {
+      passes += 1;
+      return { blocks: 40, done: passes >= 3 };
+    },
+  };
+  const controller = createDungeonController({ manager, builder });
+  const entrance = manager.getRoom(manager.entranceRoomId);
+  const standing = { x: entrance.origin.x + 1, y: 0, z: entrance.origin.y + 1 };
+  controller.upsertPlayer({ id: "p1", position: standing });
+  for (let pass = 0; pass < 6; pass += 1) {
+    controller.cycle();
+    controller.upsertPlayer({ id: "p1", position: standing });
+  }
+
+  assert.ok(passes >= 3, `the room was built in ${passes} passes and then abandoned`);
+  assert.ok(controller.stats.resumed >= 2, "the interrupted room was never reported as resumed");
+  assert.ok(controller.stats.built >= 1, "the finished room was never counted as built");
+});
+
+test("a builder that reports only a block count still works", () => {
+  // The bare number is the old contract, and it is still accepted: a builder
+  // that writes the whole room in one call has nothing to resume.
+  const manager = grow(999, 3);
+  const controller = createDungeonController({ manager, builder: { buildRoom: () => 25 } });
+  const entrance = manager.getRoom(manager.entranceRoomId);
+  const standing = { x: entrance.origin.x + 1, y: 0, z: entrance.origin.y + 1 };
+  controller.upsertPlayer({ id: "p1", position: standing });
+  for (let pass = 0; pass < 4; pass += 1) {
+    controller.cycle();
+    controller.upsertPlayer({ id: "p1", position: standing });
+  }
+  assert.ok(controller.stats.built >= 1);
+  assert.equal(controller.stats.resumed, 0);
+});

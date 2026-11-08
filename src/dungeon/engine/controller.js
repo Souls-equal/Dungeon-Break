@@ -57,6 +57,7 @@ export function createDungeonController(options) {
     blocksWritten: 0,
     suspended: 0,
     deferred: 0,
+    resumed: 0,
     discoveryScans: 0,
   };
 
@@ -235,23 +236,35 @@ export function createDungeonController(options) {
       }
       const room = manager.getRoom(entry.roomId);
       if (!room || inProgress.has(room.id)) continue;
-      // A room whose construction is resumed is finished later; it is never
-      // dropped, so it goes back to the head of the next cycle's queue.
       const sizeBefore = ownQueues.size(QUEUE.BUILD);
       inProgress.add(room.id);
-      let blocks = 0;
+      let outcome = null;
       try {
-        blocks = builder.buildRoom(room) || 0;
+        outcome = builder.buildRoom(room);
       } finally {
         inProgress.delete(room.id);
       }
+      // A builder may report `{ blocks, done }` or a bare block count. Both are
+      // accepted, but the resumption rule is not optional: a room that is only
+      // half written must be queued again, or the rest of it is never built and
+      // the player walks into a half-dug hole.
+      const blocks = typeof outcome === "number" ? outcome : (outcome && outcome.blocks) || 0;
+      // `done` is authoritative when the builder provides it: a finished room
+      // costs nothing on its last pass, and reading "0 blocks" as "unfinished"
+      // put it back in the queue for ever. The bare-number contract can only
+      // mean "written something, therefore finished".
+      const reportedDone = typeof outcome === "object" && outcome !== null && typeof outcome.done === "boolean"
+        ? outcome.done
+        : blocks > 0;
+      const halfBuilt = !reportedDone;
       written += blocks;
       stats.blocksWritten += blocks;
-      if (blocks > 0) stats.built += 1;
-      if (blocks === 0 && ownQueues.size(QUEUE.BUILD) === sizeBefore) {
-        // The builder accepted nothing this time and did not re-queue itself:
-        // put it back so a later cycle retries instead of losing the room.
-        ownQueues.push(QUEUE.BUILD, entry);
+      if (!halfBuilt) stats.built += 1;
+      if (halfBuilt) {
+        if (ownQueues.size(QUEUE.BUILD) === sizeBefore) ownQueues.push(QUEUE.BUILD, entry);
+        stats.resumed += 1;
+        // One unfinished room per cycle: the next cycle resumes it, so the budget
+        // stays bounded even when every room needs several passes.
         break;
       }
     }

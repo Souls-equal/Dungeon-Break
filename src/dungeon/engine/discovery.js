@@ -160,10 +160,15 @@ export function discoverOpenings({ manager, players, reach = null }) {
  */
 export function locatePlayerRoom(manager, point) {
   const candidates = manager.index.queryRect({ x1: point.x, y1: point.y, x2: point.x, y2: point.y });
+  // A player stands in the *middle* of a cell (`x.5`), while the room grid is
+  // indexed by whole cells. Comparing the raw coordinates indexed the mask with
+  // a fraction and threw; flooring is what turns a position into a cell.
+  const cellX = Math.floor(point.x);
+  const cellY = Math.floor(point.y);
   for (let index = 0; index < candidates.length; index += 1) {
     const room = candidates[index];
-    const localX = point.x - room.origin.x;
-    const localY = point.y - room.origin.y;
+    const localX = cellX - room.origin.x;
+    const localY = cellY - room.origin.y;
     if (localX < 0 || localY < 0 || localX >= room.mask.w || localY >= room.mask.h) continue;
     if (room.mask.cells[localY][localX]) return { room, distance: 0 };
   }

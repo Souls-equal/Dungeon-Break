@@ -37,7 +37,7 @@ Annexes : [A — Ce qui reste du code existant](#annexe-a--ce-qui-reste-du-code-
 
 ## 1. Périmètre et principes directeurs
 
-Le moteur remplace la génération actuelle (`src/dungeon/generator.js`, marche de modules 7×7 raccordés par une case de couloir). Le lobby, le compte à rebours et le spawn restent inchangés ; ils seront rebranchés en Phase 4.
+Le moteur remplace la génération actuelle (`src/dungeon/generator.js`, marche de modules 7×7 raccordés par une case de couloir). **Phase 4 : le générateur est supprimé, le lobby et le compte à rebours sont conservés à l'identique, et le spawn passe par `src/dungeon/service.js`.**
 
 **Boucle de jeu retenue** (décidée en Phase 0, elle contraint tout le reste) :
 
@@ -227,8 +227,10 @@ La liste a été révisée en Phase 1 par rapport à la proposition initiale : `
 | `DungeonQueues` | Les trois files, anti-doublons, ordre total | Décider quoi mettre dedans | ✅ `queues.js` |
 | `PlayerTracker` | Position → salle → distance, profondeur, classe de priorité | Décider du budget | ✅ `locatePlayerRoom`, dans `discovery.js` |
 | `DungeonController` | Boucle par tick, répartition des budgets, anti-cycles concurrents | Générer ni construire lui-même | ✅ `controller.js` |
-| `DungeonBuilder` | D'un `RoomData` validé vers des blocs, dans l'ordre imposé | Décider *quoi* construire | ◻ Phase 4 |
-| `DungeonBuildQueue` | File de construction, curseur de reprise, coût en blocs | Écrire des blocs | ◻ Phase 4 |
+| `DungeonBuilder` | D'un `RoomData` validé vers des blocs, dans l'ordre imposé | Décider *quoi* construire | ✅ `builder.js` |
+| `DungeonBuildQueue` | File de construction, curseur de reprise, coût en blocs | Écrire des blocs | ✅ `builder.js` (`createRoomWriter`) + `controller.js` |
+| — (non prévu, ajouté) | Le pont Bloxd : chargement, écriture, vérification, réparation, protection | Planifier des blocs | ✅ `worldBuilder.js` |
+| — (non prévu, ajouté) | Un donjon par difficulté, séquence de spawn, pads de progression | Décider du contenu | ✅ `service.js` |
 | `DungeonPersistence` | Sérialisation compacte, fragments, budget de caractères, versions | Décider du contenu | ◻ Phase 5 |
 | `DungeonRecovery` | Rechargement, réparation, audit d'intégrité, reprise des constructions interrompues | Remplacer les autres modules | ◻ Phase 6 |
 
@@ -758,15 +760,16 @@ Si une précondition manque, la salle est reportée, pas abandonnée.
 
 | Phase | Action | Raison |
 | --- | --- | --- |
-| 1 | dégagement du volume (`Air` du sol au plafond) | idempotence : une reconstruction repart propre |
+| 1 | dégagement **au-dessus du plafond seulement** (`Air`, niveaux `wallHeight+2` à `+4`) | idempotence : une reconstruction repart propre, sans réécrire une cellule que la phase 2 va poser |
 | 2 | sol : toutes les cellules de la forme | on marche avant d'avoir des murs |
-| 3 | **murs par segments de contour**, en sautant les cellules de passage | le mur n'est jamais plein puis percé |
-| 4 | encadrement et linteau des passages | le passage est structurel, pas un trou |
-| 5 | plafond | ferme le volume, ne bloque rien |
-| 6 | **pose du pad** de difficulté, si la salle en porte un | après la géométrie, sur une cellule de sol connue (§15.2) |
-| 7 | vérification : relecture d'un échantillon déterministe | ne jamais faire confiance à une écriture |
+| 3 | **murs**, linteau compris, cellules de passage sautées jusqu'à `passageHeight` | le mur n'est jamais plein puis percé, et le linteau n'est pas une phase séparée |
+| 4 | plafond, cellules de passage sautées | ferme le volume, ne bloque rien |
+| 5 | **pose du pad** de difficulté, si la salle en porte un | après la géométrie, sur une cellule de sol connue et jamais dans un passage (§15.2) |
+| 6 | vérification : relecture déterministe, pads et passages toujours, le reste un bloc sur huit | ne jamais faire confiance à une écriture |
 
-La phase 3 s'appuie sur `contourSegments` calculé à la génération : le constructeur ne redécouvre pas les murs, il les reçoit. Une cellule qui appartient au rectangle de passage d'une ouverture `connected` **n'est jamais écrite** comme mur : elle est tout simplement absente de la liste.
+**Livré ainsi en Phase 4, avec une différence assumée sur la proposition initiale** : la phase 1 ne vide plus le volume du sol au plafond. Une cellule écrite deux fois — effacée par le dégagement puis reposée par le sol — rend le monde dépendant du découpage en lots, et c'est exactement le bug qui a été observé. Le dégagement est limité aux niveaux au-dessus du plafond, et un test vérifie qu'aucune cellule n'est écrite deux fois (`tests/engine/builder.test.js`).
+
+Une cellule qui appartient au rectangle de passage d'une ouverture `connected` **n'est jamais écrite** comme mur : elle est tout simplement absente de la liste. Une ouverture `pending` — qui ne mène nulle part — est en revanche murée : un cul-de-sac doit être un mur, pas un trou dans le vide.
 
 ### 13.3 Construction progressive et reprise
 
@@ -905,7 +908,7 @@ Le format persisté ne contient **que** le donjon lui-même : seed, origine, par
 
 ### 17.1 Tests unitaires
 
-Les tests du moteur existent : **93 tests**, dans `tests/engine/`, exécutés par `npm test` (119 au total avec les 26 tests existants). Le tableau ci-dessous décrit ce qui est réellement vérifié, et non ce qui est prévu.
+Les tests du moteur existent : **105 tests** dans `tests/engine/`, rejoints par `builder`, `worldBuilder` et `service` (**129** dans `tests/engine/`), exécutés par `npm test` (**148** au total avec les tests du scheduler et de l'hôte). Le tableau ci-dessous décrit ce qui est réellement vérifié, et non ce qui est prévu.
 
 | Fichier | Ce qui est vérifié | État |
 | --- | --- | --- |
@@ -915,7 +918,10 @@ Les tests du moteur existent : **93 tests**, dans `tests/engine/`, exécutés pa
 | `tests/engine/passage.test.js` | Parcours du donjon entier depuis l'entrée : **tous** les seuils connectés sont atteignables à pied ; chaque passage direct est franchissable ; refus d'une salle posée sur une autre ; refus d'un seuil ouvrant dans un trou ; refus hors rayon ; refus d'une salle aux ouvertures non reliées ; les cellules du passage sont contiguës, sans trou. | ✅ |
 | `tests/engine/discovery.test.js` | Formule de priorité et exemple chiffré ; pénalité de profondeur ; `crossing` prioritaire ; distance au plus proche seuil ; portée et profondeur respectées ; ordre total et reproductible ; un seuil vu par deux joueurs n'est offert qu'une fois ; coût d'un scan qui ne croît pas avec le donjon. | ✅ |
 | `tests/engine/controller.test.js` | Anti-doublons des trois files ; budget de génération **compté en tentatives** ; construction bornée par son budget ; aucune ouverture générée deux fois ; builder appelé exactement pour les salles créées ; un cycle réentrant est refusé et ne verrouille pas le contrôleur ; un tick ne déclenche pas de cycle avant l'échéance ; une salle suspendue reste dans le graphe ; travail borné quelle que soit la taille du donjon. | ✅ |
-| `tests/dungeon/build.test.js` | Ordre de construction imposé ; préconditions de chunk ; reprise au curseur ; relecture et réparation ; aucun mur plein percé. | ◻ Phase 4 |
+| `tests/engine/builder.test.js` | Sol complet sur **chaque** salle ; aucune cellule de passage murée sous `passageHeight` ; une ouverture libre est murée ; ordre des phases ; **aucune cellule écrite deux fois** ; 0 doublon entre deux salles voisines ; reprise du curseur explicite (et refus sans curseur) ; pad hors passage ; pad écrit en dernier ; audit qui nomme le trou ; déterminisme. | ✅ |
+| `tests/engine/worldBuilder.test.js` | Altitude absente refusée (`TypeError`) au lieu d'écrire à `NaN` ; rien n'est écrit avant chargement du chunk ; une salle finie n'est jamais réécrite ; réparation unique puis `failed` ; séquence d'atterrissage (lecture, téléport au milieu de la cellule) ; pad 5×5 ; protection par rectangle ; coût **et** `done` transmis au contrôleur. | ✅ |
+| `tests/engine/service.test.js` | Graine indépendante de l'horloge ; pads de difficulté et fin de progression ; sol présent à `onReady` ; un seul donjon par difficulté ; cellule d'atterrissage hors passage ; difficulté inconnue refusée ; `usePad` ; sortie vers le lobby ; donjon vide qui ne génère pas. | ✅ |
+| `tests/world-code.test.js` | Lobby (compte à rebours, même couleur, annulation, dernier tick) ; séquence de spawn sur le script **bundlé** ; aucun bloc écrit dans le tick de lecture ; lots bornés ; **aucune écriture hors chunk chargé** ; pad d'atterrissage intact après croissance ; retour au lobby. | ✅ |
 | `tests/dungeon/persistence.test.js` | Faux magasin clé/valeur avec **plafond de caractères** et pannes injectées (écriture perdue, partielle, `seq` régressive, `crc` faux) ; reprise sur double tampon ; journal d'opération rejoué une seule fois ; migration `v0 → v1` ; rétention (géométrie retirée puis reconstruite à l'identique). | ◻ Phase 5 |
 | `tests/engine/architecture.test.js` | Aucun appel `api.*` dans `src/dungeon/engine/` ; aucun `setTimeout`/`setInterval`/`Date.now`/`performance.now`/`await`/`import()` ; aucun import hors du dossier `engine/`. Les commentaires sont retirés avant analyse, sinon la documentation d'une interdiction la déclencherait. | ✅ |
 
@@ -977,11 +983,11 @@ Chaque phase est testée avant la suivante. Aucune phase ne commence sans que la
 | **1. Géométrie — ✅ livrée** | `geometry.js`, `shapes.js`, `openings.js`, `random.js`, `config.js`. | Toutes les familles de formes valides ; 400 formes sans forme déconnectée ni trou ; visualiseur ASCII/SVG opérationnel ; tests moteur verts (**59** sur les quatre fichiers du moteur). |
 | **2. Graphe — ✅ livrée** | `validator.js`, `spatialIndex.js`, `dungeonManager.js` : connexions, boucles, réutilisation, ponts. | **La règle §17.2 : plusieurs centaines de salles, cinq propriétés prouvées, huit difficultés.** Aucun bloc écrit. **Mesuré : 150 salles, 5 à 8 boucles, profondeur 8-9, 250 ouvertures libres, 4 seeds.** |
 | **3. Anticipation — ✅ livrée** | `discovery.js`, `queues.js`, `controller.js` : `PlayerTracker`, trois files, priorités, budgets, suspension. | Priorités conformes à l'exemple ; budget par cycle respecté **et vérifié en comptant les tentatives** ; files sans doublon ; reprise refusée ; scénarios 1 à 4 du harnais verts. |
-| **4. Construction** | `DungeonBuilder`, `DungeonBuildQueue`, préconditions de chunk, ordre imposé, reprise, vérification. | Salles réellement construites dans Bloxd, sans trou, sans mur plein percé ; scénarios 5 et 6 verts ; reprise au curseur prouvée. |
+| **4. Construction — ✅ livrée** | `builder.js`, `worldBuilder.js`, `service.js`, rebranchement de l'hôte. Préconditions de chunk, ordre imposé, reprise au curseur, vérification et réparation unique. | Salles construites sans trou ni mur plein percé et **aucune cellule écrite deux fois** ; reprise au curseur refusée sans curseur explicite ; **0 écriture perdue** hors chunk chargé ; spawn vérifié avant `onReady` ; 148 tests verts. Voir `docs/PHASE4.md`. |
 | **5. Persistance** | `DungeonPersistence`, fragmentation, budget, migration, rétention. | Rechargement identique ; pannes injectées absorbées ; gain de compactage ≥ 3× mesuré ; scénarios 7 et 8 verts. |
 | **6. Fiabilité et optimisation** | `DungeonRecovery`, audit, réparation, profilage. | Audit d'intégrité sur 200 salles ; géométrie reconstruite à l'identique depuis la seed après redémarrage ; aucune régression de coût à 2 000 salles. |
 
-Le code du lobby et du spawn (`src/worldCode.js`, la partie spawn de `generator.js`) n'est pas touché avant la Phase 4, où il est rebranché sur le nouveau moteur. Les 26 tests existants restent verts à chaque phase ; ils sont désormais rejoints par les tests du moteur (`npm test`, **119** tests).
+Le code du lobby et du compte à rebours (`src/worldCode.js`) est resté intact jusqu'en Phase 4, où seul le point d'entrée est rebranché : `onLobbyCountdownComplete` appelle le service, `tick` avance le service, `onPlayerLeave` délie le joueur. L'ancien générateur et ses 14 tests sont supprimés avec lui — les `tests/world-code.test.js` qui décrivaient son comportement (boîte de spawn, patch de 25 blocs, messages « dungeon ready ») sont réécrits pour décrire le comportement réel, et le test « 60 blocs » qui ne mesurait rien est remplacé par une vérification d'écriture hors chunk chargé. `npm test` : **148** tests.
 
 ---
 
@@ -1029,7 +1035,9 @@ Remplacé :
 - `createEndlessRoomPlan`, `chooseStreamedModule`, `pickStreamedExit`, `buildNextStreamRoom`, `continueStreaming` — la marche de modules et les couloirs implicites disparaissent au profit de la génération par ouvertures ;
 - `roomBoxesClash` — remplacé par la validation en cellules réelles.
 
-Conservé mais non utilisé par le nouveau moteur, en attendant la Phase 4 : le générateur par grille (`createDungeonPlan`) pour la parité visuelle pendant la transition.
+**Supprimé en Phase 4** : le générateur par grille (`src/dungeon/generator.js`) et ses tests (`tests/dungeon-plan.test.js`, `tests/stream-rooms.test.js`). Le nouveau moteur produit désormais de vrais blocs, donc la parité visuelle n'a plus d'objet ; garder les deux générateurs aurait laissé deux vérités sur ce qu'est un donjon.
+
+Le pont `worldBuilder.js` et le service `service.js` ne figuraient pas au découpage initial : ils sont apparus nécessaires en Phase 4, parce que « décider quoi construire », « écrire dans un monde qui peut perdre une écriture » et « décider qui entre où » sont trois problèmes distincts, avec trois fausses API différentes pour les tester.
 
 ## Annexe B — Paramètres par défaut (tous dans une seule configuration)
 
