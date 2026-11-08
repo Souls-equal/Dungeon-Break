@@ -275,7 +275,9 @@ test("every room of a finished dungeon can be reached on foot from the entrance"
   runUntil(() => ready, "the entrance to be built");
 
   const dungeon = service.dungeonOf("p1");
-  for (let tick = 0; tick < 1500; tick += 1) {
+  // Enough ticks for the graph to stop growing and for the audit to finish: the
+  // dungeon is "finished" at a few hundred ticks, not thousands.
+  for (let tick = 0; tick < 800; tick += 1) {
     stepScheduler();
     service.tick();
   }

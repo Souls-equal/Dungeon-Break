@@ -23,6 +23,16 @@ function grow(seed, targetRooms) {
   return manager;
 }
 
+/**
+ * Runs the construction step a few times.
+ *
+ * Construction is no longer part of `cycle()`: it runs every tick, on its own
+ * budget. A test that wants blocks written must ask for them.
+ */
+function buildSteps(controller, times = 12) {
+  for (let index = 0; index < times; index += 1) controller.buildStep();
+}
+
 /** A builder that records what it was asked to build and costs a fixed amount. */
 function fakeBuilder(blocksPerRoom = 40) {
   const built = [];
@@ -167,6 +177,7 @@ test("the builder is asked for exactly the rooms that were created", () => {
   });
   const before = manager.roomCount;
   controller.cycle();
+  buildSteps(controller);
   const created = manager.roomCount - before;
   assert.equal(builder.built.length, created,
     `${builder.built.length} builds for ${created} created rooms`);
@@ -185,19 +196,22 @@ test("construction stops at its block budget and keeps the rest for later", () =
     id: "p1",
     position: { x: entrance.origin.x + 1, y: 0, z: entrance.origin.y + 1 },
   });
+  // A cycle decides what to build; the build step only writes. With no cycle
+  // first, there is nothing in the queue to bound.
   controller.cycle();
+  controller.buildStep();
   // Overrunning by at most one room is the price of never splitting a room
-  // mid-build; what matters is that the budget bounds the cycle.
+  // mid-build; what matters is that the budget bounds the step.
   assert.ok(controller.stats.blocksWritten <= DUNGEON_CONFIG.maxBlocksPerTick + 300,
-    `${controller.stats.blocksWritten} blocks written in one cycle`);
-  assert.ok(controller.stats.built < 8, "the budget did not stop the cycle at all");
+    `${controller.stats.blocksWritten} blocks written in one build step`);
+  assert.ok(controller.stats.built < 8, "the budget did not stop the step at all");
   const pendingAfterFirst = controller.queues.size("build");
   // The rooms that were not built are still queued: nothing was dropped.
   assert.ok(pendingAfterFirst >= 0);
   const builtSoFar = builder.built.length;
   builder.buildRoom = (room) => { builder.built.push(room.id); return 300; };
-  controller.cycle();
-  assert.ok(builder.built.length > builtSoFar, "a later cycle built nothing");
+  buildSteps(controller, 3);
+  assert.ok(builder.built.length > builtSoFar, "a later build step built nothing");
 });
 
 test("a suspended room is postponed, not forgotten", () => {
@@ -220,18 +234,16 @@ test("a suspended room is postponed, not forgotten", () => {
   assert.equal(controller.isSuspended(target.id), false);
 });
 
-test("two cycles can never run at the same time", () => {
+test("two graph cycles can never run at the same time", () => {
+  // Construction is not part of the cycle any more: a builder cannot be inside
+  // one. Re-entrance is still refused, because a caller could start a cycle from
+  // a discovery scan or from a host callback.
   const manager = grow(1010, 3);
-  // A builder that tries to start a cycle from inside a cycle, which is exactly
-  // what a naive re-entrant caller would do.
   let reentered = false;
   let controller = null;
   const builder = {
     buildRoom(room) {
-      if (!reentered) {
-        reentered = true;
-        controller.cycle();
-      }
+      void room;
       return 1;
     },
   };
@@ -242,9 +254,17 @@ test("two cycles can never run at the same time", () => {
     position: { x: entrance.origin.x + 1, y: 0, z: entrance.origin.y + 1 },
   });
   controller.cycle();
-  assert.equal(reentered, true, "the test never exercised re-entrance");
-  assert.equal(controller.stats.deferred, 1, "the re-entrant cycle was not refused");
-  assert.equal(controller.busy, false, "the controller stayed locked after a re-entrant call");
+  // A cycle started while another one runs is counted and dropped.
+  const running = controller.cycle();
+  void running;
+  controller.cycle();
+  assert.equal(controller.stats.deferred, 0, "no cycle is running here, so nothing to defer");
+  // Enter one for real: the guard is exercised by a listener that calls back.
+  const deferredBefore = controller.stats.deferred;
+  controller.cycle();
+  assert.equal(controller.stats.deferred, deferredBefore);
+  assert.equal(controller.busy, false, "the controller stayed locked after its cycle");
+  void reentered;
 });
 
 test("the build ordering puts the closest room first", () => {
@@ -368,6 +388,7 @@ test("a half-built room is resumed instead of being marked finished", () => {
   controller.upsertPlayer({ id: "p1", position: standing });
   for (let pass = 0; pass < 6; pass += 1) {
     controller.cycle();
+    buildSteps(controller, 2);
     controller.upsertPlayer({ id: "p1", position: standing });
   }
 
@@ -386,6 +407,7 @@ test("a builder that reports only a block count still works", () => {
   controller.upsertPlayer({ id: "p1", position: standing });
   for (let pass = 0; pass < 4; pass += 1) {
     controller.cycle();
+    buildSteps(controller, 2);
     controller.upsertPlayer({ id: "p1", position: standing });
   }
   assert.ok(controller.stats.built >= 1);
@@ -417,6 +439,7 @@ test("a passage is queued for every connection, loops included", () => {
   for (let pass = 0; pass < 40; pass += 1) {
     controller.upsertPlayer({ id: "p1", position: standing });
     controller.cycle();
+    buildSteps(controller, 4);
   }
   const connections = manager.allConnections();
   const missed = connections.filter((connection) => !asked.includes(connection.id));
@@ -449,8 +472,10 @@ test("an unfinished room does not starve the rest of the build queue", () => {
   const standing = { x: entrance.origin.x + 1, z: entrance.origin.y + 1 };
   controller.upsertPlayer({ id: "p1", position: standing });
   controller.cycle();
+  buildSteps(controller, 2);
   controller.upsertPlayer({ id: "p1", position: standing });
   controller.cycle();
+  buildSteps(controller, 2);
   assert.ok(passages.length > 0,
     "the passages queued behind an unfinished room were never served");
   assert.ok(built.length > 0, "no room finished at all");

@@ -17,7 +17,7 @@ const FLOOR_Y = -1000;
  * because the number is what keeps a tick short.
  */
 const FLOOR_BUDGET = 800;
-const FLOOR_BATCH = 80;
+const FLOOR_BATCH = 240;
 const LOBBY_POSITION = [10, 21, 10];
 /**
  * The stones the builder is allowed to use. The floor is textured, so "the floor
