@@ -16,6 +16,14 @@ const DUNGEON_CONFIG = {
   minStreamRoomSize: 7,
   streamingRunway: 50000,
   blockName: "Stone Bricks",
+  wallBlockNames: [
+    "Stone",
+    "Messy Stone",
+    "Smooth Stone",
+    "Stone Bricks",
+    "Cracked Stone Bricks",
+    "Mossy Stone Bricks",
+  ],
   cellsByDifficulty: {
     "Very Easy": 4,
     Easy: 5,
@@ -119,6 +127,14 @@ function addRect(rects, x1, y1, z1, x2, y2, z2) {
 
 function addWall(walls, x1, y1, z1, x2, y2, z2) {
   addRect(walls, x1, y1, z1, x2, y2, z2);
+}
+
+function assignRandomWallBlocks(walls, random) {
+  for (const wall of walls) {
+    wall.blockName = DUNGEON_CONFIG.wallBlockNames[
+      randomInteger(random, 0, DUNGEON_CONFIG.wallBlockNames.length - 1)
+    ];
+  }
 }
 
 function makeFloorRects(originX, originZ, maxX, maxZ, floorY, stairwell) {
@@ -290,6 +306,7 @@ function makeFloorPlan(seed, options) {
     }
   }
 
+  assignRandomWallBlocks(walls, random);
   const floorRects = makeFloorRects(originX, originZ, maxX, maxZ, floorY, stairwell);
   if (levelIndex === 0) {
     addRect(floorRects, entranceGapStart, floorY, originZ - 2, entranceGapStart + 2, floorY, originZ - 1);
@@ -463,6 +480,8 @@ export function createEndlessRoomPlan(
     addWall(walls, maxX - 1, wallBottomY, startZ + 2, maxX - 1, wallTopY, startZ + 4);
   }
 
+  assignRandomWallBlocks(walls, random);
+
   return {
     startZ,
     endZ,
@@ -519,7 +538,11 @@ function runBlockBuild(session, operations, onComplete) {
       let placedThisTick = 0;
       while (nextOperation < operations.length && placedThisTick < DUNGEON_CONFIG.blocksPerTick) {
         const operation = operations[nextOperation];
-        api.setBlockRect(operation.from, operation.to, DUNGEON_CONFIG.blockName);
+        api.setBlockRect(
+          operation.from,
+          operation.to,
+          operation.blockName || DUNGEON_CONFIG.blockName,
+        );
         nextOperation += 1;
         placedThisTick += 1;
       }
