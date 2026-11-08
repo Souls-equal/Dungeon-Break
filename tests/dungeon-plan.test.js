@@ -1,19 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {
-  createDungeonPlan,
-  createEndlessRoomPlan,
-  splitBlockRect,
-} from "../src/dungeon/generator.js";
-
-const WALL_BLOCKS = [
-  "Stone",
-  "Messy Stone",
-  "Smooth Stone",
-  "Stone Bricks",
-  "Cracked Stone Bricks",
-  "Mossy Stone Bricks",
-];
+import { createDungeonPlan, createEndlessRoomPlan } from "../src/dungeon/generator.js";
 
 function normalizeWalls(plan, floor) {
   return floor.walls.map((wall) => [
@@ -31,38 +18,6 @@ function rectangleContains(rect, x, y, z) {
     && y >= rect.from[1] && y <= rect.to[1]
     && z >= rect.from[2] && z <= rect.to[2];
 }
-
-test("large block rectangles are split into complete pieces of at most 360 blocks", () => {
-  const original = { from: [-3, -2, 4], to: [13, 2, 16], blockName: "Mossy Stone Bricks" };
-  const pieces = splitBlockRect(original);
-  const expectedVolume = 17 * 5 * 13;
-  const occupied = new Set();
-  let actualVolume = 0;
-
-  for (const piece of pieces) {
-    const sizeX = piece.to[0] - piece.from[0] + 1;
-    const sizeY = piece.to[1] - piece.from[1] + 1;
-    const sizeZ = piece.to[2] - piece.from[2] + 1;
-    const volume = sizeX * sizeY * sizeZ;
-    assert.ok(volume <= 360);
-    assert.equal(piece.blockName, original.blockName);
-    actualVolume += volume;
-
-    for (let x = piece.from[0]; x <= piece.to[0]; x += 1) {
-      for (let y = piece.from[1]; y <= piece.to[1]; y += 1) {
-        for (let z = piece.from[2]; z <= piece.to[2]; z += 1) {
-          const coordinate = `${x},${y},${z}`;
-          assert.equal(occupied.has(coordinate), false, "split pieces must not overlap");
-          occupied.add(coordinate);
-        }
-      }
-    }
-  }
-
-  assert.equal(actualVolume, expectedVolume);
-  assert.equal(occupied.size, expectedVolume, "the split pieces must cover every original block");
-  assert.equal(splitBlockRect({ from: [1, 2, 3], to: [1, 2, 3] }).length, 1);
-});
 
 test("multi-floor plans stay in range and carve each stairwell out of the floor", () => {
   const plan = createDungeonPlan(123456789, "Normal");
@@ -99,7 +54,7 @@ test("multi-floor plans stay in range and carve each stairwell out of the floor"
     assert.equal(floor.floorY, plan.floorY + levelIndex * plan.levelGap);
     assert.ok(floor.floorRects.length > 0);
     assert.ok(floor.walls.length > 0);
-    assert.ok(floor.walls.every((wall) => WALL_BLOCKS.includes(wall.blockName)));
+    assert.ok(floor.walls.every((wall) => wall.randomWallTexture === true));
     assert.ok(floor.floorRects.every((rect) => !rectangleContains(
       rect,
       plan.stairwell.minX + 1,
@@ -155,8 +110,9 @@ test("levels include varied rooms and passages, and seeds change the generated l
 
   assert.ok(planA.pillarCount > 0);
   assert.ok(planA.alcoveCount > 0);
-  const wallMaterials = new Set(planA.floors.flatMap((floor) => floor.walls.map((wall) => wall.blockName)));
-  assert.ok(wallMaterials.size > 1, "wall rectangles use a random mix of the configured stone blocks");
+  const wallSegments = planA.floors.flatMap((floor) => floor.walls);
+  assert.ok(wallSegments.length > 0);
+  assert.ok(wallSegments.every((wall) => wall.randomWallTexture === true));
   assert.ok(planA.narrowCorridorCount > 0);
   assert.ok(planA.widePassageCount > 0);
   assert.equal(
@@ -186,8 +142,8 @@ test("endless room modules join door-to-door and close cleanly at the boundary",
   assert.equal(boundary.endZ, 50000);
   assert.equal(boundary.roomDepth, 7, "room depth shrinks when needed to stay within world bounds");
   assert.ok(first.operations.length >= 5);
-  assert.equal(first.operations[0].blockName, undefined, "the room floor keeps the base block material");
-  assert.ok(first.operations.slice(1).every((wall) => WALL_BLOCKS.includes(wall.blockName)));
+  assert.equal(first.operations[0].randomWallTexture, undefined, "the room floor keeps the base block material");
+  assert.ok(first.operations.slice(1).every((wall) => wall.randomWallTexture === true));
   assert.ok(last.operations.some((rect) => (
     rect.from[1] === -983 && rect.to[1] === -981
       && rect.from[2] === last.endZ && rect.to[2] === last.endZ

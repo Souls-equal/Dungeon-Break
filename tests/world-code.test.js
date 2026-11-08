@@ -15,8 +15,7 @@ const WALL_BLOCKS = new Set([
 
 function createWorld(onlinePlayerIds) {
   const messages = [];
-  const blockRects = [];
-  const blockCallVolumes = [];
+  const blocks = [];
   const positions = [];
   const clientOptions = [];
   const topRightHelpers = [];
@@ -30,9 +29,8 @@ function createWorld(onlinePlayerIds) {
         messages.push({ playerId, icon, message });
       },
       setClientOption: (playerId, option, value) => clientOptions.push({ playerId, option, value }),
-      setBlockRect: (from, to, blockName) => {
-        blockRects.push({ from, to, blockName });
-        blockCallVolumes.push((to[0] - from[0] + 1) * (to[1] - from[1] + 1) * (to[2] - from[2] + 1));
+      setBlock: (x, y, z, blockName) => {
+        blocks.push({ x, y, z, blockName });
         events.push("block");
       },
       setPosition: (playerId, position) => {
@@ -50,8 +48,7 @@ function createWorld(onlinePlayerIds) {
   return {
     context,
     messages,
-    blockRects,
-    blockCallVolumes,
+    blocks,
     positions,
     clientOptions,
     topRightHelpers,
@@ -60,8 +57,8 @@ function createWorld(onlinePlayerIds) {
   };
 }
 
-test("the generated World Code builds every floor in batches before teleporting the player", () => {
-  const { context, messages, blockRects, blockCallVolumes, positions, clientOptions, topRightHelpers, events } = createWorld(["player-1"]);
+test("the World Code builds with setBlock and lays the spawn floor before teleporting", () => {
+  const { context, messages, blocks, positions, clientOptions, topRightHelpers, events } = createWorld(["player-1"]);
 
   context.onBlockStandStart("player-1", 2, 10, 3, "Lime Concrete");
   assert.ok(messages.some(({ message }) => message.includes("Very Easy")));
@@ -73,37 +70,42 @@ test("the generated World Code builds every floor in batches before teleporting 
   assert.equal(topRightHelpers.length, 0, "the countdown no longer uses top-right helper popups");
 
   for (let tick = 0; tick < 199; tick += 1) context.tick();
-  assert.equal(blockRects.length, 0);
+  assert.equal(blocks.length, 0);
   assert.equal(positions.length, 0);
   assert.equal(clientOptions.at(-1).value, "Very Easy — starting in 1...");
 
   context.tick();
   assert.equal(clientOptions.at(-1).value, "", "the middle-screen countdown is cleared on completion");
-  assert.equal(blockRects.length, 0, "generation is scheduled after the countdown callback");
+  assert.equal(blocks.length, 0, "generation is scheduled after the countdown callback");
   assert.equal(positions.length, 0);
 
-  for (let tick = 0; tick < 1000 && positions.length === 0; tick += 1) context.tick();
-  assert.ok(blockRects.length > 10, "the dungeon is generated in bounded batches");
-  assert.ok(blockCallVolumes.every((volume) => volume <= 360), "each setBlockRect call stays within the 360-block cap");
-  assert.ok(blockRects.some(({ from, to }) => from[1] === -1000 && to[1] === -1000));
-  assert.ok(blockRects.some(({ from, to }) => from[1] === -992 && to[1] === -992), "an upper floor is built");
+  let maxBlocksPlacedPerTick = 0;
+  for (let tick = 0; tick < 1500 && positions.length === 0; tick += 1) {
+    const countBeforeTick = blocks.length;
+    context.tick();
+    maxBlocksPlacedPerTick = Math.max(maxBlocksPlacedPerTick, blocks.length - countBeforeTick);
+  }
+  assert.ok(blocks.length > 1000, "the dungeon is placed one block at a time in batches");
+  assert.ok(maxBlocksPlacedPerTick <= 120, "no more than 120 setBlock calls run per tick");
   assert.equal(positions.length, 1);
   assert.equal(positions[0].playerId, "player-1");
   const [spawnX, spawnY, spawnZ] = positions[0].position;
-  assert.deepEqual(Array.from(blockRects[0].from), [spawnX - 2.5, spawnY - 1, spawnZ - 2.5]);
-  assert.deepEqual(Array.from(blockRects[0].to), [spawnX + 1.5, spawnY - 1, spawnZ + 1.5]);
-  assert.equal(blockCallVolumes[0], 25, "the spawn room floor is placed before the rest of the build");
-  assert.equal(blockRects[0].blockName, "Stone Bricks");
+  assert.deepEqual([blocks[0].x, blocks[0].y, blocks[0].z], [spawnX - 2.5, spawnY - 1, spawnZ - 2.5]);
+  assert.equal(blocks[0].blockName, "Stone Bricks", "the safety floor is the first block placed");
+  assert.ok(blocks.some(({ x, y, z }) => x === spawnX - 0.5 && y === spawnY - 1 && z === spawnZ - 0.5));
+  assert.ok(blocks.every(({ blockName }) => blockName === "Stone Bricks" || WALL_BLOCKS.has(blockName)));
+  assert.ok(blocks.filter(({ y }) => y === -1000).every(({ blockName }) => blockName === "Stone Bricks"));
+
+  const wallMaterials = new Set(
+    blocks.filter(({ y, blockName }) => y > -1000 && WALL_BLOCKS.has(blockName))
+      .map(({ blockName }) => blockName),
+  );
+  assert.ok(wallMaterials.size > 1, "wall blocks are textured individually with randomized materials");
   assert.ok(messages.some(({ message }) => message.includes("Very Easy dungeon ready: 2 floors")));
   assert.ok(messages.some(({ message }) => message.includes("Keep advancing to generate more rooms")));
   context.onBlockStandStop("player-1", 2, 10, 3, "Lime Concrete");
   assert.equal(messages.some(({ message }) => message.includes("Countdown cancelled")), false);
-  assert.ok(blockRects.every(({ blockName }) => blockName === "Stone Bricks" || WALL_BLOCKS.has(blockName)));
-  assert.ok(blockRects.some(({ blockName }) => blockName !== "Stone Bricks"), "wall textures are randomized");
-  assert.ok(blockRects.some(({ from, to, blockName }) => (
-    from[1] === -1000 && to[1] === -1000 && blockName === "Stone Bricks"
-  )), "floor blocks keep the base material");
-  assert.equal(events.at(-1), "position", "teleport happens after the initial dungeon build");
+  assert.equal(events.at(-1), "position", "teleport happens after all blocks are placed");
 });
 
 test("joining teleports the player to the configured lobby spawn", () => {
@@ -133,7 +135,7 @@ test("moving between same-difficulty Concrete pads preserves the active countdow
   assert.ok(messages.some(({ message }) => message.includes("Building a Very Easy dungeon")));
   assert.equal(messages.some(({ message }) => message.includes("Countdown cancelled")), false);
 
-  for (let tick = 0; tick < 1000 && positions.length === 0; tick += 1) context.tick();
+  for (let tick = 0; tick < 1500 && positions.length === 0; tick += 1) context.tick();
   assert.equal(positions.length, 1, "the original countdown completes successfully");
 });
 
@@ -148,38 +150,37 @@ test("a stale pad-stop in the final countdown tick does not cancel dungeon gener
 
   assert.ok(messages.some(({ message }) => message.includes("Building a Very Easy dungeon")));
   assert.equal(messages.some(({ message }) => message.includes("Countdown cancelled")), false);
-  for (let tick = 0; tick < 1000 && positions.length === 0; tick += 1) context.tick();
+  for (let tick = 0; tick < 1500 && positions.length === 0; tick += 1) context.tick();
   assert.equal(positions.length, 1);
 });
 
 test("advancing toward the exit streams new rooms without teleporting again", () => {
-  const { context, messages, blockRects, blockCallVolumes, positions, movePlayer } = createWorld(["player-4"]);
+  const { context, messages, blocks, positions, movePlayer } = createWorld(["player-4"]);
 
   context.onBlockStandStart("player-4", 3, 10, 4, "Lime Concrete");
-  for (let tick = 0; tick < 1200 && positions.length === 0; tick += 1) context.tick();
+  for (let tick = 0; tick < 1500 && positions.length === 0; tick += 1) context.tick();
   assert.equal(positions.length, 1);
 
-  const initialBlockCount = blockRects.length;
+  const initialBlockCount = blocks.length;
   const currentPosition = positions[0].position;
   movePlayer("player-4", [currentPosition[0], currentPosition[1], currentPosition[2] + 100]);
   for (let tick = 0; tick < 30; tick += 1) context.tick();
 
-  assert.ok(blockRects.length > initialBlockCount, "a new room is added ahead of the player's position");
-  assert.ok(blockCallVolumes.every((volume) => volume <= 360));
+  assert.ok(blocks.length > initialBlockCount, "a new room is added ahead of the player's position");
   assert.equal(positions.length, 1, "streaming rooms does not reset the player's position");
   assert.ok(messages.some(({ message }) => message.includes("Keep advancing to generate more rooms")));
-  assert.ok(blockRects.every(({ blockName }) => blockName === "Stone Bricks" || WALL_BLOCKS.has(blockName)));
-  assert.ok(blockRects.some(({ blockName }) => blockName !== "Stone Bricks"), "streamed room walls use stone textures");
+  assert.ok(blocks.every(({ blockName }) => blockName === "Stone Bricks" || WALL_BLOCKS.has(blockName)));
+  assert.ok(blocks.some(({ blockName }) => blockName !== "Stone Bricks"), "streamed room walls use per-block stone textures");
 
   context.onPlayerLeave("player-4");
-  const finalBlockCount = blockRects.length;
+  const finalBlockCount = blocks.length;
   movePlayer("player-4", [currentPosition[0], currentPosition[1], currentPosition[2] + 1000]);
   for (let tick = 0; tick < 30; tick += 1) context.tick();
-  assert.equal(blockRects.length, finalBlockCount, "the player's streaming timer stops when they leave");
+  assert.equal(blocks.length, finalBlockCount, "the player's streaming timer stops when they leave");
 });
 
 test("leaving the selected pad cancels its countdown", () => {
-  const { context, messages, blockRects, positions, clientOptions } = createWorld(["player-2"]);
+  const { context, messages, blocks, positions, clientOptions } = createWorld(["player-2"]);
 
   context.onBlockStandStart("player-2", 4, 8, 5, "Red Concrete");
   context.onBlockStandStop("player-2", 4, 8, 5, "Red Concrete");
@@ -187,7 +188,7 @@ test("leaving the selected pad cancels its countdown", () => {
 
   assert.ok(messages.some(({ message }) => message.includes("Countdown cancelled")));
   assert.equal(clientOptions.at(-1).value, "", "cancellation clears the middle-screen text");
-  assert.equal(blockRects.length, 0);
+  assert.equal(blocks.length, 0);
   assert.equal(positions.length, 0);
 });
 
@@ -199,7 +200,7 @@ test("switching directly between pads keeps the new countdown active", () => {
   // Bloxd fires the new start before the old pad's stop callback.
   context.onBlockStandStop("player-3", 0, 0, 0, "Lime Concrete");
   assert.equal(clientOptions.at(-1).value, "Hell — starting in 10...");
-  for (let tick = 0; tick < 1500 && positions.length === 0; tick += 1) context.tick();
+  for (let tick = 0; tick < 2000 && positions.length === 0; tick += 1) context.tick();
 
   assert.ok(messages.some(({ message }) => message.includes("Hell dungeon ready: 5 floors")));
   assert.equal(positions.length, 1);
