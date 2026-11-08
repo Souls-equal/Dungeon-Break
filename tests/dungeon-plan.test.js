@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createDungeonPlan, createEndlessRoomPlan } from "../src/dungeon/generator.js";
+import {
+  createDungeonPlan,
+  createEndlessRoomPlan,
+  splitBlockRect,
+} from "../src/dungeon/generator.js";
 
 const WALL_BLOCKS = [
   "Stone",
@@ -27,6 +31,38 @@ function rectangleContains(rect, x, y, z) {
     && y >= rect.from[1] && y <= rect.to[1]
     && z >= rect.from[2] && z <= rect.to[2];
 }
+
+test("large block rectangles are split into complete pieces of at most 360 blocks", () => {
+  const original = { from: [-3, -2, 4], to: [13, 2, 16], blockName: "Mossy Stone Bricks" };
+  const pieces = splitBlockRect(original);
+  const expectedVolume = 17 * 5 * 13;
+  const occupied = new Set();
+  let actualVolume = 0;
+
+  for (const piece of pieces) {
+    const sizeX = piece.to[0] - piece.from[0] + 1;
+    const sizeY = piece.to[1] - piece.from[1] + 1;
+    const sizeZ = piece.to[2] - piece.from[2] + 1;
+    const volume = sizeX * sizeY * sizeZ;
+    assert.ok(volume <= 360);
+    assert.equal(piece.blockName, original.blockName);
+    actualVolume += volume;
+
+    for (let x = piece.from[0]; x <= piece.to[0]; x += 1) {
+      for (let y = piece.from[1]; y <= piece.to[1]; y += 1) {
+        for (let z = piece.from[2]; z <= piece.to[2]; z += 1) {
+          const coordinate = `${x},${y},${z}`;
+          assert.equal(occupied.has(coordinate), false, "split pieces must not overlap");
+          occupied.add(coordinate);
+        }
+      }
+    }
+  }
+
+  assert.equal(actualVolume, expectedVolume);
+  assert.equal(occupied.size, expectedVolume, "the split pieces must cover every original block");
+  assert.equal(splitBlockRect({ from: [1, 2, 3], to: [1, 2, 3] }).length, 1);
+});
 
 test("multi-floor plans stay in range and carve each stairwell out of the floor", () => {
   const plan = createDungeonPlan(123456789, "Normal");

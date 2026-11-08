@@ -16,6 +16,7 @@ const WALL_BLOCKS = new Set([
 function createWorld(onlinePlayerIds) {
   const messages = [];
   const blockRects = [];
+  const blockCallVolumes = [];
   const positions = [];
   const clientOptions = [];
   const topRightHelpers = [];
@@ -31,6 +32,7 @@ function createWorld(onlinePlayerIds) {
       setClientOption: (playerId, option, value) => clientOptions.push({ playerId, option, value }),
       setBlockRect: (from, to, blockName) => {
         blockRects.push({ from, to, blockName });
+        blockCallVolumes.push((to[0] - from[0] + 1) * (to[1] - from[1] + 1) * (to[2] - from[2] + 1));
         events.push("block");
       },
       setPosition: (playerId, position) => {
@@ -49,6 +51,7 @@ function createWorld(onlinePlayerIds) {
     context,
     messages,
     blockRects,
+    blockCallVolumes,
     positions,
     clientOptions,
     topRightHelpers,
@@ -58,7 +61,7 @@ function createWorld(onlinePlayerIds) {
 }
 
 test("the generated World Code builds every floor in batches before teleporting the player", () => {
-  const { context, messages, blockRects, positions, clientOptions, topRightHelpers, events } = createWorld(["player-1"]);
+  const { context, messages, blockRects, blockCallVolumes, positions, clientOptions, topRightHelpers, events } = createWorld(["player-1"]);
 
   context.onBlockStandStart("player-1", 2, 10, 3, "Lime Concrete");
   assert.ok(messages.some(({ message }) => message.includes("Very Easy")));
@@ -81,6 +84,7 @@ test("the generated World Code builds every floor in batches before teleporting 
 
   for (let tick = 0; tick < 1000 && positions.length === 0; tick += 1) context.tick();
   assert.ok(blockRects.length > 10, "the dungeon is generated in bounded batches");
+  assert.ok(blockCallVolumes.every((volume) => volume <= 360), "each setBlockRect call stays within the 360-block cap");
   assert.ok(blockRects.some(({ from, to }) => from[1] === -1000 && to[1] === -1000));
   assert.ok(blockRects.some(({ from, to }) => from[1] === -992 && to[1] === -992), "an upper floor is built");
   assert.equal(positions.length, 1);
@@ -127,7 +131,7 @@ test("moving between same-difficulty Concrete pads preserves the active countdow
 });
 
 test("advancing toward the exit streams new rooms without teleporting again", () => {
-  const { context, messages, blockRects, positions, movePlayer } = createWorld(["player-4"]);
+  const { context, messages, blockRects, blockCallVolumes, positions, movePlayer } = createWorld(["player-4"]);
 
   context.onBlockStandStart("player-4", 3, 10, 4, "Lime Concrete");
   for (let tick = 0; tick < 1200 && positions.length === 0; tick += 1) context.tick();
@@ -139,6 +143,7 @@ test("advancing toward the exit streams new rooms without teleporting again", ()
   for (let tick = 0; tick < 30; tick += 1) context.tick();
 
   assert.ok(blockRects.length > initialBlockCount, "a new room is added ahead of the player's position");
+  assert.ok(blockCallVolumes.every((volume) => volume <= 360));
   assert.equal(positions.length, 1, "streaming rooms does not reset the player's position");
   assert.ok(messages.some(({ message }) => message.includes("Keep advancing to generate more rooms")));
   assert.ok(blockRects.every(({ blockName }) => blockName === "Stone Bricks" || WALL_BLOCKS.has(blockName)));

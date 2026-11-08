@@ -9,7 +9,8 @@ const DUNGEON_CONFIG = {
   corridorWidth: 3,
   stairwellSize: 3,
   levelGap: 8,
-  blocksPerTick: 12,
+  maxBlocksPerRect: 360,
+  blockRectsPerTick: 12,
   progressCheckTicks: 10,
   generationAheadDistance: 18,
   maxStreamRoomSize: 9,
@@ -127,6 +128,54 @@ function addRect(rects, x1, y1, z1, x2, y2, z2) {
 
 function addWall(walls, x1, y1, z1, x2, y2, z2) {
   addRect(walls, x1, y1, z1, x2, y2, z2);
+}
+
+// Treat both endpoints as included when budgeting each rectangle call.
+export function splitBlockRect(operation, maxBlocks = DUNGEON_CONFIG.maxBlocksPerRect) {
+  const lengths = [0, 1, 2].map((axis) => operation.to[axis] - operation.from[axis] + 1);
+  const axisOrder = [0, 1, 2];
+  for (let left = 0; left < axisOrder.length - 1; left += 1) {
+    for (let right = left + 1; right < axisOrder.length; right += 1) {
+      if (lengths[axisOrder[left]] > lengths[axisOrder[right]]) {
+        const swap = axisOrder[left];
+        axisOrder[left] = axisOrder[right];
+        axisOrder[right] = swap;
+      }
+    }
+  }
+
+  const chunkLengths = [1, 1, 1];
+  let remainingBlocks = maxBlocks;
+  for (const axis of axisOrder) {
+    const chunkLength = lengths[axis] < remainingBlocks ? lengths[axis] : remainingBlocks;
+    chunkLengths[axis] = chunkLength;
+    remainingBlocks = (remainingBlocks - (remainingBlocks % chunkLength)) / chunkLength;
+  }
+
+  const pieces = [];
+  const xStep = chunkLengths[0];
+  const yStep = chunkLengths[1];
+  const zStep = chunkLengths[2];
+  for (let x = operation.from[0]; x <= operation.to[0]; x += xStep) {
+    const maxPieceX = x + xStep - 1 < operation.to[0] ? x + xStep - 1 : operation.to[0];
+    for (let y = operation.from[1]; y <= operation.to[1]; y += yStep) {
+      const maxPieceY = y + yStep - 1 < operation.to[1] ? y + yStep - 1 : operation.to[1];
+      for (let z = operation.from[2]; z <= operation.to[2]; z += zStep) {
+        const piece = {
+          from: [x, y, z],
+          to: [
+            maxPieceX,
+            maxPieceY,
+            z + zStep - 1 < operation.to[2] ? z + zStep - 1 : operation.to[2],
+          ],
+        };
+        if (operation.blockName !== undefined) piece.blockName = operation.blockName;
+        pieces.push(piece);
+      }
+    }
+  }
+
+  return pieces;
 }
 
 function assignRandomWallBlocks(walls, random) {
@@ -532,19 +581,24 @@ function reportGenerationFailure(playerId, error) {
 }
 
 function runBlockBuild(session, operations, onComplete) {
+  const boundedOperations = [];
+  for (const operation of operations) {
+    for (const piece of splitBlockRect(operation)) boundedOperations.push(piece);
+  }
+
   let nextOperation = 0;
   const buildTimer = scheduleInterval(() => {
     try {
-      let placedThisTick = 0;
-      while (nextOperation < operations.length && placedThisTick < DUNGEON_CONFIG.blocksPerTick) {
-        const operation = operations[nextOperation];
+      let callsThisTick = 0;
+      while (nextOperation < boundedOperations.length && callsThisTick < DUNGEON_CONFIG.blockRectsPerTick) {
+        const operation = boundedOperations[nextOperation];
         api.setBlockRect(
           operation.from,
           operation.to,
           operation.blockName || DUNGEON_CONFIG.blockName,
         );
         nextOperation += 1;
-        placedThisTick += 1;
+        callsThisTick += 1;
       }
     } catch (error) {
       buildTimer.stop();
@@ -553,7 +607,7 @@ function runBlockBuild(session, operations, onComplete) {
       return;
     }
 
-    if (nextOperation < operations.length) return;
+    if (nextOperation < boundedOperations.length) return;
 
     buildTimer.stop();
     session.buildTimer = null;
