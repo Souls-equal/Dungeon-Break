@@ -41,7 +41,7 @@ Tous les textes visibles par les joueurs sont en anglais.
 ## Génération actuelle du donjon
 
 - Après le compte à rebours, un labyrinthe procédural est construit avec des sols et murs en **Stone Bricks**.
-- La taille évolue selon la difficulté : de 4×4 salles en Very Easy à 11×11 en Hell. Un algorithme de parcours aléatoire choisit les passages.
+- La taille évolue selon la difficulté : de 4×4 salles en Very Easy à 11×11 en Hell. Chaque salle fait 5×5 blocs ; un algorithme de parcours aléatoire choisit les passages, et plusieurs salles reçoivent un pilier de soutien en Stone Bricks.
 - Chaque donjon reçoit un emplacement horizontal aléatoire dans les bornes `-50000..50000` en X et Z ; son sol est à `Y = -1000`.
 - Les blocs sont posés par lots sur plusieurs ticks. Une fois la construction terminée, le joueur est téléporté dans la salle de départ ; une ouverture opposée sert de sortie.
 

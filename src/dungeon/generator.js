@@ -4,8 +4,9 @@ const DUNGEON_CONFIG = {
   minCoordinate: -50000,
   maxCoordinate: 50000,
   floorY: -1000,
-  roomSize: 3,
+  roomSize: 5,
   wallHeight: 3,
+  pillarChanceDenominator: 4,
   blocksPerTick: 4,
   blockName: "Stone Bricks",
   cellsByDifficulty: {
@@ -94,6 +95,7 @@ export function createDungeonPlan(seed, difficulty) {
   const wallTopY = DUNGEON_CONFIG.floorY + DUNGEON_CONFIG.wallHeight;
   const maxX = originX + width - 1;
   const maxZ = originZ + width - 1;
+  let pillarCount = 0;
 
   // Outer shell, with a wide entrance at the start and an exit opposite it.
   const entranceX = originX + 1;
@@ -153,6 +155,28 @@ export function createDungeonPlan(seed, difficulty) {
           dividerZ,
         );
       }
+
+      // Keep the start and goal rooms clear; some other rooms get a support pillar.
+      const lastCell = cellCount * cellCount - 1;
+      if (
+        index !== 0 &&
+        index !== lastCell &&
+        randomInteger(random, 1, DUNGEON_CONFIG.pillarChanceDenominator) === 1
+      ) {
+        const pillarX = roomX + (DUNGEON_CONFIG.roomSize - 1) / 2;
+        const pillarZ = roomZ + (DUNGEON_CONFIG.roomSize - 1) / 2;
+        const pillarHeight = randomInteger(random, 2, DUNGEON_CONFIG.wallHeight);
+        addWall(
+          walls,
+          pillarX,
+          wallBottomY,
+          pillarZ,
+          pillarX,
+          DUNGEON_CONFIG.floorY + pillarHeight,
+          pillarZ,
+        );
+        pillarCount += 1;
+      }
     }
   }
 
@@ -169,6 +193,7 @@ export function createDungeonPlan(seed, difficulty) {
     spawnPosition: [spawnRoomX + 0.5, DUNGEON_CONFIG.floorY + 1, spawnRoomZ + 0.5],
     walls,
     passageCount: eastOpen.filter(Boolean).length + southOpen.filter(Boolean).length,
+    pillarCount,
     cellCount,
   };
 }
