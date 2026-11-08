@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 import {
   MODULE_TYPE_IDS,
   blockKey,
+  chooseStreamedModule,
   createDungeonPlan,
-  createEndlessRoomPlan,
+  createStreamedModulePlan,
   dungeonBlockIterator,
   endlessRoomBlockIterator,
   moduleTypeForSides,
@@ -352,31 +353,65 @@ test("the spawn pad is a supported 3x3 area inside the entrance room", () => {
   }
 });
 
-test("streamed rooms continue the route, vary in shape and close at the boundary", () => {
+test("streamed modules continue the route, vary in shape and never overlap", () => {
   const plan = createDungeonPlan(2468, "Normal");
-  const first = createEndlessRoomPlan(11, plan.frontier.centerX, plan.frontier.floorY, plan.frontier.nextRoomZ);
-  const second = createEndlessRoomPlan(22, plan.frontier.centerX, plan.frontier.floorY, first.endZ + 2);
-  const last = createEndlessRoomPlan(33, plan.frontier.centerX, plan.frontier.floorY, second.endZ + 2, false);
-  const boundary = createEndlessRoomPlan(44, 0, plan.frontier.floorY, 49994, false, 50000);
+  const floorY = plan.level.floorY;
+  const occupied = plan.level.rooms.map((room) => ({
+    x: room.x, z: room.z, width: room.width, depth: room.depth,
+  }));
 
-  assert.equal(first.startZ, plan.frontier.nextRoomZ, "no gap after the exit corridor");
-  assert.equal(first.room.ports.north, true, "the new room opens onto the previous corridor");
-  assert.equal(second.startZ, first.endZ + 2);
-  assert.equal(last.startZ, second.endZ + 2);
-  assert.ok(boundary.endZ <= 50000, "streamed rooms stay inside the world");
-  assert.equal(last.room.ports.north, true);
-  assert.equal(countOpen(last.room.ports), 1, "the terminal room closes its exit");
-
+  let entry = "north";
+  let anchorX = plan.frontier.centerX;
+  let anchorZ = plan.frontier.z;
   const shapes = new Set();
-  for (let seed = 1; seed <= 60; seed += 1) {
-    shapes.add(createEndlessRoomPlan(seed * 7919, 0, -1000, 100).room.type.id);
-  }
-  assert.ok(shapes.size >= 3, "streamed rooms are not all the same shape");
+  const doors = [];
 
+  for (let index = 0; index < 12; index += 1) {
+    const module = chooseStreamedModule(1000 + index * 977, entry, anchorX, anchorZ, floorY, occupied);
+    // The entry door always faces the corridor that leads to the module.
+    assert.equal(module.room.ports[entry], true, `module ${index} is entered on ${entry}`);
+    assert.equal(countOpen(module.room.ports) >= 1, true);
+    if (module.exit) {
+      assert.notEqual(module.exit, entry, "a through module leaves by another side");
+      assert.equal(module.room.ports[module.exit], true);
+    }
+    for (const box of occupied) {
+      assert.equal(
+        module.room.x + module.room.width - 1 + 1 < box.x
+          || box.x + box.width - 1 + 1 < module.room.x
+          || module.room.z + module.room.depth - 1 + 1 < box.z
+          || box.z + box.depth - 1 + 1 < module.room.z,
+        true,
+        `module ${index} never overlaps an existing room`,
+      );
+    }
+    occupied.push({
+      x: module.room.x, z: module.room.z, width: module.room.width, depth: module.room.depth,
+    });
+    shapes.add(module.room.type.id);
+    doors.push(module.exit);
+    if (!module.exit) break;
+    entry = { north: "south", south: "north", east: "west", west: "east" }[module.exit];
+    anchorX = module.nextAnchorX;
+    anchorZ = module.nextAnchorZ;
+  }
+
+  assert.ok(shapes.size >= 3, "streamed modules are not all the same shape");
+  assert.ok(doors.includes("east") || doors.includes("west"), "the route turns, it is not one corridor");
+
+  // The entry door is always centred on the anchor cell, so the corridor and
+  // the door line up block for block.
+  const first = createStreamedModulePlan(11, "north", "south", plan.frontier.centerX, plan.frontier.z, floorY);
+  const centerX = first.room.x + 3;
+  assert.equal(centerX, plan.frontier.centerX, "the module is centred on the exit corridor");
+  assert.equal(first.room.z, plan.frontier.z + 1, "the module starts right behind the exit corridor");
+
+  // A terminal module closes the route: its exit side stays walled.
+  const last = createStreamedModulePlan(33, "north", null, 0, 0, floorY, false);
   const blocks = collect(endlessRoomBlockIterator(last));
-  const walls = new Set(blocks.filter(({ y }) => y !== plan.frontier.floorY).map(({ x, z }) => `${x},${z}`));
-  const centerX = last.room.x + 3;
-  assert.ok(walls.has(`${centerX},${last.endZ}`), "the last room is walled where the route stops");
+  const walls = new Set(blocks.filter(({ y }) => y !== floorY).map(({ x, z }) => `${x},${z}`));
+  assert.ok(walls.has(`${3},${last.room.z + 6}`), "the last module is walled where the route stops");
+  assert.equal(countOpen(last.room.ports), 1, "the terminal module keeps a single door");
 });
 
 function countOpen(ports) {

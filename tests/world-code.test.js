@@ -98,7 +98,16 @@ test("the player is loaded in first, boxed, then the dungeon is built around the
 
   context.tick();
   assert.equal(clientOptions.at(-1).value, "", "the middle-screen countdown is cleared on completion");
-  assert.ok(blocks.length >= 25, "the landing patch is written before anything else");
+  // The chunk was created by a read in the countdown callback, and nothing is
+  // written in that same tick: the client needs a few ticks to be ready.
+  assert.equal(positions.length, 1, "the player is moved in immediately");
+  assert.equal(blocks.length, 0, "no block is written in the same tick as the read");
+  // The guard runs every `spawnCheckTicks` (5): the patch lands on its first
+  // pass after the warm-up, never in the tick that read the chunk.
+  // The guard sweeps every `spawnCheckTicks` and waits `chunkWarmupTicks`
+  // sweeps before writing: about 15 ticks after the countdown.
+  for (let tick = 0; tick < 20; tick += 1) context.tick();
+  assert.ok(blocks.length >= 25, "the landing patch is written once the chunk is warm");
   assert.ok(blocks.slice(0, 25).every(({ blockName }) => blockName === "Stone Bricks"));
   assert.ok(
     blocks.slice(0, 25).some(({ x, z }) => Number.isInteger(x) && Number.isInteger(z)),

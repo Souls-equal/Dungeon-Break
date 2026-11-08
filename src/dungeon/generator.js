@@ -29,6 +29,12 @@ const DUNGEON_CONFIG = {
   // Nothing is generated further than this from the player, so every write
   // lands in a chunk their client has already loaded.
   generationRadius: 60,
+  // A chunk is created by the first read, but the client still needs a moment
+  // before it accepts writes: writing in the same tick leaves the void.
+  chunkWarmupTicks: 3,
+  // A couple of ticks between closing the box and starting the build, so the
+  // box itself is in place before anything else is written.
+  boxSettleTicks: 2,
   // The player is boxed in while the first room is built, so they cannot walk
   // out of the loaded chunks before the floor exists. The walls are cleared
   // once the level is walkable, and the depth matches the 3-wide doors.
@@ -638,76 +644,127 @@ export function createDungeonPlan(seed, difficulty) {
 // ------------------------------------------------------- streamed modules --
 
 /**
- * Rooms generated further along the route. `entry` is the route axis seen from
- * the new room (the side facing the previous room), and `mode` is either
- * "through" (route continues) or "end" (the route stops here).
+ * A streamed module is entered through `entry` (the side facing the previous
+ * module) and left through `exit`. `anchorX`/`anchorZ` is the corridor cell in
+ * front of the entry door, which the previous module already floored.
+ *
+ * Keeping the real port set, instead of only "north and south", is what makes
+ * the stream assemble: a turn goes east or west and the next module moves to
+ * that side, so the route is a real walk through modules.
  */
-function streamedPorts(entry, mode) {
-  const ports = { north: false, east: false, south: false, west: false };
-  const entrySides = Array.isArray(entry) ? entry : [entry];
-  for (const side of entrySides) ports[side] = true;
-  if (mode !== "through") return ports;
+export function createStreamedModulePlan(seed, entry, exit, anchorX, anchorZ, floorY, hasFollowingRoom = true) {
+  const size = DUNGEON_CONFIG.roomSize;
+  // The room is centred on the entry corridor: that is half a room, not half a
+  // door. Using the door width here shifted every module by two cells and the
+  // corridor no longer met the door.
+  const centerOffset = (size - 1) / 2;
+  const random = makeRandom(seed);
 
-  if (entrySides.length > 1) {
-    // Rejoining a previous module: keep going on the opposite axis.
-    const [first] = entrySides;
-    ports[OPPOSITE_SIDE[first]] = true;
-    return ports;
+  const roomX = entry === "east" ? anchorX - size
+    : entry === "west" ? anchorX + 1
+      : anchorX - centerOffset;
+  const roomZ = entry === "south" ? anchorZ - size
+    : entry === "north" ? anchorZ + 1
+      : anchorZ - centerOffset;
+
+  const ports = { north: false, east: false, south: false, west: false };
+  ports[entry] = true;
+  if (exit) ports[exit] = true;
+  if (hasFollowingRoom && exit && random() < 0.14) {
+    ports[pick(random, SIDE_ORDER.filter((side) => side !== entry && side !== exit))] = true;
   }
 
-  ports[OPPOSITE_SIDE[entrySides[0]]] = true;
-  return ports;
+  const room = makeRoom(0, 0, 0, roomX, roomZ, floorY, ports, size, size);
+  room.type = moduleTypeForSides(openSides(ports));
+  room.label = room.type.label;
+  // Only the exit corridor is this module's to floor: the entry corridor
+  // belongs to the previous one, so no tile is ever written twice.
+  room.floorRects = [
+    {
+      from: [roomX, floorY, roomZ],
+      to: [roomX + size - 1, floorY, roomZ + size - 1],
+    },
+  ];
+  if (exit) {
+    const corridor = exitCorridorCell(room, exit);
+    room.floorRects.push({
+      from: [corridor.x, floorY, corridor.z],
+      to: [corridor.x, floorY, corridor.z],
+    });
+  }
+
+  const corridor = exit ? exitCorridorCell(room, exit) : null;
+  return {
+    seed,
+    room,
+    ports,
+    entry,
+    exit,
+    hasFollowingRoom,
+    floorY,
+    anchorX,
+    anchorZ,
+    nextAnchorX: corridor ? corridor.x : null,
+    nextAnchorZ: corridor ? corridor.z : null,
+  };
+}
+
+/** The free cell just outside the module's exit door. */
+function exitCorridorCell(room, exit) {
+  const centerX = roomCenterX(room);
+  const centerZ = roomCenterZ(room);
+  const maxX = room.x + room.width - 1;
+  const maxZ = room.z + room.depth - 1;
+
+  if (exit === "north") return { x: centerX, z: room.z - 1 };
+  if (exit === "south") return { x: centerX, z: maxZ + 1 };
+  if (exit === "east") return { x: maxX + 1, z: centerZ };
+  return { x: room.x - 1, z: centerZ };
+}
+
+/** Two room boxes clash when they overlap once grown by one cell. */
+export function roomBoxesClash(a, b, margin = 1) {
+  return !(a.x + a.width - 1 + margin < b.x
+    || b.x + b.width - 1 + margin < a.x
+    || a.z + a.depth - 1 + margin < b.z
+    || b.z + b.depth - 1 + margin < a.z);
 }
 
 /**
- * Rooms generated further along the route. The entry door always faces the
- * previous room, and the exit door is chosen among the other sides, so the
- * stream keeps producing turns, corridors, three-way rooms and dead ends
- * instead of one repeated chamber.
+ * Picks the next streamed module. The route tries to go straight, then turns;
+ * a direction whose room would land on a module already built is refused, so
+ * the route never folds back and overwrites itself. When no direction fits, the
+ * module becomes a dead end and the route stops there.
  */
-export function createEndlessRoomPlan(
-  seed,
-  centerX,
-  floorY,
-  startZ,
-  hasFollowingRoom = true,
-  maxEndZ = DUNGEON_CONFIG.maxCoordinate,
-) {
-  const random = makeRandom(seed);
-  const size = DUNGEON_CONFIG.roomSize;
-  // When another room follows, one cell must stay free for the corridor.
-  const availableDepth = maxEndZ - startZ + 1 - (hasFollowingRoom ? 1 : 0);
-  const roomDepth = Math.min(size, availableDepth);
-  const roomWidth = size;
-  const ports = { north: true, east: false, south: false, west: false };
+export function chooseStreamedModule(seed, entry, anchorX, anchorZ, floorY, occupied) {
+  const random = makeRandom((seed + 991) % RANDOM_MODULUS || 1);
+  const straight = OPPOSITE_SIDE[entry];
+  const left = SIDE_ORDER[(SIDE_ORDER.indexOf(entry) + 1) % SIDE_ORDER.length];
+  const right = SIDE_ORDER[(SIDE_ORDER.indexOf(entry) + 3) % SIDE_ORDER.length];
+  // Mostly straight, but often a turn, so the route is not one long corridor.
+  const preferred = pick(random, [straight, straight, straight, left, right]);
+  const candidates = [preferred, straight, left, right].filter(
+    (side, index, list) => list.indexOf(side) === index,
+  );
 
-  if (hasFollowingRoom) {
-    const exitSides = ["south", "south", "south", "east", "west"];
-    ports[pick(random, exitSides)] = true;
-    // Sometimes a side branch makes the streamed room a three-way junction.
-    if (random() < 0.15) {
-      const extra = pick(random, SIDE_ORDER.filter((side) => side !== "north" && !ports[side]));
-      ports[extra] = true;
-    }
+  for (const exit of candidates) {
+    const plan = createStreamedModulePlan(seed, entry, exit, anchorX, anchorZ, floorY, true);
+    const clash = occupied.some((box) => roomBoxesClash(box, plan.room));
+    if (!clash) return plan;
   }
+  // Nowhere to go: close the route with a dead-end module.
+  return createStreamedModulePlan(seed, entry, null, anchorX, anchorZ, floorY, false);
+}
 
-  const entryIndex = 0;
-  // The door of a streamed room is the middle 3 cells of its north wall, so the
-  // room must be centred on the corridor: x = centerX - (width - 1) / 2.
-  const roomX = centerX - (roomWidth - 1) / 2;
-  const room = makeRoom(entryIndex, 0, 0, roomX, startZ, floorY, ports, roomWidth, roomDepth);
-
-  return {
-    seed,
-    startZ,
-    endZ: startZ + roomDepth - 1,
-    roomWidth,
-    roomDepth,
-    hasFollowingRoom,
-    floorY,
-    room,
-    ports,
-  };
+/** Which way the route leaves a module, given how it was entered. */
+export function pickStreamedExit(seed, entry, hasFollowingRoom) {
+  if (!hasFollowingRoom) return null;
+  const random = makeRandom((seed + 991) % RANDOM_MODULUS || 1);
+  const straight = OPPOSITE_SIDE[entry];
+  const left = SIDE_ORDER[(SIDE_ORDER.indexOf(entry) + 1) % SIDE_ORDER.length];
+  const right = SIDE_ORDER[(SIDE_ORDER.indexOf(entry) + 3) % SIDE_ORDER.length];
+  // Mostly straight, but often a turn, so the route is not one long corridor.
+  return pick(random, [straight, straight, straight, left, right]);
 }
 
 export function* endlessRoomBlockIterator(roomPlan, textureSeed = roomPlan.seed) {
@@ -717,6 +774,7 @@ export function* endlessRoomBlockIterator(roomPlan, textureSeed = roomPlan.seed)
   }
   yield* moduleBlocksWithRandom(roomPlan.room, random);
 }
+
 
 /** Index of the chunk a world coordinate falls into, for a 32-block chunk. */
 function chunkIndexOf(coordinate) {
@@ -1127,22 +1185,32 @@ function teleportAndBox(playerId, plan) {
   const spawn = plan.level.spawnPosition;
   // x.5 / z.5 puts the player in the middle of the spawn cell.
   const position = [Math.floor(spawn[0]) + 0.5, spawn[1], Math.floor(spawn[2]) + 0.5];
-  // 1. Read the landing cell: this forces the engine to create the chunk.
+  // Reading the landing cell forces the engine to create the chunk. Nothing is
+  // written in the same tick: the client needs a couple of ticks before it
+  // accepts the writes, otherwise the first blocks are lost and leave a void.
   readBlockName(position[0] - 0.5, plan.level.floorY, position[2] - 0.5);
-  // 2. Floor the landing patch, so the player never lands in the void and can
-  //    reach the box walls without walking over an unbuilt tile.
-  const padKeys = new Set();
-  for (const { x, z } of landingPadTiles(plan)) {
-    api.setBlock(x, plan.level.floorY, z, DUNGEON_CONFIG.blockName);
-    padKeys.add(blockKey(x, plan.level.floorY, z));
-  }
-  // 3. Move the player in: their client now loads the chunks around them.
   api.setPosition(playerId, position);
-  // 4. Close the box, so they cannot walk out of the loaded chunks.
-  for (const block of boxWallBlocks(plan)) {
-    api.setBlock(block.x, block.y, block.z, block.blockName);
+  return { position, padKeys: new Set(), warmupTicks: 0 };
+}
+
+/**
+ * Second phase, once the chunks the player stands in are warm: floor the
+ * landing patch and close the box, in that order.
+ */
+function floorLandingAndBox(playerId, plan) {
+  const padKeys = new Set();
+  try {
+    for (const { x, z } of landingPadTiles(plan)) {
+      api.setBlock(x, plan.level.floorY, z, DUNGEON_CONFIG.blockName);
+      padKeys.add(blockKey(x, plan.level.floorY, z));
+    }
+    for (const block of boxWallBlocks(plan)) {
+      api.setBlock(block.x, block.y, block.z, block.blockName);
+    }
+  } catch (error) {
+    logFailure("Landing pad or box failed", error);
   }
-  return { position, padKeys };
+  return padKeys;
 }
 
 /** Opens the box again once the floor around the player is walkable. */
@@ -1160,24 +1228,43 @@ function removeBox(playerId, plan) {
  * Last line of defence: while the player stands in the box, read the pad back
  * and rewrite whatever the world did not keep.
  */
-function startSpawnGuard(session, plan, onFirstPass) {
+function startSpawnGuard(session, plan, onTickPass, onBuildPass) {
   let attempts = 0;
 
   session.spawnGuardTimer = scheduleInterval(() => {
     if (!session.active) return;
     attempts += 1;
-    // The player has been moved and their chunk is live: start the real build
-    // now, then keep sweeping to repair anything the world swallows.
-    if (onFirstPass) {
-      const start = onFirstPass;
-      onFirstPass = null;
-      start();
+    void DUNGEON_CONFIG.boxSettleTicks;
+
+    // Phase 1: wait for the warm-up, then floor the landing and close the box.
+    if (onTickPass && !session.boxed) {
+      if (attempts < DUNGEON_CONFIG.chunkWarmupTicks) return;
+      session.boxed = true;
+      try {
+        onTickPass(attempts);
+      } catch (error) {
+        reportGenerationFailure(session.playerId, error);
+        return;
+      }
+    }
+    // Phase 2: the box is in place, so the real build can start.
+    if (onBuildPass && session.boxed && !session.buildStarted) {
+      const start = onBuildPass;
+      onBuildPass = null;
+      try {
+        start();
+      } catch (error) {
+        reportGenerationFailure(session.playerId, error);
+        return;
+      }
     }
 
+    // The landing pad is checked on every sweep, until it reads back complete.
     let missing = missingSpawnPadTiles(plan);
-    // Rewrite the whole pad on the first sweep: an unreadable block still gets
-    // a fresh write, so a lost spawn floor is repaired without read support.
-    if (attempts > 1 || missing === null) missing = spawnPadTiles(plan);
+    // Rewrite the whole pad on the first sweep after the box: an unreadable
+    // block still gets a fresh write, so a lost spawn floor is repaired even
+    // without read support.
+    if (attempts > DUNGEON_CONFIG.chunkWarmupTicks + 1 || missing === null) missing = spawnPadTiles(plan);
     if (missing.length === 0) {
       session.spawnGuardTimer.stop();
       session.spawnGuardTimer = null;
@@ -1197,7 +1284,7 @@ function startSpawnGuard(session, plan, onFirstPass) {
       // A failed position read must not stop the repair loop.
     }
 
-    if (attempts >= DUNGEON_CONFIG.spawnCheckAttempts) {
+    if (attempts >= DUNGEON_CONFIG.spawnCheckAttempts + DUNGEON_CONFIG.chunkWarmupTicks) {
       session.spawnGuardTimer.stop();
       session.spawnGuardTimer = null;
     }
@@ -1272,88 +1359,95 @@ function finishStreaming(session, message) {
   }
 }
 
+/** Distance, in blocks, between the player and the module about to be built. */
+function moduleDistanceFrom(session, playerX, playerZ) {
+  // The anchor is the corridor cell in front of the entry door: the module
+  // itself is one half room further along the entry axis.
+  const [dx, dz] = SIDE_VECTOR[session.nextStreamEntry];
+  const centerX = session.nextStreamX - dx * (DUNGEON_CONFIG.roomSize / 2);
+  const centerZ = session.nextStreamZ - dz * (DUNGEON_CONFIG.roomSize / 2);
+  return Math.hypot(centerX - playerX, centerZ - playerZ);
+}
+
 /**
- * A streamed room is only built when it fits entirely inside the generation
- * radius around the player: chunk writes further away may never land.
+ * Builds the next module of the route. It is only built when it fits entirely
+ * inside the generation radius around the player: a write further away lands in
+ * an unloaded chunk and is lost, which would tear the route apart.
  */
-function buildNextStreamRoom(session, playerZ) {
-  const startZ = session.nextRoomZ;
-  if (startZ + DUNGEON_CONFIG.roomSize - 1 > DUNGEON_CONFIG.maxCoordinate) {
+function buildNextStreamRoom(session, playerX, playerZ) {
+  if (session.nextStreamX + DUNGEON_CONFIG.roomSize > DUNGEON_CONFIG.maxCoordinate
+    || session.nextStreamZ + DUNGEON_CONFIG.roomSize > DUNGEON_CONFIG.maxCoordinate
+    || session.nextStreamX - DUNGEON_CONFIG.roomSize < DUNGEON_CONFIG.minCoordinate
+    || session.nextStreamZ - DUNGEON_CONFIG.roomSize < DUNGEON_CONFIG.minCoordinate) {
     finishStreaming(session, "The dungeon reached the world boundary.");
     return;
   }
-  const currentZ = playerPositionZ(session);
-  const anchorZ = currentZ === null ? playerZ : currentZ;
-  if (startZ + DUNGEON_CONFIG.roomSize - 1 - anchorZ > DUNGEON_CONFIG.generationRadius) return;
+  if (moduleDistanceFrom(session, playerX, playerZ)
+    + DUNGEON_CONFIG.roomSize / 2 > DUNGEON_CONFIG.generationRadius) {
+    return;
+  }
 
-  const roomSeed = (session.seed + (session.streamRoomIndex + 1) * 130363) % RANDOM_MODULUS || 1;
-  const preview = createEndlessRoomPlan(
-    roomSeed,
-    session.centerX,
+  const moduleSeed = (session.seed + (session.streamRoomIndex + 1) * 130363) % RANDOM_MODULUS || 1;
+  const modulePlan = chooseStreamedModule(
+    moduleSeed,
+    session.nextStreamEntry,
+    session.nextStreamX,
+    session.nextStreamZ,
     session.floorY,
-    startZ,
-    true,
-    DUNGEON_CONFIG.maxCoordinate,
+    session.occupiedRooms,
   );
-  const nextStartZ = preview.endZ + ROOM_CONNECTION_GAP + 1;
-  const canFollow = nextStartZ + DUNGEON_CONFIG.roomSize - 1 <= DUNGEON_CONFIG.maxCoordinate;
-  const roomPlan = canFollow
-    ? preview
-    : createEndlessRoomPlan(
-      roomSeed,
-      session.centerX,
-      session.floorY,
-      startZ,
-      false,
-      DUNGEON_CONFIG.maxCoordinate,
-    );
-
-  if (roomPlan.endZ > DUNGEON_CONFIG.maxCoordinate) {
-    finishStreaming(session, "The dungeon reached the world boundary.");
-    return;
-  }
 
   session.isBuilding = true;
-  startBlockBuild(session, endlessRoomBlockIterator(roomPlan, roomSeed), () => {
-    // Same audit as the entrance room: a room whose floor was partly swallowed
-    // must never become the new frontier.
+  startBlockBuild(session, endlessRoomBlockIterator(modulePlan, moduleSeed), () => {
+    // Same audit as the level: a module whose floor was partly swallowed must
+    // never become the new start of the route.
     try {
-      repairFloorTiles(roomFloorTiles(roomPlan.room), roomPlan.floorY);
+      repairFloorTiles(roomFloorTiles(modulePlan.room), modulePlan.floorY);
     } catch (error) {
       logFailure("Streamed floor repair failed", error);
     }
     session.streamRoomIndex += 1;
-    session.frontierZ = roomPlan.hasFollowingRoom
-      ? roomPlan.endZ + ROOM_CONNECTION_GAP
-      : roomPlan.endZ;
-    session.nextRoomZ = roomPlan.endZ + ROOM_CONNECTION_GAP + 1;
+    session.occupiedRooms.push({
+      x: modulePlan.room.x,
+      z: modulePlan.room.z,
+      width: modulePlan.room.width,
+      depth: modulePlan.room.depth,
+    });
     session.isBuilding = false;
 
-    if (!roomPlan.hasFollowingRoom) {
+    if (!modulePlan.exit) {
       finishStreaming(session, "You reached the edge of the generated dungeon area.");
       return;
     }
-    // Keep filling the buffer without waiting for the next progress tick.
-    continueStreaming(session, playerZ);
+    session.nextStreamEntry = OPPOSITE_SIDE[modulePlan.exit];
+    session.nextStreamX = modulePlan.nextAnchorX;
+    session.nextStreamZ = modulePlan.nextAnchorZ;
+    continueStreaming(session, playerX, playerZ);
   });
 }
 
-function continueStreaming(session, knownPlayerZ) {
+function continueStreaming(session, knownX, knownZ) {
   if (!session.active || session.isBuilding || session.finished || !session.buildStarted) return;
 
-  let playerZ = knownPlayerZ;
-  if (playerZ === undefined) {
+  let playerX = knownX;
+  let playerZ = knownZ;
+  if (playerX === undefined || playerZ === undefined) {
+    let position = null;
     try {
-      playerZ = playerPositionZ(session);
+      position = api.getPosition(session.playerId);
     } catch (error) {
       logFailure("Position check failed", error);
       return;
     }
+    if (!position || position.length < 3) return;
+    playerX = position[0];
+    playerZ = position[2];
   }
-  if (playerZ === null || playerZ === undefined) return;
-  if (session.frontierZ - playerZ >= DUNGEON_CONFIG.streamBufferDistance) return;
+  // Fill the buffer ahead of the player: build while the next module is closer
+  // than `streamBufferDistance`, and wait for them once it is far ahead.
+  if (moduleDistanceFrom(session, playerX, playerZ) >= DUNGEON_CONFIG.streamBufferDistance) return;
 
-  buildNextStreamRoom(session, playerZ);
+  buildNextStreamRoom(session, playerX, playerZ);
 }
 
 function startDungeonProgress(session) {
@@ -1404,7 +1498,19 @@ export function generateDungeon(playerId, difficulty) {
     centerX: plan.frontier.centerX,
     floorY: plan.frontier.floorY,
     frontierZ: plan.frontier.z,
-    nextRoomZ: plan.frontier.nextRoomZ,
+    // The route leaves the level through its exit corridor: the first streamed
+    // module is placed on the free cell right after it, entered from the north.
+    // `nextStreamX/Z` is the corridor cell in front of the entry door: the exit
+    // corridor of the level for the first module, then each module's own.
+    nextStreamEntry: "north",
+    // Any room already built: the streamed route must never overlap them.
+    occupiedRooms: plan.level.rooms.map((room) => ({
+      x: room.x, z: room.z, width: room.width, depth: room.depth,
+    })),
+    nextStreamX: plan.frontier.centerX,
+    // The anchor is the exit corridor of the level itself: the module starts
+    // right behind it, so there is never an unowned row between the two.
+    nextStreamZ: plan.frontier.z,
     streamRoomIndex: 0,
     isBuilding: false,
     buildStarted: false,
@@ -1433,14 +1539,19 @@ export function generateDungeon(playerId, difficulty) {
   const summary = moduleSummary(plan.level);
   const floorTiles = levelFloorTiles(plan.level);
 
+  // The landing is floored and the box closed only after the warm-up: the read
+  // above just created the chunk, it is not ready to accept writes yet.
+  let padKeys = new Set();
   startSpawnGuard(session, plan, () => {
+    padKeys = floorLandingAndBox(playerId, plan);
+  }, () => {
     if (session.buildStarted) return;
     session.buildStarted = true;
 
     startBlockBuild(
       session,
       dungeonBlockIterator(plan, {
-        skipFloorKeys: landing.padKeys,
+        skipFloorKeys: padKeys,
         floorTiles,
         textureSeed: seed,
       }),
@@ -1465,7 +1576,7 @@ export function generateDungeon(playerId, difficulty) {
             + "Keep advancing to generate more rooms!",
         );
         startDungeonProgress(session);
-        continueStreaming(session, landing.position[2]);
+        continueStreaming(session, landing.position[0], landing.position[2]);
       },
     );
   });
