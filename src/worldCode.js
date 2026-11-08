@@ -8,6 +8,7 @@ import {
   setInterval as scheduleInterval,
   step as stepScheduler,
 } from "./utils/scheduler.js";
+import { generateDungeon } from "./dungeon/generator.js";
 
 const LOBBY_CONFIG = {
   countdownSeconds: 10,
@@ -110,12 +111,7 @@ function startLobbyCountdown(playerId, x, y, z, blockName) {
 }
 
 function onLobbyCountdownComplete(playerId, difficulty) {
-  // Dungeon generation and teleportation are intentionally not part of this
-  // first lobby-only version. Replace this message with the dungeon start flow.
-  api.sendMessage(
-    playerId,
-    `${difficulty} selected! Dungeon generation and teleportation will be added next.`,
-  );
+  generateDungeon(playerId, difficulty);
 }
 
 onBlockStandStart = (playerId, x, y, z, blockName) => {
