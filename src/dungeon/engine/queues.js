@@ -37,8 +37,11 @@ export function createQueues(budgets = {}) {
 
   // A room appears once in the build queue; an opening appears once in each of
   // the two graph queues. Different keys for different jobs, on purpose.
+  // A room appears once by its identifier; the passage that leads to it is a
+  // separate entry keyed by the connection, so both are queued without one
+  // shadowing the other.
   const keyOf = (queueName, entry) => (queueName === QUEUE.BUILD
-    ? entry.roomId
+    ? `${entry.roomId}${entry.connectionId ? `#${entry.connectionId}` : ""}`
     : `${entry.roomId}/${entry.openingId}`);
 
   /**

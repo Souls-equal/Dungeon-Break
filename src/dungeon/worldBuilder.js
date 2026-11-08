@@ -20,7 +20,14 @@
  */
 
 import { DUNGEON_CONFIG } from "./engine/config.js";
-import { BLOCKS, BUILD_PHASE, createRoomWriter, roomBlocks } from "./builder.js";
+import {
+  BLOCKS,
+  BUILD_PHASE,
+  createRoomWriter,
+  dungeonCellIndex,
+  passageBlocks,
+  roomBlocks,
+} from "./builder.js";
 
 /** States a room's construction goes through, in order. */
 export const ROOM_BUILD_STATE = {
@@ -193,6 +200,120 @@ export function createWorldBuilder(options) {
   }
 
   /**
+   * Builds the passage of one connection, in one go.
+   *
+   * A passage is a handful of cells, so it does not need batching — but it does
+   * need the chunk guard, for the same reason a room does: a threshold written
+   * into an unloaded chunk is a hole, and the player walks into it from a room
+   * they can see.
+   *
+   * The cell index (who owns what) is recomputed from the manager each time
+   * because a connection can be committed while a build is in progress: caching
+   * it would let a passage overwrite a room that did not exist when the cache
+   * was filled.
+   */
+  function buildPassage(connection, manager) {
+    const key = `passage:${connection.id}`;
+    const state = ensureState(key);
+    if (state.state === ROOM_BUILD_STATE.BUILT) {
+      return { passageId: connection.id, state: state.state, done: true, written: 0 };
+    }
+    const cells = passageBlocksCells(connection, manager);
+    if (!cells.loaded) {
+      state.state = ROOM_BUILD_STATE.WAITING_FOR_CHUNK;
+      return { passageId: connection.id, state: state.state, done: false, written: 0 };
+    }
+    const blocks = passageBlocks(connection, { x: 0, y: floorY, z: 0 }, cells.index);
+    let written = 0;
+    for (let index = 0; index < blocks.length; index += 1) {
+      writeBlock(blocks[index].x, blocks[index].y, blocks[index].z, blocks[index].name);
+      written += 1;
+    }
+    // The two doorways themselves. A room built while its opening was still
+    // pending had that cell walled — a cul-de-sac has to be a wall — so the
+    // moment the opening becomes a real connection, the wall has to come down.
+    // Without this the tunnel is built and both ends of it stay sealed: the
+    // dungeon looks connected and cannot be walked.
+    written += openDoorway(connection.a, manager);
+    written += openDoorway(connection.b, manager);
+    state.state = ROOM_BUILD_STATE.BUILT;
+    state.written = written;
+    state.total = written;
+    return { passageId: connection.id, state: state.state, done: true, written };
+  }
+
+  /**
+   * Clears the wall out of one doorway, from the floor to the passage height.
+   *
+   * The ceiling above the doorway is deliberately left alone: it is the roof of
+   * the threshold, and removing it would open the room to the sky.
+   */
+  function openDoorway(side, manager) {
+    const room = manager.getRoom(side.roomId);
+    if (!room) return 0;
+    const opening = room.openings.find((entry) => entry.id === side.openingId);
+    if (!opening) return 0;
+    return clearDoorway(room, opening);
+  }
+
+  /** Clears one doorway of one room, from the floor to the passage height. */
+  function clearDoorway(room, opening) {
+    let cleared = 0;
+    for (let offset = opening.offsetStart; offset <= opening.offsetEnd; offset += 1) {
+      let localX;
+      let localZ;
+      if (opening.side === "north") { localX = offset; localZ = 0; } else if (opening.side === "south") {
+        localX = offset; localZ = room.mask.h - 1;
+      } else if (opening.side === "west") { localX = 0; localZ = offset; } else {
+        localX = room.mask.w - 1; localZ = offset;
+      }
+      const x = room.origin.x + localX;
+      const z = room.origin.y + localZ;
+      for (let level = 1; level <= DUNGEON_CONFIG.passageHeight; level += 1) {
+        writeBlock(x, floorY + level, z, BLOCKS.EMPTY);
+        cleared += 1;
+      }
+    }
+    return cleared;
+  }
+
+  /**
+   * Clears every connected doorway of a room that is now fully built.
+   *
+   * This is not belt and braces, it is the fix for a plan frozen too early: a
+   * room's blocks are computed once, when its first batch starts, and a doorway
+   * that was still `pending` at that moment is walled in that plan. If the
+   * connection is committed afterwards, nothing else would ever remove that
+   * wall, and the branch stays sealed even though the tunnel behind it exists.
+   */
+  function reopenDoorways(room) {
+    const state = rooms.get(room.id);
+    if (!state || state.state !== ROOM_BUILD_STATE.BUILT) return 0;
+    let cleared = 0;
+    for (let index = 0; index < room.openings.length; index += 1) {
+      const opening = room.openings[index];
+      if (opening.status !== "connected") continue;
+      cleared += clearDoorway(room, opening);
+    }
+    return cleared;
+  }
+
+  /** The cell index for a connection, and whether its area is loaded. */
+  function passageBlocksCells(connection, manager) {
+    const rooms = manager.allRooms();
+    const index = dungeonCellIndex(rooms, manager.allConnections());
+    const walk = index.perConnection.get(connection.id) || [];
+    let loaded = true;
+    for (let spot = 0; spot < walk.length; spot += 1) {
+      if (readBlock(walk[spot].x, floorY, walk[spot].z) === null) {
+        loaded = false;
+        break;
+      }
+    }
+    return { index, loaded };
+  }
+
+  /**
    * Reads back a sample of the room: every pad and every doorway, plus one cell
    * in `verifyEvery`.
    *
@@ -298,6 +419,8 @@ export function createWorldBuilder(options) {
 
   return {
     buildBatch,
+    buildPassage,
+    reopenDoorways,
     verifyRoom,
     areaLoaded,
     chunksOf,
@@ -319,6 +442,13 @@ export function createWorldBuilder(options) {
           // interrupted after its first batch looked finished, and the rest of
           // it was never written.
           return { blocks: result.written || 0, done: result.done === true };
+        },
+        buildPassage(connection, manager) {
+          const result = buildPassage(connection, manager);
+          return { blocks: result.written || 0, done: result.done === true };
+        },
+        reopenDoorways(room) {
+          return reopenDoorways(room);
         },
         stateOf(roomId) {
           const state = stateOf(roomId);

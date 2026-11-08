@@ -52,9 +52,22 @@ function faceRuns(mask, clearances, side, width) {
     const inside = cellAt(mask, x, y) === 1;
     const behindX = x + inwardX;
     const behindY = y + inwardY;
+    // The cell behind the doorway must be *standable*, not merely part of the
+    // skirt. The builder walls a cell that has an empty neighbour on either
+    // axis, so an approach cell framed by two empties is a pillar with a hole
+    // through it: the player walks into it. Clearance alone cannot see this
+    // (a corner cell also has clearance 2 and only one empty neighbour), hence
+    // the explicit count.
+    const besideAX = behindX - inwardY;
+    const besideAY = behindY - inwardX;
+    const besideBX = behindX + inwardY;
+    const besideBY = behindY + inwardX;
+    const empties = (cellAt(mask, besideAX, besideAY) === 1 ? 0 : 1)
+      + (cellAt(mask, besideBX, besideBY) === 1 ? 0 : 1);
     const walkable = inside
       && cellAt(mask, behindX, behindY) === 1
-      && clearances[behindY][behindX] >= 1;
+      && clearances[behindY][behindX] >= 1
+      && empties <= 1;
 
     if (walkable && start === -1) start = index;
     if ((!walkable || index === last) && start !== -1) {

@@ -58,6 +58,7 @@ export function createDungeonController(options) {
     suspended: 0,
     deferred: 0,
     resumed: 0,
+    passages: 0,
     discoveryScans: 0,
   };
 
@@ -189,10 +190,19 @@ export function createDungeonController(options) {
       if (result.ok && result.kind === "created") {
         created += 1;
         stats.generated += 1;
-        queueBuild(result.room, entry);
+        queueBuild(result.room, { ...entry, connection: result.connection });
+        // The loops this room closed needed a passage too, and nobody else was
+        // going to ask for it.
+        const loops = result.loops || [];
+        for (let at = 0; at < loops.length; at += 1) queuePassage(result.room, loops[at].id, entry);
       } else if (result.ok) {
-        // A reuse (loop or shortcut) costs neither a room nor a budget slot.
+        // A reuse (loop or shortcut) costs neither a room nor a budget slot —
+        // but it does pierce a wall, so its passage has to be built.
         stats.reused += 1;
+        if (result.connection) {
+          const room = manager.getRoom(entry.roomId);
+          if (room) queuePassage(room, result.connection.id, entry);
+        }
       } else {
         stats.refused += 1;
       }
@@ -206,8 +216,33 @@ export function createDungeonController(options) {
 
   function queueBuild(room, entry) {
     if (!builder) return;
+    const priority = entry && entry.priority !== undefined ? entry.priority : room.depth;
+    // The passage is queued *first*, on purpose. The queue is served in order,
+    // and a passage opens the doorways of both rooms it joins: if it ran after
+    // the room, the room's own plan — computed while that doorway was still
+    // pending, so with a wall in it — would be written on top of the opening.
+    const connection = entry && entry.connection && entry.connection.id;
+    if (connection) queuePassage(room, connection, { ...entry, priority: priority - 1 });
+    ownQueues.push(QUEUE.BUILD, { roomId: room.id, priority });
+  }
+
+  /**
+   * Queues the passage of one connection.
+   *
+   * A passage is queued for *every* connection, including the ones a loop or a
+   * shortcut commits between two rooms that already exist: those rooms were
+   * built while their opening was still pending, so their doorway is walled and
+   * the threshold between them was never dug. Forgetting this case left whole
+   * branches of the dungeon sealed behind a bricked-up door.
+   *
+   * `priority` is one step better than the room it leads to, so the queue — which
+   * is sorted — always serves the threshold before the interior it opens onto.
+   */
+  function queuePassage(room, connectionId, entry) {
+    if (!builder || typeof builder.buildPassage !== "function") return;
     ownQueues.push(QUEUE.BUILD, {
       roomId: room.id,
+      connectionId,
       priority: entry && entry.priority !== undefined ? entry.priority : room.depth,
     });
   }
@@ -228,6 +263,9 @@ export function createDungeonController(options) {
       // to stay under it exactly would be to interrupt a room mid-construction,
       // and a half-built room is worse than a slightly long tick.
       if (written >= DUNGEON_CONFIG.maxBlocksPerTick) break;
+      // The passages are checked *before* an entry is taken, so a cycle that
+      // reached its budget leaves the queue exactly as it was: taking an entry
+      // to push it back would reorder the queue for no reason.
       const entry = ownQueues.take(QUEUE.BUILD);
       if (!entry) break;
       if (suspended.has(entry.roomId)) {
@@ -235,6 +273,30 @@ export function createDungeonController(options) {
         continue;
       }
       const room = manager.getRoom(entry.roomId);
+      if (entry.connectionId) {
+        // A passage is small and finishes in one pass, so it has no cursor. It
+        // is still guarded by the chunk check inside the builder.
+        const connection = manager.getConnection(entry.connectionId);
+        if (!connection) continue;
+        const passage = builder.buildPassage(connection, manager) || {};
+        const cost = passage.blocks || 0;
+        written += cost;
+        stats.blocksWritten += cost;
+        if (passage.done === true && cost > 0) stats.passages += 1;
+        // A threshold whose chunk is not loaded yet is retried on the next
+        // cycle, and it is retried *eagerly*: dropping it lost the passage for
+        // good, and a room whose only connection was lost is unreachable — the
+        // dungeon then has rooms that are built, visible, and impossible to
+        // enter.
+        if (passage.done !== true) {
+          ownQueues.push(QUEUE.BUILD, entry);
+          stats.resumed += 1;
+          // Carry on: the entry is back at the end of the queue, and stopping
+          // here is how a backlog of thresholds starves everything behind it.
+          continue;
+        }
+        continue;
+      }
       if (!room || inProgress.has(room.id)) continue;
       const sizeBefore = ownQueues.size(QUEUE.BUILD);
       inProgress.add(room.id);
@@ -259,13 +321,26 @@ export function createDungeonController(options) {
       const halfBuilt = !reportedDone;
       written += blocks;
       stats.blocksWritten += blocks;
-      if (!halfBuilt) stats.built += 1;
+      if (!halfBuilt) {
+        stats.built += 1;
+        // The room is finished, and its plan was frozen when it started. A
+        // doorway that became a connection since then is still walled in that
+        // plan, so the wall is cleared once more, now that nothing will write
+        // over it.
+        if (typeof builder.reopenDoorways === "function") {
+          const cleared = builder.reopenDoorways(room) || 0;
+          written += cleared;
+          stats.blocksWritten += cleared;
+        }
+      }
       if (halfBuilt) {
+        // Back of the queue, and keep going. Breaking here served exactly one
+        // room per cycle: a dungeon that needs nine passes per room then queued
+        // every threshold behind a room that never finished, and the passages
+        // were left unbuilt while their rooms were there to be seen.
         if (ownQueues.size(QUEUE.BUILD) === sizeBefore) ownQueues.push(QUEUE.BUILD, entry);
         stats.resumed += 1;
-        // One unfinished room per cycle: the next cycle resumes it, so the budget
-        // stays bounded even when every room needs several passes.
-        break;
+        continue;
       }
     }
   }
