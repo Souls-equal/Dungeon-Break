@@ -13,9 +13,11 @@ const DUNGEON_CONFIG = {
   doorWidth: 3,
   blocksPerTick: 120,
   progressCheckTicks: 10,
-  // The safety pad is placed synchronously before the teleport so the player
-  // never stands on an empty cell, whatever the rest of the build takes.
+  // The spawn pad is laid first and checked again after the teleport, because
+  // writes into a chunk the server has not loaded yet can be lost.
   spawnPadRadius: 1,
+  spawnCheckTicks: 5,
+  spawnCheckAttempts: 6,
   entranceLandingDepth: 2,
   // Streamed rooms stay at least this many blocks ahead of the player.
   streamBufferDistance: 36,
@@ -513,6 +515,7 @@ export function stopDungeonForPlayer(playerId) {
   session.active = false;
   if (session.buildTimer) session.buildTimer.stop();
   if (session.progressTimer) session.progressTimer.stop();
+  if (session.spawnGuardTimer) session.spawnGuardTimer.stop();
   delete dungeonSessions[playerId];
 }
 
@@ -525,33 +528,60 @@ function reportGenerationFailure(playerId, error) {
   }
 }
 
-function spawnPadKeys(plan) {
+function spawnPadTiles(plan) {
   const radius = DUNGEON_CONFIG.spawnPadRadius;
   const padX = plan.spawnPosition[0] - 0.5;
   const padZ = plan.spawnPosition[2] - 0.5;
-  const keys = new Set();
+  const tiles = [];
 
   for (let dx = -radius; dx <= radius; dx += 1) {
     for (let dz = -radius; dz <= radius; dz += 1) {
-      keys.add(blockKey(padX + dx, plan.floorY, padZ + dz));
+      tiles.push({ x: padX + dx, z: padZ + dz });
     }
   }
-  return keys;
+  return tiles;
 }
 
-// The landing pad is placed before anything else so the teleport target is
-// always supported, even if the streamed build is interrupted right after.
-function placeSpawnPad(plan) {
-  const keys = spawnPadKeys(plan);
-
-  for (const key of keys) {
-    const [x, y, z] = key.split(",").map(Number);
-    api.setBlock(x, y, z, DUNGEON_CONFIG.blockName);
+function readBlockName(x, y, z) {
+  try {
+    if (typeof api.getBlock !== "function") return null;
+    const name = api.getBlock(x, y, z);
+    return typeof name === "string" ? name : null;
+  } catch (_) {
+    return null;
   }
-  return keys;
 }
 
-function startBlockBuild(session, iterator, onComplete) {
+// A block can only be written into a chunk that already exists server side.
+// Poking the target cell in the previous tick makes the engine create the
+// chunk before the real write, which is what used to swallow the spawn floor.
+function primeChunk(plan) {
+  readBlockName(plan.spawnPosition[0] - 0.5, plan.floorY, plan.spawnPosition[2] - 0.5);
+}
+
+/**
+ * Tiles of the pad that are not the expected floor block. Returns null when the
+ * engine cannot read blocks, so callers fall back to rewriting the whole pad
+ * instead of assuming it is correct.
+ */
+function missingSpawnPadTiles(plan) {
+  const missing = [];
+  for (const tile of spawnPadTiles(plan)) {
+    const current = readBlockName(tile.x, plan.floorY, tile.z);
+    if (current === null) return null;
+    if (current !== DUNGEON_CONFIG.blockName) missing.push(tile);
+  }
+  return missing;
+}
+
+function placeSpawnPad(plan) {
+  const tiles = spawnPadTiles(plan);
+
+  for (const { x, z } of tiles) api.setBlock(x, plan.floorY, z, DUNGEON_CONFIG.blockName);
+  return new Set(tiles.map(({ x, z }) => blockKey(x, plan.floorY, z)));
+}
+
+function startBlockBuild(session, iterator, onComplete, onTick) {
   let done = false;
   let failure = null;
   const timer = scheduleInterval(() => {
@@ -564,6 +594,7 @@ function startBlockBuild(session, iterator, onComplete) {
         }
         api.setBlock(step.value.x, step.value.y, step.value.z, step.value.blockName);
       }
+      if (onTick) onTick();
     } catch (error) {
       failure = error;
       done = true;
@@ -589,6 +620,50 @@ function startBlockBuild(session, iterator, onComplete) {
     }
   }, 1);
   session.buildTimer = timer;
+}
+
+/**
+ * Last line of defence: once the player stands on the spawn cell, read the pad
+ * back and rewrite whatever the world did not keep. A chunk that was still
+ * being generated when the pad was first written is repaired here instead of
+ * leaving the player over a hole.
+ */
+function startSpawnGuard(session, plan) {
+  let attempts = 0;
+
+  session.spawnGuardTimer = scheduleInterval(() => {
+    if (!session.active) return;
+    attempts += 1;
+
+    let missing = missingSpawnPadTiles(plan);
+    // Rewrite the whole pad on the first sweep: an unreadable block still gets
+    // a fresh write, so a lost spawn floor is repaired without any read support.
+    if (attempts > 1 || missing === null) missing = spawnPadTiles(plan);
+    if (missing.length === 0) {
+      session.spawnGuardTimer.stop();
+      session.spawnGuardTimer = null;
+      return;
+    }
+
+    try {
+      for (const { x, z } of missing) api.setBlock(x, plan.floorY, z, DUNGEON_CONFIG.blockName);
+    } catch (error) {
+      logFailure("Spawn pad repair failed", error);
+    }
+
+    // Keep the player supported while the repair is applied.
+    try {
+      const position = api.getPosition(session.playerId);
+      if (position && position[1] < plan.floorY + 1) api.setPosition(session.playerId, plan.spawnPosition);
+    } catch (_) {
+      // A failed position read must not stop the repair loop.
+    }
+
+    if (attempts >= DUNGEON_CONFIG.spawnCheckAttempts) {
+      session.spawnGuardTimer.stop();
+      session.spawnGuardTimer = null;
+    }
+  }, DUNGEON_CONFIG.spawnCheckTicks);
 }
 
 function playerPositionZ(session) {
@@ -696,6 +771,15 @@ export function generateDungeon(playerId, difficulty) {
   stopDungeonForPlayer(playerId);
   const seed = nextDungeonSeed();
   const plan = createDungeonPlan(seed, difficulty);
+  // The plan puts the start room close to the randomized dungeon origin, so a
+  // "get" on its cell in this tick forces the engine to create the chunk before
+  // the real writes land. Placed before the first setBlock on purpose.
+  try {
+    primeChunk(plan);
+  } catch (error) {
+    logFailure("Chunk priming failed", error);
+  }
+
   const session = {
     playerId,
     seed,
@@ -726,16 +810,26 @@ export function generateDungeon(playerId, difficulty) {
 
   // Floors are streamed before any wall, so no room can be walled in on bare
   // ground; the teleport still happens only once the whole level is placed.
+  // Each build tick re-pokes the spawn chunk in case it was not ready yet.
   startBlockBuild(
     session,
     dungeonBlockIterator(plan, { skipFloorKeys: padKeys, textureSeed: seed }),
     () => {
+      // Re-assert the pad right before the teleport, then keep checking it.
+      try {
+        for (const { x, z } of spawnPadTiles(plan)) api.setBlock(x, plan.floorY, z, DUNGEON_CONFIG.blockName);
+      } catch (error) {
+        logFailure("Spawn pad refresh failed", error);
+      }
+
       api.setPosition(playerId, plan.spawnPosition);
       api.sendMessage(
         playerId,
         `${difficulty} dungeon ready: ${plan.roomCount} connected rooms. Keep advancing to generate more rooms!`,
       );
+      startSpawnGuard(session, plan);
       startDungeonProgress(session);
     },
+    () => primeChunk(plan),
   );
 }
