@@ -44,7 +44,8 @@ Tous les textes visibles par les joueurs sont en anglais.
 - La taille évolue de 4×4 salles en Very Easy à 11×11 en Hell. Les difficultés prévoient respectivement 2 niveaux (Very Easy/Easy), 3 (Medium/Normal/Hard), 4 (Insane/Ultra Insane) ou 5 (Hell), avec des labyrinthes distincts à chaque niveau.
 - Les salles de 5×5 blocs varient : espaces ouverts, piliers simples ou doubles, et alcôves. Dans chaque niveau, les passages sont parfois étroits (3 blocs), parfois ouverts sur toute la largeur.
 - Une cage d'escalier en spirale, faite de blocs pleins Stone Bricks, relie les étages à travers un puits de 3×3 blocs. L'entrée se trouve au niveau inférieur, la sortie au niveau supérieur, et de petites plateformes Stone Bricks prolongent ces ouvertures.
-- Chaque donjon reçoit un emplacement horizontal aléatoire dans les bornes `-50000..50000` en X et Z ; le premier sol est à `Y = -1000`, avec 8 blocs d'écart vertical entre niveaux.
+- Après la sortie supérieure, des salles modulaires 7×7 ou 9×9 sont ajoutées par lots à mesure que le joueur avance. La position est vérifiée toutes les 10 ticks et la prochaine salle commence à se construire lorsque le joueur approche à 18 blocs de la limite générée.
+- Chaque donjon reçoit un emplacement horizontal aléatoire dans les bornes `-50000..50000` en X et Z ; le premier sol est à `Y = -1000`, avec 8 blocs d'écart vertical entre niveaux. La génération continue jusqu'à la limite de coordonnées configurée, le monde n'étant pas mathématiquement infini.
 
 C'est volontairement une première version : pas encore de mobs, butin, nettoyage après une partie ni contrôle d'accès au donjon. Le délai est configurable via `countdownSeconds` dans `src/worldCode.js`; dimensions, niveaux et matériau sont configurés dans `src/dungeon/generator.js`.
 

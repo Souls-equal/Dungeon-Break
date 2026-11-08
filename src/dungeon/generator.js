@@ -10,6 +10,11 @@ const DUNGEON_CONFIG = {
   stairwellSize: 3,
   levelGap: 8,
   blocksPerTick: 12,
+  progressCheckTicks: 10,
+  generationAheadDistance: 18,
+  maxStreamRoomSize: 9,
+  minStreamRoomSize: 7,
+  streamingRunway: 50000,
   blockName: "Stone Bricks",
   cellsByDifficulty: {
     "Very Easy": 4,
@@ -314,10 +319,11 @@ export function createDungeonPlan(seed, difficulty) {
   const levelCount = DUNGEON_CONFIG.levelsByDifficulty[difficulty] || DUNGEON_CONFIG.levelsByDifficulty.Normal;
   const roomStride = DUNGEON_CONFIG.roomSize + 1;
   const width = cellCount * roomStride + 1;
-  // Reserve two Z blocks for the entry and exit landing platforms.
-  const maxOrigin = DUNGEON_CONFIG.maxCoordinate - width - 1;
-  const originX = randomInteger(random, DUNGEON_CONFIG.minCoordinate, maxOrigin);
-  const originZ = randomInteger(random, DUNGEON_CONFIG.minCoordinate + 2, maxOrigin);
+  // Keep a margin for the landing platforms and room modules beyond the exit.
+  const maxOriginX = DUNGEON_CONFIG.maxCoordinate - width - 1;
+  const maxOriginZ = maxOriginX - DUNGEON_CONFIG.streamingRunway;
+  const originX = randomInteger(random, DUNGEON_CONFIG.minCoordinate, maxOriginX);
+  const originZ = randomInteger(random, DUNGEON_CONFIG.minCoordinate + 2, maxOriginZ);
   const firstRoomX = originX + 1;
   const firstRoomZ = originZ + 1;
   const stairwellOffset = (DUNGEON_CONFIG.roomSize - DUNGEON_CONFIG.stairwellSize) / 2;
@@ -393,6 +399,11 @@ export function createDungeonPlan(seed, difficulty) {
     walls,
     stairBlocks,
     stairwell,
+    endlessFrontier: {
+      centerX: exitRoomX + 2,
+      floorY: DUNGEON_CONFIG.floorY + (levelCount - 1) * DUNGEON_CONFIG.levelGap,
+      z: originZ + width + 1,
+    },
     spawnPosition: [spawnRoomCenterX + 0.5, DUNGEON_CONFIG.floorY + 1, spawnRoomCenterZ + 0.5],
     passageCount: floors[0].passageCount,
     narrowCorridorCount: totalNarrowCorridors,
@@ -402,11 +413,73 @@ export function createDungeonPlan(seed, difficulty) {
   };
 }
 
+export function createEndlessRoomPlan(
+  seed,
+  centerX,
+  floorY,
+  startZ,
+  hasFollowingRoom = true,
+  maxEndZ = DUNGEON_CONFIG.maxCoordinate,
+) {
+  const random = makeRandom(seed);
+  const roomWidth = randomInteger(random, 0, 1) === 0
+    ? DUNGEON_CONFIG.minStreamRoomSize
+    : DUNGEON_CONFIG.maxStreamRoomSize;
+  const availableDepth = maxEndZ - startZ + 1;
+  const selectedDepth = randomInteger(random, 0, 1) === 0
+    ? DUNGEON_CONFIG.minStreamRoomSize
+    : DUNGEON_CONFIG.maxStreamRoomSize;
+  const roomDepth = selectedDepth > availableDepth
+    ? DUNGEON_CONFIG.minStreamRoomSize
+    : selectedDepth;
+  const minX = centerX - (roomWidth - 1) / 2;
+  const maxX = centerX + (roomWidth - 1) / 2;
+  const endZ = startZ + roomDepth - 1;
+  const wallBottomY = floorY + 1;
+  const wallTopY = floorY + DUNGEON_CONFIG.wallHeight;
+  const gapStartX = centerX - 1;
+  const floors = [];
+  const walls = [];
+
+  addRect(floors, minX, floorY, startZ, maxX, floorY, endZ);
+  addHorizontalDoorWalls(walls, minX, maxX, startZ, gapStartX, 3, wallBottomY, wallTopY);
+  if (hasFollowingRoom) {
+    addHorizontalDoorWalls(walls, minX, maxX, endZ, gapStartX, 3, wallBottomY, wallTopY);
+  } else {
+    addWall(walls, minX, wallBottomY, endZ, maxX, wallTopY, endZ);
+  }
+  addWall(walls, minX, wallBottomY, startZ, minX, wallTopY, endZ);
+  addWall(walls, maxX, wallBottomY, startZ, maxX, wallTopY, endZ);
+
+  const roomCenterZ = startZ + (roomDepth - 1) / 2;
+  const decorationStyle = randomInteger(random, 0, 3);
+  if (decorationStyle === 1) {
+    addWall(walls, centerX, wallBottomY, roomCenterZ, centerX, floorY + 2, roomCenterZ);
+  } else if (decorationStyle === 2) {
+    addWall(walls, centerX - 2, wallBottomY, roomCenterZ, centerX - 2, floorY + 2, roomCenterZ);
+    addWall(walls, centerX + 2, wallBottomY, roomCenterZ, centerX + 2, floorY + 2, roomCenterZ);
+  } else if (decorationStyle === 3) {
+    addWall(walls, minX + 1, wallBottomY, startZ + 2, minX + 1, wallTopY, startZ + 4);
+    addWall(walls, maxX - 1, wallBottomY, startZ + 2, maxX - 1, wallTopY, startZ + 4);
+  }
+
+  return {
+    startZ,
+    endZ,
+    roomWidth,
+    roomDepth,
+    hasFollowingRoom,
+    operations: floors.concat(walls),
+  };
+}
+
 function nextDungeonSeed() {
   dungeonSequence += 1;
   const timeSeed = api.now() % RANDOM_MODULUS;
   return (timeSeed + dungeonSequence * 104729) % RANDOM_MODULUS || 1;
 }
+
+const dungeonSessions = {};
 
 function isPlayerOnline(playerId) {
   try {
@@ -416,6 +489,16 @@ function isPlayerOnline(playerId) {
   }
 }
 
+export function stopDungeonForPlayer(playerId) {
+  const session = dungeonSessions[playerId];
+  if (!session) return;
+
+  session.active = false;
+  if (session.buildTimer) session.buildTimer.stop();
+  if (session.progressTimer) session.progressTimer.stop();
+  delete dungeonSessions[playerId];
+}
+
 function reportGenerationFailure(playerId, error) {
   try {
     api.log(`[Dungeon] Stone Bricks generation failed: ${error && error.message ? error.message : error}`);
@@ -423,23 +506,13 @@ function reportGenerationFailure(playerId, error) {
     // Logging must not hide the generation failure.
   }
 
+  stopDungeonForPlayer(playerId);
   if (isPlayerOnline(playerId)) {
     api.sendMessage(playerId, "Dungeon generation failed. Please try again.");
   }
 }
 
-export function generateDungeon(playerId, difficulty) {
-  const plan = createDungeonPlan(nextDungeonSeed(), difficulty);
-  const operations = [];
-
-  for (const floor of plan.floors) operations.push(...floor.floorRects);
-  for (const floor of plan.floors) operations.push(...floor.walls);
-  operations.push(...plan.stairBlocks);
-
-  if (isPlayerOnline(playerId)) {
-    api.sendMessage(playerId, `Building a ${difficulty} dungeon with ${plan.levelCount} floors...`);
-  }
-
+function runBlockBuild(session, operations, onComplete) {
   let nextOperation = 0;
   const buildTimer = scheduleInterval(() => {
     try {
@@ -452,23 +525,140 @@ export function generateDungeon(playerId, difficulty) {
       }
     } catch (error) {
       buildTimer.stop();
-      reportGenerationFailure(playerId, error);
+      session.buildTimer = null;
+      reportGenerationFailure(session.playerId, error);
       return;
     }
 
     if (nextOperation < operations.length) return;
 
     buildTimer.stop();
-    if (!isPlayerOnline(playerId)) return;
+    session.buildTimer = null;
+    if (!session.active || !isPlayerOnline(session.playerId)) {
+      stopDungeonForPlayer(session.playerId);
+      return;
+    }
 
     try {
-      api.setPosition(playerId, plan.spawnPosition);
-      api.sendMessage(
-        playerId,
-        `${difficulty} dungeon ready: ${plan.levelCount} floors. Find the exit at the top!`,
-      );
+      onComplete();
     } catch (error) {
-      reportGenerationFailure(playerId, error);
+      reportGenerationFailure(session.playerId, error);
     }
   }, 1);
+  session.buildTimer = buildTimer;
+}
+
+function buildNextEndlessRoom(session, playerZ) {
+  if (!session.active || session.isBuilding || session.finished) return;
+  if (playerZ < session.frontierZ - DUNGEON_CONFIG.generationAheadDistance) return;
+
+  const startZ = session.frontierZ + 1;
+  if (startZ + DUNGEON_CONFIG.minStreamRoomSize - 1 > DUNGEON_CONFIG.maxCoordinate) {
+    session.finished = true;
+    session.progressTimer.stop();
+    api.sendMessage(session.playerId, "The dungeon reached the world boundary.");
+    return;
+  }
+
+  const roomSeed = (session.seed + (session.roomIndex + 1) * 130363) % RANDOM_MODULUS || 1;
+  const preview = createEndlessRoomPlan(
+    roomSeed,
+    session.centerX,
+    session.floorY,
+    startZ,
+    true,
+    DUNGEON_CONFIG.maxCoordinate,
+  );
+  const minimumNextEnd = preview.endZ + DUNGEON_CONFIG.minStreamRoomSize;
+  const hasFollowingRoom = minimumNextEnd <= DUNGEON_CONFIG.maxCoordinate;
+  const roomPlan = hasFollowingRoom
+    ? preview
+    : createEndlessRoomPlan(
+      roomSeed,
+      session.centerX,
+      session.floorY,
+      startZ,
+      false,
+      DUNGEON_CONFIG.maxCoordinate,
+    );
+
+  if (roomPlan.endZ > DUNGEON_CONFIG.maxCoordinate) {
+    session.finished = true;
+    session.progressTimer.stop();
+    api.sendMessage(session.playerId, "The dungeon reached the world boundary.");
+    return;
+  }
+
+  session.isBuilding = true;
+  runBlockBuild(session, roomPlan.operations, () => {
+    session.frontierZ = roomPlan.endZ;
+    session.roomIndex += 1;
+    session.isBuilding = false;
+
+    if (!roomPlan.hasFollowingRoom) {
+      session.finished = true;
+      session.progressTimer.stop();
+      api.sendMessage(session.playerId, "You reached the edge of the generated dungeon area.");
+    }
+  });
+}
+
+function startDungeonProgress(session) {
+  session.progressTimer = scheduleInterval(() => {
+    if (!session.active || !isPlayerOnline(session.playerId)) {
+      stopDungeonForPlayer(session.playerId);
+      return;
+    }
+
+    try {
+      const position = api.getPosition(session.playerId);
+      if (position && position.length >= 3) buildNextEndlessRoom(session, position[2]);
+    } catch (error) {
+      // Keep the session alive; a transient position lookup can be retried next check.
+      try {
+        api.log(`[Dungeon] Position check failed: ${error && error.message ? error.message : error}`);
+      } catch (_) {
+        // Logging must not stop future position checks.
+      }
+    }
+  }, DUNGEON_CONFIG.progressCheckTicks);
+}
+
+export function generateDungeon(playerId, difficulty) {
+  stopDungeonForPlayer(playerId);
+  const seed = nextDungeonSeed();
+  const plan = createDungeonPlan(seed, difficulty);
+  const operations = [];
+
+  for (const floor of plan.floors) operations.push(...floor.floorRects);
+  for (const floor of plan.floors) operations.push(...floor.walls);
+  operations.push(...plan.stairBlocks);
+
+  const session = {
+    playerId,
+    seed,
+    centerX: plan.endlessFrontier.centerX,
+    floorY: plan.endlessFrontier.floorY,
+    frontierZ: plan.endlessFrontier.z,
+    roomIndex: 0,
+    isBuilding: false,
+    finished: false,
+    active: true,
+    buildTimer: null,
+    progressTimer: null,
+  };
+  dungeonSessions[playerId] = session;
+
+  if (isPlayerOnline(playerId)) {
+    api.sendMessage(playerId, `Building a ${difficulty} dungeon with ${plan.levelCount} floors...`);
+  }
+
+  runBlockBuild(session, operations, () => {
+    api.setPosition(playerId, plan.spawnPosition);
+    api.sendMessage(
+      playerId,
+      `${difficulty} dungeon ready: ${plan.levelCount} floors. Keep advancing to generate more rooms!`,
+    );
+    startDungeonProgress(session);
+  });
 }

@@ -10,6 +10,7 @@ function createWorld(onlinePlayerIds) {
   const blockRects = [];
   const positions = [];
   const events = [];
+  const playerLocations = {};
   const context = {
     api: {
       sendMessage: (playerId, message) => messages.push({ playerId, message }),
@@ -20,15 +21,24 @@ function createWorld(onlinePlayerIds) {
       },
       setPosition: (playerId, position) => {
         positions.push({ playerId, position });
+        playerLocations[playerId] = position;
         events.push("position");
       },
+      getPosition: (playerId) => playerLocations[playerId],
       getPlayerIds: () => onlinePlayerIds,
       now: () => 1710000000000,
       log: (message) => messages.push({ playerId: null, message }),
     },
   };
   vm.runInNewContext(worldCode, context);
-  return { context, messages, blockRects, positions, events };
+  return {
+    context,
+    messages,
+    blockRects,
+    positions,
+    events,
+    movePlayer: (playerId, position) => { playerLocations[playerId] = position; },
+  };
 }
 
 test("the generated World Code builds every floor in batches before teleporting the player", () => {
@@ -52,8 +62,33 @@ test("the generated World Code builds every floor in batches before teleporting 
   assert.equal(positions.length, 1);
   assert.equal(positions[0].playerId, "player-1");
   assert.ok(messages.some(({ message }) => message.includes("Very Easy dungeon ready: 2 floors")));
+  assert.ok(messages.some(({ message }) => message.includes("Keep advancing to generate more rooms")));
   assert.ok(blockRects.every(({ blockName }) => blockName === "Stone Bricks"));
-  assert.equal(events.at(-1), "position", "teleport happens after all block placement calls");
+  assert.equal(events.at(-1), "position", "teleport happens after the initial dungeon build");
+});
+
+test("advancing toward the exit streams new rooms without teleporting again", () => {
+  const { context, messages, blockRects, positions, movePlayer } = createWorld(["player-4"]);
+
+  context.onBlockStandStart("player-4", 3, 10, 4, "Lime Concrete");
+  for (let tick = 0; tick < 1200 && positions.length === 0; tick += 1) context.tick();
+  assert.equal(positions.length, 1);
+
+  const initialBlockCount = blockRects.length;
+  const currentPosition = positions[0].position;
+  movePlayer("player-4", [currentPosition[0], currentPosition[1], currentPosition[2] + 100]);
+  for (let tick = 0; tick < 30; tick += 1) context.tick();
+
+  assert.ok(blockRects.length > initialBlockCount, "a new room is added ahead of the player's position");
+  assert.equal(positions.length, 1, "streaming rooms does not reset the player's position");
+  assert.ok(messages.some(({ message }) => message.includes("Keep advancing to generate more rooms")));
+  assert.ok(blockRects.every(({ blockName }) => blockName === "Stone Bricks"));
+
+  context.onPlayerLeave("player-4");
+  const finalBlockCount = blockRects.length;
+  movePlayer("player-4", [currentPosition[0], currentPosition[1], currentPosition[2] + 1000]);
+  for (let tick = 0; tick < 30; tick += 1) context.tick();
+  assert.equal(blockRects.length, finalBlockCount, "the player's streaming timer stops when they leave");
 });
 
 test("leaving the selected pad cancels its countdown", () => {

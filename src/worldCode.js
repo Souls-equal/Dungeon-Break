@@ -8,7 +8,7 @@ import {
   setInterval as scheduleInterval,
   step as stepScheduler,
 } from "./utils/scheduler.js";
-import { generateDungeon } from "./dungeon/generator.js";
+import { generateDungeon, stopDungeonForPlayer } from "./dungeon/generator.js";
 
 const LOBBY_CONFIG = {
   countdownSeconds: 10,
@@ -136,6 +136,7 @@ tick = () => {
 
 onPlayerLeave = (playerId) => {
   stopLobbyCountdown(playerId);
+  stopDungeonForPlayer(playerId);
 };
 
 onPlayerJoin = (playerId) => {
