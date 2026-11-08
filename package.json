@@ -7,8 +7,9 @@
   "scripts": {
     "build": "node tools/build-world-code.mjs",
     "watch": "node tools/build-world-code.mjs --watch",
-    "check": "node tools/build-world-code.mjs --check && node --check src/worldCode.js && node --check src/utils/scheduler.js && node --check src/dungeon/generator.js && node --check world-code/worldCode.js",
-    "test": "node --test"
+    "check": "node tools/build-world-code.mjs --check && node --check src/worldCode.js && node --check src/utils/scheduler.js && node --check src/dungeon/generator.js && node --check world-code/worldCode.js && for f in src/dungeon/engine/*.js; do node --check \"$f\" || exit 1; done",
+    "test": "node --test",
+    "visualize": "node tools/visualize-dungeon.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.25.0"

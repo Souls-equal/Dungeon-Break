@@ -9,6 +9,7 @@ Trois points d'entrée :
 - **la branche est propre** : `docs/ARCHITECTURE.md` est bien présent (contrairement à ce que laissait croire l'absence de `docs/` dans mon cache de session) ;
 - **l'audit contredit l'architecture sur des points importants** : c'est le résultat principal, il est détaillé en §5 ;
 - **six décisions bloquent la Phase 1**, deux seulement bloquaient l'architecture : §8.
+- **Phase 1 livrée** : le moteur hors-ligne existe dans `src/dungeon/engine/` et ses 59 tests passent. Les mesures et les écarts constatés en la construisant sont consignés dans [`ARCHITECTURE.md`](ARCHITECTURE.md) §9.3, §10.4, §11 et §17.1.
 
 ---
 

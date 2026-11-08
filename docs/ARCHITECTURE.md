@@ -1,6 +1,8 @@
 # Architecture — moteur de donjon procédural infini
 
-**Statut : proposition. Aucune ligne du moteur n'est implémentée.** Ce document est le livrable d'architecture demandé avant tout développement : il décrit le découpage, les structures de données, les algorithmes, les stratégies de persistance et de suivi des modifications, les limites identifiées et le plan de tests. Il attend la validation du propriétaire du projet avant que la Phase 1 ne commence.
+**Statut : vivant. Phase 0 livrée, Phase 1 livrée.** L'audit est dans [`AUDIT-PHASE0.md`](AUDIT-PHASE0.md). Les sections marquées **✅ Implémenté** décrivent du code qui existe, testé, dans `src/dungeon/engine/` ; celles marquées **◻ À venir** décrivent une conception encore à réaliser, et le sont pour mémoire.
+
+Ce document est mis à jour à chaque phase. Une divergence entre ce texte et le code est un défaut : le code fait foi, et c'est le document qu'il faut corriger — mais tout écart doit être signalé explicitement, jamais laissé implicite.
 
 Les règles de travail du projet sont dans [`AGENT_RULES.md`](../AGENT_RULES.md). Les fonctions Bloxd citées ici sont toutes documentées ; chaque citation renvoie à la page exacte qui la décrit (voir §2.2) ; les cas où la documentation est muette sont signalés comme tels (§3, §19).
 
@@ -22,7 +24,7 @@ Les règles de travail du projet sont dans [`AGENT_RULES.md`](../AGENT_RULES.md)
 12. [Anticipation : les trois opérations et les trois files](#12-anticipation--les-trois-opérations-et-les-trois-files)
 13. [Construction physique](#13-construction-physique)
 14. [Persistance](#14-persistance)
-15. [Suivi des modifications physiques](#15-suivi-des-modifications-physiques)
+15. [Suivi des modifications physiques — supprimé](#15-suivi-des-modifications-physiques--supprimé)
 16. [Garanties de performance](#16-garanties-de-performance)
 17. [Plan de tests](#17-plan-de-tests)
 18. [Découpage en phases](#18-découpage-en-phases)
@@ -37,11 +39,20 @@ Annexes : [A — Ce qui reste du code existant](#annexe-a--ce-qui-reste-du-code-
 
 Le moteur remplace la génération actuelle (`src/dungeon/generator.js`, marche de modules 7×7 raccordés par une case de couloir). Le lobby, le compte à rebours et le spawn restent inchangés ; ils seront rebranchés en Phase 4.
 
+**Boucle de jeu retenue** (décidée en Phase 0, elle contraint tout le reste) :
+
+- un joueur qui se connecte est **toujours** renvoyé au lobby ; aucune position n'est reprise ;
+- le lobby porte **trois pads** : Very Easy, Easy, Medium ;
+- à l'intérieur d'un donjon, un **pad** mène à la difficulté suivante, jusqu'à Hell qui est un cul-de-sac de progression ;
+- un pad n'est **jamais** une ouverture : il ne participe pas au graphe des salles, il est posé par le constructeur et il est persisté avec le donjon ;
+- les murs sont **indestructibles** : il n'y a donc aucun suivi de modifications à faire (voir §15, révisé) ;
+- les minerais, coffres et monstres viendront **après** que la structure soit fiable.
+
 Six principes, qui se traduisent chacun par une règle vérifiable dans le code :
 
 | Principe | Règle concrète |
 | --- | --- |
-| Séparer le logique du physique | Les modules `Generator`, `Geometry`, `Validator`, `SpatialIndex` ne connaissent **ni `api.getBlock` ni `api.setBlock`**. Seuls `Builder` et `ModificationTracker` touchent le monde, plus `Persistence` qui touche la base de données. Un test d'architecture vérifie l'absence de `api.` dans ces fichiers. |
+| Séparer le logique du physique | Les modules de `src/dungeon/engine/` ne connaissent **ni `api.getBlock` ni `api.setBlock`**. Seuls `DungeonBuilder` et `DungeonPersistence` touchent le monde et la base. Un test d'architecture vérifie l'absence de la chaîne `api.` dans tout `src/dungeon/engine/`. |
 | Séparer génération et construction | La génération produit une salle **validée et enregistrée** ; la construction est une seconde opération, indépendante, reprenable, qui reçoit une salle déjà connue avec ses ouvertures. |
 | Une connexion relie deux ouvertures identifiées | Aucune connexion n'est déduite d'une proximité : `Connection { a: openingId, b: openingId }`. Un test refuse toute connexion dont l'un des deux identifiants n'existe pas. |
 | Atomicité | Le validateur est une fonction pure : il ne modifie rien. Une salle n'entre dans le graphe que par un seul point de commit, après validation complète. Un échec ne laisse aucune trace. |
@@ -168,30 +179,32 @@ Le changelog officiel du 18 août 2026 annonce le passage de 64 k à 512 k carac
 
 ## 4. Vue d'ensemble des modules
 
-Treize modules comme demandé, regroupés en quatre couches. Aucun module d'une couche basse n'importe une couche haute.
+Douze modules, regroupés en trois couches. Aucun module d'une couche basse n'importe une couche haute.
+
+La liste a été révisée en Phase 1 par rapport à la proposition initiale : `DungeonModificationTracker` **disparaît** (les murs sont indestructibles, il n'y a rien à suivre — voir §15) et `Discovery` devient un module à part entière, parce que « chercher quoi générer » n'a ni le même déclencheur ni le même budget que « générer ».
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│ COUCHE BLoxd (seule à connaître api.*)                               │
+│ COUCHE Bloxd (seule à connaître api.*)                               │
 │                                                                      │
-│  DungeonController ──── horloge unique, orchestration des cycles     │
+│  DungeonController ──── horloge unique, orchestration des trois files│
 │      │                                                               │
 │      ├── PlayerTracker ──────── position, salle courante, priorités  │
-│      ├── DungeonBuilder ─────── écriture des blocs, vérification     │
-│      ├── DungeonBuildQueue ──── budget de blocs, reprise             │
-│      ├── DungeonPersistence ── DBValues, fragments, migration        │
-│      └── DungeonModificationTracker ─ deltas, callbacks de blocs     │
+│      ├── DungeonBuilder ─────── écriture des blocs, relecture, réparation
+│      ├── DungeonBuildQueue ──── budget de blocs, curseur de reprise  │
+│      └── DungeonPersistence ── DBValues, fragments, versions, reprise│
 └──────────────────────────────────────────────────────────────────────┘
                     │  (interfaces en données simples)
 ┌───────────────────▼──────────────────────────────────────────────────┐
 │ COUCHE LOGIQUE (aucun api.*)                                         │
 │                                                                      │
-│  DungeonManager ─── graphe : salles, ouvertures, connexions          │
+│  DungeonManager ─── graphe : salles, ouvertures, connexions, commit  │
 │      │                                                               │
+│      ├── DungeonDiscovery ─── quelles ouvertures valent la peine     │
 │      ├── DungeonGenerator ─── croissance par ouvertures, seeds        │
 │      ├── DungeonConnector ─── appariement d'ouvertures, réutilisation│
 │      ├── DungeonValidator ─── collisions réelles, passages, murs      │
-│      └── DungeonSpatialIndex ─ grille de hachage, index d'ouvertures  │
+│      └── DungeonSpatialIndex ─ régions + index d'ouvertures           │
 │                                                                      │
 │  DungeonGeometry ── cellules, formes, contours, conversions           │
 └──────────────────────────────────────────────────────────────────────┘
@@ -201,23 +214,26 @@ Treize modules comme demandé, regroupés en quatre couches. Aucun module d'une 
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-| Module | Responsabilité unique | Ne fait jamais |
-| --- | --- | --- |
-| `DungeonGeometry` | Formes en cellules, contours, dilatation, conversions logique/local/monde | Écrire, lire le monde |
-| `DungeonGenerator` | Croissance : produit une salle candidate depuis une ouverture parente | Valider, enregistrer |
-| `DungeonConnector` | Choisit l'ouverture d'accueil, apparie deux ouvertures, réutilise une salle existante | Générer une forme |
-| `DungeonValidator` | Fonction pure : accepte ou refuse une candidate, avec un code de refus | Modifier quoi que ce soit |
-| `DungeonSpatialIndex` | Requêtes de voisinage en temps constant | Décider |
-| `DungeonManager` | Source de vérité du graphe, unique point de commit, BFS, profondeurs | Toucher au monde |
-| `PlayerTracker` | Position → salle → distance, profondeur, classe de priorité | Décider du budget |
-| `DungeonController` | Boucle par tick, répartition des budgets, anti-cycles concurrents | Générer ni construire lui-même |
-| `DungeonBuilder` | D'un `RoomData` validé vers des blocs, dans l'ordre imposé | Décider *quoi* construire |
-| `DungeonBuildQueue` | File de construction, curseur de reprise, coût en blocs | Écrire des blocs |
-| `DungeonPersistence` | Sérialisation compacte, fragments, budget de caractères, migrations | Décider du contenu |
-| `DungeonModificationTracker` | Deltas en coordonnées locales, capture, application, idempotence | Construire la géométrie |
-| `DungeonRecovery` | Rechargement, réparation, audit d'intégrité, reprise des constructions interrompues | Remplacer les autres modules |
+| Module | Responsabilité unique | Ne fait jamais | État |
+| --- | --- | --- | --- |
+| `DungeonGeometry` | Formes en cellules, contours, dégagements, conversions logique/local/monde | Écrire, lire le monde | ✅ `src/dungeon/engine/geometry.js` |
+| `DungeonShapes` | Grammaire de formes : produit un masque valide depuis une seed | Valider contre d'autres salles | ✅ `shapes.js` |
+| `DungeonGenerator` | Croissance : produit une salle candidate depuis une ouverture parente | Valider, enregistrer | ✅ réparti entre `shapes.js` et `dungeonManager.expand` |
+| `DungeonConnector` | Apparie deux ouvertures, réutilise une salle existante, décide du joint ou du pont | Générer une forme | ✅ `openings.js` + `tryReuse` |
+| `DungeonValidator` | Fonction pure : accepte ou refuse une candidate, avec un code de refus | Modifier quoi que ce soit | ✅ `validator.js` |
+| `DungeonSpatialIndex` | Requêtes de voisinage bornées et index d'ouvertures | Décider | ✅ `spatialIndex.js` |
+| `DungeonManager` | Source de vérité du graphe, unique point de commit, profondeurs | Toucher au monde | ✅ `dungeonManager.js` |
+| `DungeonDiscovery` | Position → quelles ouvertures sont imminentes, avec priorité | Générer | ◻ Phase 3 |
+| `PlayerTracker` | Position → salle → distance, profondeur, classe de priorité | Décider du budget | ◻ Phase 3 |
+| `DungeonController` | Boucle par tick, répartition des budgets, anti-cycles concurrents | Générer ni construire lui-même | ◻ Phase 3 |
+| `DungeonBuilder` | D'un `RoomData` validé vers des blocs, dans l'ordre imposé | Décider *quoi* construire | ◻ Phase 4 |
+| `DungeonBuildQueue` | File de construction, curseur de reprise, coût en blocs | Écrire des blocs | ◻ Phase 4 |
+| `DungeonPersistence` | Sérialisation compacte, fragments, budget de caractères, versions | Décider du contenu | ◻ Phase 5 |
+| `DungeonRecovery` | Rechargement, réparation, audit d'intégrité, reprise des constructions interrompues | Remplacer les autres modules | ◻ Phase 6 |
 
 `DungeonBuildQueue` est séparé de `DungeonBuilder` parce que la reprise après interruption est un problème de **curseur persistant**, pas d'écriture : les deux ont des raisons de changer distinctes.
+
+`DungeonDiscovery` est séparé de `DungeonGenerator` pour la raison inverse : la découverte lit des positions de joueurs à chaque tick et doit rester à coût quasi nul, alors que la génération fait de la géométrie et coûte cher. Les mélanger reviendrait à payer la géométrie à chaque tick.
 
 ---
 
@@ -228,7 +244,7 @@ Trois repères, et une règle : **un seul module fait les conversions**.
 | Repère | Unité | Origine | Qui l'utilise |
 | --- | --- | --- | --- |
 | `F_logical` | cellule entière | origine du donjon | Generator, Validator, Connector, SpatialIndex, Manager, files |
-| `F_local` | bloc, relatif à une salle | coin min de la salle, au niveau du sol | deltas de modification, reconstruction |
+| `F_local` | bloc, relatif à une salle | coin min de la salle, au niveau du sol | construction, reconstruction, pose des pads |
 | `F_world` | bloc Bloxd | monde | Builder, Persistence (via l'origine), PlayerTracker |
 
 Conversions, toutes dans `DungeonGeometry` :
@@ -336,7 +352,7 @@ Mesuré sur les objets ci-dessus, sérialisés en JSON lisible, en caractères :
 | `Opening` | 119 |
 | `RoomData` (4 ouvertures, forme irrégulière) | 714 |
 | `Connection` | 78 |
-| Un delta de modification | 89 |
+| ~~Un delta de modification~~ | ~~89~~ — supprimé, les murs sont indestructibles |
 | 1 200 `RoomData` | ≈ 857 000 |
 
 Une salle à 714 caractères ne tient pas dans un budget réaliste. Le format de **stockage** n'est donc pas le format en mémoire : `Persistence` encode une salle en **colonnes indexées** (tableaux parallèles, ouvertures en indices, forme en chaîne de bits, coordonnées relatives à l'origine en décimal court). Cible : **150 à 250 caractères par salle**, soit ~4 000 à 6 000 salles dans 1 M de caractères. La Phase 5 mesure le gain réel sur 1 000 salles et refuse la livraison si le facteur est inférieur à 3.
@@ -351,28 +367,43 @@ Une forme est un **ensemble de cellules** sur une grille `w × h`, avec `w, h �
 
 ### 7.2 Grammaire de formes
 
-Cinq familles, tirées par la seed de la salle, toutes paramétriques :
+**✅ Implémenté** dans `src/dungeon/engine/shapes.js`. Sept familles, toutes paramétriques, tirées par le RNG de la **tentative** et non par un compteur de passe (un tirage par `pass % 7` produisait 300 rectangles sur 300 — l'erreur est consignée dans `AUDIT-PHASE0.md`) :
 
 | Famille | Construction |
 | --- | --- |
 | `rect` | rectangle `w × h` |
-| `notch` | rectangle moins un coin (asymétrique) |
-| `cross` | rectangle plus deux extensions opposées |
-| `alcove` | rectangle plus une ou plusieurs extensions latérales d'une cellule |
-| `irregular` | rectangle, puis croissance/creusement par marche aléatoire bornée sur les bords |
+| `notch` | rectangle moins un renfoncement angulaire, asymétrique |
+| `wings` | rectangle plus deux ailes opposées |
+| `cross` | rectangle plus deux extensions opposées, débordantes |
+| `extensions` | rectangle plus une à trois extensions latérales |
+| `irregular` | rectangle mordu depuis son contour (profondeur ≤ 2, jamais un angle) |
+| `narrow` | rectangle avec une partie étroite d'une cellule de large |
 
-Chaque forme passe par `normalizeShape`, qui applique des invariants et **rejette** la forme (et redemande un tirage) si l'un échoue :
+La grammaire est **extensible par construction** : une famille est une fonction qui reçoit `(random, width, height)` et remplit un masque. En ajouter une ne demande aucune modification du reste du moteur, et une famille qui produit une forme inutilisable est simplement refusée par la grille d'acceptation, pas par un cas particulier.
 
-1. **Connexité** : un remplissage depuis la première cellule doit atteindre toutes les cellules. Pas de morceau déconnecté.
-2. **Largeur de passage** : il existe un chemin entre toute paire d'ouvertures dont toutes les cellules ont un dégagement de `minPassageWidth` (test par BFS sur les cellules dont le voisinage carré est dans la forme). Une salle ne peut pas être un cul-de-sac mural.
-3. **Marge d'angles** : aucune ouverture ne touche un coin ; la face qui la porte doit avoir au moins `minOpeningSpacing` cellules libres de chaque côté.
-4. **Contour** : calculé une fois et mis en cache (`contourSegments`), pas recalculé par le constructeur.
+Chaque forme passe ensuite par une **grille d'acceptation**. Les refus sont des codes, jamais des exceptions :
+
+1. `TOO_SMALL` — moins de 6 cellules : une salle où l'on ne peut pas se retourner.
+2. `DISCONNECTED` — un remplissage depuis la première cellule n'atteint pas toutes les cellules.
+3. `NO_WALKABLE_CORE` — aucune cellule de dégagement ≥ 1 : la salle serait un couloir de murs.
+4. `PADDED` — le masque a une bordure vide (invariant de normalisation).
+5. `DUPLICATE` — même forme déjà essayée pour cette salle.
+6. `EXHAUSTED` — plus aucune famille productive : la tentative échoue proprement.
+
+`sealHoles` est appliqué avant l'acceptation : une forme dont un trou d'une cellule subsiste serait une salle percée d'un puits, ce que le joueur lirait comme un bug.
 
 ### 7.3 Représentation
 
-`geometry.rows` est une liste de chaînes binaires. Coût : `w × h` caractères, soit 24 pour une salle 6×4, et 64 au maximum pour une 8×8. Les contours, la dilatation et le masque de passages sont **dérivés** et jamais stockés.
+**✅ Implémenté.** Un masque est `{ w, h, cells }`, `cells[y][x]` valant `0` ou `1`. `toRows` / `fromRows` donnent la vue texte (une chaîne par ligne), qui sert aux tests et à la visualisation ASCII ; c'est le format qui apparaît dans tout diagnostic.
 
-`dilate(shape, k)` est calculé une fois par salle et mis en cache pour deux valeurs de `k` : `wallThickness` (occupation physique) et `wallThickness + safetyMargin` (marge de sécurité). C'est ce cache qui rend la validation en collisions réelles aussi rapide qu'un test de rectangles englobants, sans en avoir les faux positifs.
+Taille maximale : `maxWidth × maxDepth = 11 × 11`, soit 121 cellules. Les contours, les dégagements et les cellules extérieures sont **dérivés** et jamais stockés.
+
+Deux primitives remplacent la dilatation de la proposition initiale :
+
+- `clearanceMap(mask)` donne, pour chaque cellule, la distance de Chebyshev au bord de la forme, en deux passes avant/arrière plus une passe de stabilisation. Elle sert à la fois de test d'accessibilité (dégagement ≥ 1) et de mesure de « largeur de passage » : c'est plus strict qu'une dilatation, parce qu'une diagonale n'y ouvre pas de passage ;
+- `masksOverlap(a, originA, b, originB, margin)` teste les **cellules réelles**, marge comprise. Une marge de `m` exige `m` cellules vides entre les deux formes, ce qui est exactement ce que la maçonnerie demande. Une implémentation naïve à trois balayages donnait des dégagements non monotones ; c'est le genre d'erreur qui ne se voit qu'en regardant les nombres.
+
+La « marge de sécurité » de la proposition initiale (`safetyMargin = 2`) **a été supprimée** : elle est incompatible avec l'adjacence voulue entre deux salles. Ce qui protège les salles l'une de l'autre, c'est le joint de `wallGap = 3` cellules, et lui seul (§8.3).
 
 ---
 
@@ -403,15 +434,39 @@ Chaque forme passe par `normalizeShape`, qui applique des invariants et **rejett
 
 ### 8.2 Règles de placement
 
-Une ouverture n'est créée que si, à la fin de `normalizeShape` :
+**✅ Implémenté** dans `planOpenings(roomId, mask, seed)` (`openings.js`). Une ouverture n'est créée que si :
 
-1. La face est **réellement un mur** : la cellule intérieure adjacente appartient à la forme, la cellule extérieure n'y appartient pas. Jamais d'ouverture sur un trou de la forme.
-2. Elle n'est pas dans un angle : `offset ≥ 1` et `offset + width ≤ faceLength - 1`.
-3. Elle est à `≥ minOpeningSpacing` de toute autre ouverture de la même face.
-4. Son couloir d'approche (`width × passageDepth` cellules vers l'intérieur) est entièrement dans la forme : on peut s'y tenir.
-5. Sa hauteur tient sous le plafond : `height + 1 ≤ wallHeight`.
+1. Les **cellules qu'elle perce sur la face** sont toutes sur le **contour réel** de la forme. Une ouverture sur une morsure ouvrirait dans le vide : le contrôle porte sur toute la largeur du seuil, pas seulement sur sa cellule centrale — c'est une erreur qui a réellement eu lieu.
+2. Elle n'est pas dans un angle : `offsetStart ≥ minCornerClearance` et `offsetEnd ≤ faceLength - 1 - minCornerClearance`.
+3. Elle est à `≥ minOpeningSpacing` de toute autre ouverture de la même face, après tri des candidats.
+4. La cellule immédiatement **derrière** le seuil appartient à la forme : on peut s'y tenir, et le validateur le revérifie.
+5. Sa hauteur plus le linteau tient sous le plafond : `height + 1 ≤ wallHeight`.
 
-Le nombre d'ouvertures dépend de la taille et de la seed : `1 + floor(perimeter / openingsPerCells)`, borné par config, et au moins une `pending` tant qu'il reste une face libre.
+Le nombre d'ouvertures n'est **pas** constant : il dépend du périmètre (`perimeter / cellsPerOpening`), borné par `[minOpenings, maxOpenings]`. En pratique, 2 à 5 ouvertures par salle, 3,3 en moyenne sur 300 formes — un donjon où chaque salle a exactement deux portes serait un couloir déguisé.
+
+Le choix des positions se fait par **score plus pénalité de diversité** : chaque segment exploitable du contour est noté (longueur, éloignement des angles, éloignement des ouvertures déjà posées), un tirage pondéré sélectionne, puis les positions retenues sont espacées. Deux ouvertures ne se retrouvent donc pas collées l'une à l'autre par hasard.
+
+### 8.3 Géométrie du joint — la constante unique
+
+**Décision figée : `wallGap = 3` cellules de maçonnerie entre deux salles voisines.** C'est la valeur voulue par le propriétaire du projet (« 3 blocks est bien »). Si l'intention était un autre découpage, `DUNGEON_CONFIG.wallGap` est le seul paramètre à changer : rien d'autre dans le moteur ne code une distance en dur.
+
+Ce que « 3 » signifie exactement, parce que trois conventions ont déjà coexisté et produit zéro boucle détectée :
+
+```
+   salle A        joint        salle B
+ [ ...mur A ] [ . . . ] [ mur B... ]
+              ^ 3 cellules de maçonnerie
+```
+
+- les deux façades sont distantes de `wallGap + 1` cellules d'axe à axe de seuil, donc de `wallGap` cellules de joint entre les deux bords ;
+- les **cellules centre des deux ouvertures sont distantes de `wallGap + 2`** ;
+- les cellules **entre** les deux seuils, joint compris, valent `wallGap` : ce sont celles que `jointCells` renvoie et que le constructeur creuse.
+
+Le décalage constant entre ces trois formules est exactement le genre d'erreur qui ne casse rien visiblement : les salles sont belles, mais aucune boucle n'est jamais détectée. Une seule source de vérité, `wallGap`, et un test qui recompte les cellules une par une (`tests/engine/index.test.js`, « wallGap is honoured by every committed connection »).
+
+### 8.4 Largeur de passage uniforme
+
+`minPassageWidth = maxPassageWidth = 1`. Une largeur unique n'est pas une simplification esthétique : deux salles dont les seuils n'ont pas la même largeur ne peuvent **jamais** se raccorder, et avec un tirage 1 ou 2 cellules, la moitié des paires devenait incompatible. Passer à une largeur unique a fait chuter les refus `DOOR_MISMATCH` de ~45 % à ~5 % des candidats. Élargir à 2 reste possible : c'est un paramètre, et il faudra alors que l'appariement accepte les seuils de largeur différente.
 
 ---
 
@@ -433,39 +488,73 @@ Aucun état global, aucun compteur partagé. Conséquences directes :
 
 ### 9.2 Croissance
 
-Une salle ne naît que d'une ouverture `pending` d'une salle existante.
+**✅ Implémenté** (`dungeonManager.expand`). Une salle ne naît que d'une ouverture `pending` d'une salle existante.
 
 ```
-expand(parentRoom, parentOpening):
-  pour attempt = 0 .. maxAttempts-1:
-    rng      = prng(attemptSeed)
-    shape    = normalizeShape(shapeGrammar(rng), config)            // §7
-    childOp  = shape.openings[attempt % shape.openings.length]      // déterministe
-    origin   = parentOpening.cell + parentOpening.dir - childOp.localCell
-    // 1) la salle existante compatible est cherchée AVANT de créer du neuf
-    reuse    = connector.findReusableOpening(shape, origin, parentOpening)
-    si reuse: commit(connection(parentOpening, reuse)) → fin (aucun budget consommé)
-    // 2) sinon, candidate neuve
-    verdict  = validator.validate({ shape, origin, openings, parentOpening })
-    si verdict.ok: commit(room + connection) → retour
-    sinon: enregistrer verdict.code (compteur de diagnostic)
-  parentOpening.failures += 1
-  si failures ≥ maxOpenAttempts: parentOpening.status = "blocked"
+expand(roomId, openingId):
+  refus si l'ouverture n'est pas pending            → NOT_PENDING
+  // 1) une boucle ou un raccourci ne coûte rien et ne consomme aucun budget
+  connexion = tryReuse(room, opening)               → si trouvée, commit, terminé
+  // 2) sinon, une salle neuve alignée sur cette ouverture
+  pour attempt = 0 .. maxGenerationAttempts-1:
+    shape   = generateShape(roomSeed(seed, room, opening), attempt)
+    planned = planOpenings(shape)
+    seuils  = ouvertures du côté opposé, de même largeur   → sinon DOOR_MISMATCH
+    origin  = placeRoomForOpening(room, opening, shape, seuil)
+    verdict = validateRoom({ candidate, nearby: index.queryRect(...), parent, clearances })
+    si ok: commitRoom + commitConnection + refreshDepths + closeLoops, terminé
+  opening.failures += 1
+  si failures ≥ maxGenerationAttempts: opening.status = blocked
+  retour { ok:false, code: <dernier refus réel>, blocked, attempts }
 ```
 
-Points importants :
+Quatre points qui ont coûté du temps et méritent d'être écrits :
 
-- **Aucune connexion par couloir par défaut.** Une connexion `direct` exige que la cellule d'ouverture de l'enfant soit **exactement adjacente** à celle du parent et que les deux ouvertures s'alignent (même axe, même largeur, offsets compatibles). Sinon il faut une connexion `bridge`, explicitement demandée, avec ses cellules stockées.
-- **Réutilisation.** `findReusableOpening` interroge l'index d'ouvertures sur la cellule visée. S'il y a déjà une ouverture `pending` d'une autre salle exactement face à la nouvelle, on la connecte : c'est une boucle ou un raccourci, qui ne crée aucune salle et ne consomme aucun budget de génération. C'est le mécanisme demandé de réutilisation de salles existantes.
-- **Budget.** Un échec, une réutilisation ou une ouverture déjà connectée ne consomment rien (règle explicite du cahier des charges) ; seule une salle effectivement créée compte.
+- **Aucune connexion par simple proximité.** Une connexion `direct` exige que les deux seuils se fassent face, à la distance exacte du joint, sur le même axe. Une connexion `bridge` est une décision distincte, avec ses propres cellules stockées (§9.4).
+- **Réutilisation.** `tryReuse` interroge l'index d'ouvertures sur la cellule visée par la normale de l'ouverture développée. S'il y a déjà une ouverture `pending` d'une autre salle exactement face à elle, on les connecte : c'est une boucle ou un raccourci, qui ne crée aucune salle et ne consomme aucun budget de génération.
+- **Le refus réel est remonté, pas le fait que les tentatives sont épuisées.** Renvoyer `EXHAUSTED` masquait `COLLISION_CELL` dans tout diagnostic : le visualiseur affichait 27 « tentatives épuisées » et zéro collision alors que les collisions étaient la seule cause. Un refus qui ne dit pas pourquoi est un refus inutilisable.
+- **Budget.** Un échec, une réutilisation ou une ouverture déjà connectée ne consomment rien ; seule une salle effectivement créée compte.
 
-### 9.3 Boucles et profondeurs
+### 9.3 Boucles, raccourcis et profondeurs
 
-`DungeonManager` tient le graphe. Après chaque commit :
+**✅ Implémenté.** `DungeonManager` tient le graphe. Après chaque commit :
 
-- `connectionCount`, `depth` du nouveau nœud (`parent.depth + 1`, recalculée si le nœud était déjà là) ;
-- un **BFS incrémental** maintient les profondeurs sans reparcourir le graphe entier : seule la composante affectée est remise à jour, et une réutilisation qui raccourcit un chemin déclenche un BFS local borné à la zone touchée ;
-- `openings` disponibles d'une salle = `pending` ; `neighbors` = salles reliées ; `freeOpenings` = index d'ouvertures `pending` — trois requêtes en O(1)/O(degré).
+- le `depth` du nouveau nœud est recalculé depuis l'entrée, par un BFS borné à la composante affectée ;
+- `closeLoops(room)` est appelé après chaque salle créée : c'est le seul moment où une ouverture de la nouvelle salle peut trouver un partenaire déjà posé. Chercher des boucles uniquement au moment d'`expand` ne suffit pas, parce que les deux ouvertures doivent être développées dans le bon ordre — et il n'y a pas de « bon ordre » dans un graphe ;
+- `openings disponibles d'une salle` = `pending` ; `neighbours` = salles reliées ; les ouvertures `pending` se lisent dans l'index, pas en parcourant les salles.
+
+Mesures sur le moteur actuel (150 salles, quatre seeds, `npm run visualize`) :
+
+| Seed | Connexions | Ponts | Boucles | Culs-de-sac | Profondeur max | Ouv. libres |
+| --- | --- | --- | --- | --- | --- | --- |
+| 12345 | 155 | 4 | 6 | 57 | 8 | 264 |
+| 777 | 152 | 2 | 3 | 57 | 9 | 276 |
+| 2024 | 152 | 3 | 3 | 57 | 8 | 264 |
+| 5150 | 154 | 5 | 5 | 51 | 8 | 268 |
+
+Lecture : un arbre de 150 salles aurait 149 arêtes ; on en a 152 à 155, donc **de vraies boucles**, et environ un tiers des salles sont des carrefours à trois ou quatre voisins. Les 265 ouvertures encore libres sont exactement ce que demande le cahier des charges : toute ouverture non utilisée reste disponible pour une exploration ultérieure.
+
+### 9.4 Deux natures de connexion
+
+**✅ Implémenté.**
+
+| Nature | Quand | Ce qui est stocké | Coût en salles |
+| --- | --- | --- | --- |
+| `direct` | deux seuils alignés à `wallGap + 1` d'axe à axe | les `wallGap` cellules du joint, recalculables depuis les deux ouvertures | 1 salle neuve (ou 0 en réutilisation) |
+| `bridge` | deux seuils alignés mais plus éloignés, dans la limite `maxBridgeLength` | les cellules du pont, explicitement | 0 |
+
+Un pont n'est jamais deviné : `bridgeCells` refuse tout ce qui n'est pas rectiligne, de même largeur, dans la limite de longueur, et le gestionnaire vérifie qu'aucune troisième salle ne se trouve sur le trajet. C'est ce qui permet des raccourcis sans transformer le moteur en recherche de chemin, qui serait une source de bugs bien plus grande que le bénéfice.
+
+### 9.5 Identité et ordre d'exploration
+
+**✅ Implémenté.** L'identité d'une salle est **dérivée de son chemin** : `r0.0.2` est la salle atteinte par l'ouverture `o2` de la salle `r0.0`, elle-même atteinte par `o0` depuis l'entrée `r0`. Une connexion est nommée par la paire triée de ses deux ouvertures, `c:<oa>+<ob>`.
+
+Ce n'est pas une coquetterie. Avec des identifiants attribués par un **compteur**, la seed d'une salle dépendait de son rang de création, donc de l'ordre dans lequel les ouvertures étaient développées : la même seed de donjon produisait un donjon **différent** selon l'ordre des ticks, ce qui ruinait la promesse « le retour en arrière reconstruit la même géométrie ». Le compteur est conservé comme statistique, mais il ne nomme plus rien.
+
+Ce que cette règle garantit, et ce qu'elle ne garantit pas :
+
+- **garanti** : une salle donnée a toujours la même position, la même forme et les mêmes ouvertures, qu'on la construise en deuxième ou en centième ;
+- **non garanti** : deux ordres d'exploration différents ne visitent pas les mêmes salles, puisque la file n'avance pas de la même façon. C'est normal et sans conséquence : ce qui compte est qu'une salle déjà construite soit toujours la même.
 
 ---
 
@@ -473,75 +562,97 @@ Points importants :
 
 ### 10.1 Codes de refus
 
-Le validateur renvoie un objet, jamais un booléen : le diagnostic sert au visualiseur, aux statistiques et aux tests.
+**✅ Implémenté** (`REFUSAL` dans `validator.js`, plus les codes du gestionnaire). Le validateur renvoie un objet, jamais un booléen : le diagnostic sert au visualiseur, aux statistiques et aux tests.
 
 ```js
-{ ok: false, code: "COLLISION_CELL", at: { x, z }, withRoom: "r12" }
+{ ok: false, code: "COLLISION_CELL", detail: { roomId: "r12", at: { x: 34, y: 12 } } }
 ```
 
-| Code | Cause |
-| --- | --- |
-| `OUT_OF_BOUNDS` | hors du rayon maximal du donjon |
-| `OPENING_NOT_ON_WALL` | ouverture sur un trou de la forme |
-| `OPENING_IN_CORNER` | marge d'angle insuffisante |
-| `OPENING_TOO_CLOSE` | espacement insuffisant sur une face |
-| `OPENING_NO_APPROACH` | couloir d'approche hors de la forme |
-| `COLLISION_CELL` | une cellule **réelle** de la forme dilatée heurte une autre salle |
-| `DOOR_MISMATCH` | largeur, hauteur, alignement ou sens incompatibles |
-| `DOOR_NO_CLEARANCE` | marge de sécurité fermant le passage pourtant voulu |
-| `NO_WALKABLE_PATH` | le passage ne relie pas réellement les deux intérieurs |
-| `ROOM_DISCONNECTED` | les ouvertures de la nouvelle salle ne sont pas reliées entre elles |
-| `BELOW_MIN_HEIGHT` | plafond incompatible avec la hauteur de passage |
+| Code | Cause | Émetteur |
+| --- | --- | --- |
+| `OUT_OF_BOUNDS` | hors du rayon maximal du donjon | validateur |
+| `NO_OPENING` | la candidate n'a aucune ouverture | validateur |
+| `OPENING_NOT_ON_CONTOUR` | une cellule du seuil n'est pas sur le contour réel | validateur |
+| `OPENING_IN_CORNER` | marge d'angle insuffisante | validateur |
+| `OPENING_NO_APPROACH` | la cellule derrière le seuil n'appartient pas à la forme | validateur |
+| `COLLISION_CELL` | une cellule **réelle** de la candidate heurte une autre salle | validateur |
+| `NO_CLEARANCE` | le vide entre deux salles est plus étroit que la maçonnerie demandée | validateur |
+| `DOOR_MISMATCH` | largeur, alignement ou sens incompatibles | validateur + gestionnaire |
+| `NO_WALKABLE_PATH` | le passage ne relie pas réellement les deux intérieurs | validateur |
+| `ROOM_DISCONNECTED` | les ouvertures de la nouvelle salle ne se rejoignent pas à pied | validateur |
+| `TOO_SMALL`, `DISCONNECTED`, `NO_WALKABLE_CORE`, `PADDED`, `DUPLICATE`, `EXHAUSTED` | la forme elle-même a été refusée par la grammaire | `shapes.js` |
+| `NOT_PENDING` | on a tenté de développer une ouverture déjà connectée ou bloquée | gestionnaire |
+| `DUPLICATE_PENDING` | la même ouverture a déjà été demandée en parallèle | gestionnaire |
+| `NO_FREE_SPACE` | aucune tentative n'a produit de salle acceptée | gestionnaire |
+
+`OPENING_TOO_CLOSE`, `DOOR_NO_CLEARANCE` et `BELOW_MIN_HEIGHT` ont été retirés de la liste : l'espacement est garanti à la création (il n'est jamais constaté au moment de la validation), la marge de sécurité n'existe plus (§7.3), et la hauteur de passage est contrôlée par le catalogue de blocs, pas par le validateur.
 
 ### 10.2 Ordre des contrôles
 
-Du moins cher au plus cher, avec sortie anticipée. Le coût typique d'une validation acceptée est de quelques dizaines d'opérations, parce que la plupart des refus sortent sur `OUT_OF_BOUNDS` ou `COLLISION_CELL`.
+**✅ Implémenté.** Du moins cher au plus cher, avec sortie anticipée :
+
+1. `NO_OPENING` — liste vide, une comparaison.
+2. `OUT_OF_BOUNDS` — quatre comparaisons sur la boîte englobante.
+3. `OPENING_NOT_ON_CONTOUR`, `OPENING_IN_CORNER`, `OPENING_NO_APPROACH` — sur les ouvertures, coût proportionnel à leur nombre (≤ 5).
+4. `COLLISION_CELL` — collisions réelles contre les seules salles renvoyées par l'index.
+5. `DOOR_MISMATCH` — largeur et sens des deux seuils.
+6. `ROOM_DISCONNECTED` — parcours sur cellules marchables, le plus cher, donc en dernier.
+
+Le validateur ne modifie rien : c'est une fonction pure de `(candidate, nearby, parent, radius, clearances)`. C'est ce qui rend l'atomicité triviale — il n'y a rien à défaire quand on n'a rien fait.
 
 ### 10.3 Collisions réelles, pas rectangles englobants
 
-Deux formes en L peuvent avoir des rectangles englobants qui se chevauchent sans qu'aucune cellule ne se touche. Le validateur ne compare donc jamais des boîtes :
+**✅ Implémenté.** Deux formes en L peuvent avoir des rectangles englobants qui se chevauchent sans qu'aucune cellule ne se touche. Le validateur ne compare donc jamais des boîtes :
 
-1. Requête d'index sur `bounds(candidate) + wallThickness + safetyMargin` → quelques salles candidates seulement.
-2. Pour chaque candidate : test cellule par cellule sur `dilate(candidate, wallThickness + margin)` contre `dilate(otherRoom, wallThickness + margin)`, restreint à l'intersection des deux boîtes, avec sortie au premier conflit.
-3. Les deux formes étant en chaînes binaires, le test d'intersection est une comparaison de caractères sur les lignes qui se chevauchent.
+1. `index.queryRect(grownRect(mask, origin))` → quelques salles candidates seulement, jamais l'ensemble du donjon.
+2. Pour chaque candidate : `masksOverlap(mask, origin, otherMask, otherOrigin, structureMargin)` teste les **cellules réelles**, restreint à l'intersection des boîtes, avec sortie au premier conflit.
+3. La marge est exprimée en cellules vides, pas en dilatation : c'est plus simple à raisonner et impossible à confondre avec un décalage.
 
-Un test dédié vérifie les **deux** sens : deux L dont les boîtes se chevauchent mais pas les cellules doivent être acceptées ; deux salles dont les cellules se touchent doivent être refusées.
+Deux tests couvrent les **deux** sens : deux L dont les boîtes se chevauchent mais pas les cellules doivent être acceptées (§`geometry.test.js`) ; deux salles dont une cellule est commune doivent être refusées, avec la cellule en détail.
 
-### 10.4 Marge de sécurité sans bloquer les connexions voulues
+### 10.4 Pourquoi il n'y a pas de « marge de sécurité »
 
-C'est un piège classique : une marge appliquée naïvement ferme toutes les portes, puisque deux salles raccordées sont par construction au contact.
+La proposition initiale prévoyait `safetyMargin = 2` et une soustraction du rectangle de passage pour ne pas fermer les portes.
 
-La règle est donc explicite : la marge s'applique partout **sauf sur le rectangle de passage**. Concrètement, on dilate les deux formes, on intersecte, puis on **soustrait** le rectangle `passageRect(parentOpening, childOpening)` de l'ensemble des cellules en conflit. Si après soustraction il ne reste rien, la marge est respectée. C'est ce qui permet d'avoir `safetyMargin = 2` sans perdre une seule connexion, et le test `DOOR_NO_CLEARANCE` couvre le cas inverse (une marge qui fermerait un passage non prévu).
+Cette complexité est **supprimée**. Deux salles raccordées sont, par construction, séparées par exactement `wallGap` cellules de maçonnerie ; il n'y a jamais de contact. Ajouter une marge obligeait à traiter le joint comme une exception, et l'exception finissait toujours par fermer une porte quelque part. Le joint est désormais la seule règle (§8.3), et `structureMargin = 0` est un paramètre qui existe pour les cas où l'on voudrait volontairement plus d'air — il est mesuré : à 3, il ne crée aucune boucle supplémentaire et ne fait que refuser des salles.
 
 ### 10.5 Atomicité et tentatives
 
-Une génération est une transaction :
+**✅ Implémenté, avec une nuance.**
 
 ```
-tx = manager.begin()
-tx.reserve(parentOpening)        // en mémoire uniquement
-tx.commit({ room, connection })  // seul point d'écriture :
-                                 //   index spatial, graphe, profondeurs,
-                                 //   marquage des deux ouvertures,
-                                 //   compteurs d'ids
-tx.rollback()                    // sur toute exception : aucune trace
+expand():          le validateur ne touche à rien ; l'origine et le masque sont locaux
+commitRoom()       seul point d'entrée d'une salle dans le graphe
+commitConnection() seul point de mutation des statuts d'ouverture, de l'index et du graphe
 ```
 
-`commit` est le seul endroit du moteur qui modifie le graphe. `rollback` défait les réservations en mémoire et rien d'autre, puisque rien n'a été écrit sur disque. Un `try/catch` entoure chaque cycle du contrôleur : une exception dans une génération est journalisée et le cycle continue, sans jamais laisser une ouverture `reserved` orpheline (un balayage en fin de cycle libère les réservations orphelines, ceinture et bretelles).
+Une salle n'entre dans le graphe qu'après validation complète, par `commitRoom`, immédiatement suivie de `commitConnection`. Une tentative refusée ne laisse **aucune** trace : ni salle, ni ouverture orpheline, ni entrée d'index. C'est vérifié par un test qui compare l'état complet du donjon avant et après un refus (`tests/engine/graph.test.js`, « a refused expansion leaves no trace at all »).
 
----
+**La nuance.** La proposition initiale décrivait un objet de transaction `begin/reserve/commit/rollback`. L'implémentation n'en a pas besoin : comme la génération est une fonction pure et synchrone, l'état intermédiaire n'existe que sur la pile d'appel. Un objet de transaction aurait ajouté un état à nettoyer — exactement le genre d'état dont un plantage laisse une trace. La réservation explicite d'ouverture reste utile en Phase 3, où deux requêtes concurrentes peuvent viser la même ouverture ; elle sera introduite là, avec ses tests, et pas avant.
 
 ## 11. Index spatial
 
-Deux structures, toutes deux en `Map`, toutes deux en O(1) par requête.
+**✅ Implémenté** (`spatialIndex.js`). Deux structures, toutes deux en `Map`.
 
-**Grille de hachage des salles.** `regionSize = 32` cellules. Une salle est enregistrée dans toutes les régions que couvre sa boîte **dilatée**. `queryRect(rect)` renvoie l'union des salles des régions touchées, dédupliquée. Insertion et suppression coûtent O(régions touchées), soit 1 à 4 pour une salle de 8×8.
+**Grille de régions pour les salles.** `REGION_SIZE = 16` cellules (et non 32 : nos salles font au plus 11 cellules de côté, une région de 16 contient donc une salle et son voisinage immédiat, alors qu'une région de 32 aurait fait tenir 3×3 salles dans chaque case). Une salle est enregistrée dans toutes les régions que couvre sa boîte. `queryRect(rect)` renvoie l'union des salles des régions touchées, dédupliquée. Insertion et suppression coûtent O(régions touchées), soit 1 à 4 pour une salle de 11×11.
 
-**Index des ouvertures.** Clé = `side + ":" + x + ":" + z` de la cellule **juste à l'extérieur** d'une ouverture `pending`. Une requête « y a-t-il une ouverture face à la mienne ? » est une seule lecture de `Map`. C'est ce qui rend la détection de boucles et la réutilisation exactes et gratuites, au lieu d'un balayage de proximité approximatif.
+**Index des ouvertures.** Clé = cellule **centre de l'ouverture, sur la face de sa propre salle**, plus son côté. Une requête « y a-t-il une ouverture face à la mienne ? » lit la case située à `wallGap + 1` dans la normale : une seule lecture de `Map`.
+
+Le choix de la clé est le point délicat, et il a été faux deux fois :
+
+- clé sur la cellule **extérieure** de l'ouverture : deux ouvertures qui se font face ne partagent jamais cette cellule, donc zéro boucle détectée ;
+- clé juste, mais distance de recherche fausse (`wallGap`, `wallGap + 2`, `wallGap + 4` essayés) : les paires existaient, l'index ne les trouvait pas. La bonne valeur est `wallGap + 1`, parce que le centre d'une ouverture **est** une cellule de la face de sa salle : entre deux faces séparées par `wallGap` cellules de joint, il y a `wallGap + 1` cellules d'écart entre les deux centres.
+
+Pour les ponts, `openingsInRect(rect, excludeRoomId)` renvoie les ouvertures `pending` d'un petit rectangle **orienté selon la normale** de l'ouverture (et non un carré autour d'elle, qui ramènerait aussi des paires latérales). La portée est `wallGap + 1 + maxBridgeLength`, donc le coût ne dépend jamais du nombre de salles.
 
 Ce que l'index ne fait pas : décider. Il ne renvoie que des candidats ; c'est le validateur qui tranche, en collisions réelles.
 
-Un test de propriété compare l'index à une implémentation de référence en O(n²) sur 500 salles aléatoires : l'index doit renvoyer un **sur-ensemble** de la réponse exacte, et le validateur doit rendre le même verdict que la référence sur 300 cas. Sans ce test, une erreur d'index se traduirait par des murs qui se croisent en jeu, très loin de sa cause.
+Deux tests de propriété le vérifient (`tests/engine/index.test.js`) :
+
+- sur trois seeds et jusqu'à 120 salles, l'index trouve **toutes** les paires qu'une implémentation de référence en O(n²) trouve — un sur-ensemble, jamais un sous-ensemble ;
+- le coût par salle ne croît pas avec la taille du donjon : le rapport mesuré entre 60 et 200 salles doit rester sous un facteur 4, alors qu'il vaudrait 3,3 en O(n).
+
+Sans ces tests, une erreur d'index se traduirait par des murs qui se croisent en jeu, très loin de sa cause.
 
 ---
 
@@ -588,7 +699,7 @@ Une salle ne peut pas être dans `generationQueue` et déjà `connected`, ni dan
 
 Tout est piloté par `tick(ms)`, via le scheduler existant, une fois par tick. Le contrôleur :
 
-1. met à jour `PlayerTracker` tous les `trackerIntervalTicks` (défaut 10 ticks, 2×/s) — lire `getPosition` de chaque joueur à chaque tick coûte plus que ça ne rapporte ;
+1. met à jour `PlayerTracker` tous les `playerScanIntervalTicks` (défaut 10 ticks, 2×/s) — lire `getPosition` de chaque joueur à chaque tick coûte plus que ça ne rapporte ;
 2. exécute un **cycle** tous les `cycleTicks` (défaut 20 ticks, 1 s) : découverte, puis génération jusqu'à épuisement du budget, puis construction jusqu'à épuisement du budget de blocs ;
 3. compte les opérations du tick (`opsThisTick`) et s'arrête net au plafond, quel que soit l'état des files.
 
@@ -630,7 +741,7 @@ Si une précondition manque, la salle est reportée, pas abandonnée.
 | 3 | **murs par segments de contour**, en sautant les cellules de passage | le mur n'est jamais plein puis percé |
 | 4 | encadrement et linteau des passages | le passage est structurel, pas un trou |
 | 5 | plafond | ferme le volume, ne bloque rien |
-| 6 | **application des deltas** de modification | après la géométrie, et le constructeur saute les cellules modifiées (§15.4) |
+| 6 | **pose du pad** de difficulté, si la salle en porte un | après la géométrie, sur une cellule de sol connue (§15.2) |
 | 7 | vérification : relecture d'un échantillon déterministe | ne jamais faire confiance à une écriture |
 
 La phase 3 s'appuie sur `contourSegments` calculé à la génération : le constructeur ne redécouvre pas les murs, il les reçoit. Une cellule qui appartient au rectangle de passage d'une ouverture `connected` **n'est jamais écrite** comme mur : elle est tout simplement absente de la liste.
@@ -686,7 +797,7 @@ Le point crucial, et il est documenté : la clé doit être **`api.getPlayerDbId
 Le cahier des charges demande de présenter les deux modes, pas d'en choisir un arbitrairement. La recommandation est un **hybride**, et elle découle directement des contraintes :
 
 - **graphe + géométrie procédurale** dans le stockage partagé (Mode A) : c'est la partie déterministe, identique pour tous, et la seule qui doive être écrite une fois ;
-- **modifications physiques** dans le stockage du joueur (Mode B) : ce sont des deltas petits, propres à un joueur, et c'est là que l'isolation compte ;
+- ~~modifications physiques dans le stockage du joueur (Mode B)~~ : **supprimé**, les murs sont indestructibles (§15) ;
 - **états de construction** dans le stockage partagé, puisque le monde est partagé.
 
 Un donjon « cassable » par plusieurs joueurs a besoin de cette séparation : sans elle, soit les modifications d'un joueur écrasent celles d'un autre, soit chaque joueur paie la géométrie complète.
@@ -700,7 +811,6 @@ dg:<dungeonId>:idx            → { v, seed, origin, counters, roomShardMap, met
 dg:<dungeonId>:r:<shard>      → { v, seq, rooms: [...colonnes...] }      roomsPerShard = 32
 dg:<dungeonId>:r:<shard>:a|b  → double tampon : la version précédente, pour reprise
 dg:<dungeonId>:c:<shard>      → connexions
-dg:<dungeonId>:m:<shard>      → deltas de modification d'un groupe de salles
 dg:<dungeonId>:op:<opId>      → journal d'opération multi-fragments (§14.6)
 dg:<dungeonId>:b:<shard>      → états de construction (petits, mis à jour souvent)
 ```
@@ -717,69 +827,40 @@ Rien n'indique que `setLobbyDbValue` puisse échouer visiblement, ni qu'elle soi
 
 - **Ordre** : on écrit d'abord le fragment de données, ensuite `idx`. Une coupure laisse un fragment orphelin, jamais une référence pendante.
 - **Journal d'opération** : pour les changements qui touchent plusieurs fragments, `op:<opId>` est écrit avec l'intention (`{opId, shards, seq}`), puis les fragments, puis la clé est supprimée. Au chargement, un `op` survivant déclenche une vérification : si tous les fragments sont à la bonne `seq`, l'opération est terminée et la clé effacée ; sinon elle est rejouée.
-- **Vérification d'intégrité** : chaque fragment porte `seq` (monotone) et `crc` (somme sur la chaîne encodée). À la lecture, `crc` faux ou `seq` régressive ⇒ bascule sur le double tampon `:a`/`:b`. Si les deux sont mauvais, la salle est marquée `failed` et reconstruite depuis sa seed, avec ses deltas réappliqués.
+- **Vérification d'intégrité** : chaque fragment porte `seq` (monotone) et `crc` (somme sur la chaîne encodée). À la lecture, `crc` faux ou `seq` régressive ⇒ bascule sur le double tampon `:a`/`:b`. Si les deux sont mauvais, la salle est marquée `failed` et reconstruite depuis sa seed.
 - **Détection du déjà-fait** : `seq` et `opId` rendent chaque écriture idempotente. Rejouer une opération qui a réussi est sans effet.
 - **Points de sauvegarde** : `doPeriodicSave`, `onClose`, et après `dirtyThreshold` changements (défaut 64). Jamais par bloc.
 
 ---
 
-## 15. Suivi des modifications physiques
+## 15. Suivi des modifications physiques — **supprimé**
 
-### 15.1 Le besoin
+**Décision : il n'y a aucun suivi de modifications.** Les murs du donjon sont incassables, et les minerais — les seuls blocs que le joueur pourra casser — ne sont pas structurels. Casser un minerai ne change donc jamais la forme d'une salle, et il n'y a rien à réappliquer au rechargement.
 
-Le joueur casse le donjon. Une modification doit survivre au rechargement du serveur, à la reconstruction d'une salle et au retour d'un autre joueur. La seed ne suffit pas : elle redonne la géométrie d'origine, pas ce que le joueur en a fait.
+### 15.1 Ce que la proposition initiale prévoyait, et pourquoi elle tombe
 
-### 15.2 Format et distinction vide / absent
+La proposition décrivait un `DungeonModificationTracker` complet : deltas en coordonnées locales, capture par `onPlayerChangeBlock` / `onWorldChangeBlock`, barrière d'écriture dans le constructeur, application idempotente après la géométrie, audit d'intégrité, reconstituation de deltas « externes ». C'était cohérent pour un donjon cassable. Ce n'est plus le cahier des charges.
 
-```js
-Delta = {
-  roomId: "r7",
-  local: { x: 3, y: 1, z: 5 },     // F_local : survit à un déplacement de la salle
-  op: 4107,                        // id d'opération monotone, pour l'idempotence
-  originalBlock: "Stone Bricks",   // état procédural, écrit une seule fois par cellule
-  currentBlock: "Air",
-  type: "break",                   // break | place | replace | external
-  tick: 120394
-}
-```
+Supprimer ce module retire quatre sources de bugs d'un coup :
 
-**Bloc vide contre donnée manquante.** L'absence de delta sur une cellule signifie « aucune modification connue » : la cellule prend son bloc procédural. Un delta avec `originalBlock: "Air"` signifie « le joueur a posé un bloc là où la procédure n'en mettait pas ». Ce sont deux états différents, et les confondre est exactement le bug qui fait réapparaître les murs cassés.
+- la capture des écritures **du constructeur lui-même** (le piège classique du `builderWriting`) ;
+- la distinction « delta absent » / « delta à Air », qui fait réapparaître les murs cassés quand on la confond ;
+- l'ordre entre application des deltas et construction de la géométrie ;
+- tout le budget de stockage des deltas, qui était le plus gros poste de persistance.
 
-`originalBlock` n'est écrit qu'une fois par cellule : c'est l'état procédural, jamais l'état intermédiaire. Une cellule cassée puis reconstruite garde son `originalBlock` d'origine.
+### 15.2 Ce qui reste à garantir
 
-### 15.3 Capture événementielle
+| Garantie | Moyen | Phase |
+| --- | --- | --- |
+| Le joueur ne peut pas casser un mur | `setCantChangeBlockType` / `setCantChangeBlockRect` sur la coque, `onPlayerChangeBlock` en filet qui renvoie `"preventChange"` | 4 |
+| Les minerais sont cassables mais non structurels | ils sont posés dans les cellules de sol, jamais dans un mur, et leur disparition ne change aucune cellule de passage | 4 |
+| Une salle reconstruite est identique à l'originale | elle est régénérée depuis sa seed, et la construction est reprise par curseur (§13.3) | 4-6 |
 
-L'API permet la capture : c'est documenté et c'est le mécanisme principal.
+La protection par type de bloc est préférée à une protection bloc par bloc : la documentation signale explicitement que `setCantChangeBlock` sur des milliers de blocs provoque des ralentissements, et fournit `setCantChangeBlockType` / `setCantChangeBlockRect` pour ce cas.
 
-- `onPlayerChangeBlock(playerId, x, y, z, fromBlock, toBlock, …)` est appelé « *before the block is set* », et fournit à la fois l'ancien et le nouveau bloc. C'est une capture fiable, sans relecture, au bon moment.
-- `onWorldChangeBlock(x, y, z, fromBlock, toBlock, initiatorDbId, extraInfo, …)` couvre les changements qui ne viennent pas d'un joueur. `initiatorDbId` vaut `null` pour du code de jeu, et `extraInfo.cause` peut valoir `"Explosion"`, `"MeltingIce"`, `"Sapling"`, etc. C'est ce qui permet de ne pas perdre une explosion.
+### 15.3 Conséquence sur la persistance
 
-**Le piège à ne pas manquer.** Le constructeur écrit des milliers de blocs avec `api.setBlock`. Ces écritures passent par `onWorldChangeBlock` avec `initiatorDbId === null`. Sans garde, le moteur enregistrerait sa propre construction comme une modification de joueur, et les deltas deviendraient un double de la géométrie — ou pire, écraseraient de vraies modifications. La parade : un indicateur `builderWriting` levé pendant chaque lot du constructeur, et deux vérifications (`initiatorDbId === null` **et** `builderWriting`) avant tout enregistrement. Un test simule un tour complet de construction avec les callbacks actifs et exige **zéro** delta créé.
-
-**Limite identifiée.** Un changement provoqué par un autre mécanisme du moteur qui ne passe par aucun callback (par exemple une écriture faite hors code de jeu) ne serait pas capturé. La parade de repli est l'**audit d'intégrité** (§15.6) : toute divergence entre le bloc observé et le bloc attendu (procédural + delta) est enregistrée comme delta `external`. La capture événementielle est donc le chemin rapide, l'audit le filet.
-
-### 15.4 Application sans jamais écraser
-
-Deux protections, pas une :
-
-1. **Barrière d'écriture.** Chaque salle tient un `Set` des cellules modifiées. Le constructeur **saute** ces cellules à toutes les phases. Ce n'est pas « appliquer après », c'est « ne jamais toucher » : la garantie ne dépend plus de l'ordre des passes.
-2. **Application après la géométrie.** La passe 6 du constructeur écrit les deltas, après que la géométrie a été posée, dans l'ordre `op` croissant. Elle est idempotente : si le bloc observé vaut déjà `currentBlock`, l'écriture est sautée.
-
-Ainsi, que la salle soit construite pour la première fois, reconstruite après une corruption ou régénérée depuis sa seed, le résultat est identique.
-
-### 15.5 Ordre d'opérations et reprise
-
-Écrire un delta puis appliquer le bloc n'est pas atomique, et les deux peuvent être interrompus :
-
-- si le delta est écrit mais le bloc non appliqué, le rechargement voit un delta non appliqué ⇒ `Recovery` l'applique (idempotent) ;
-- si le bloc est écrit mais le delta perdu, l'audit d'intégrité voit une divergence ⇒ delta `external` reconstitué à partir du bloc observé.
-
-Aucun des deux cas ne perd l'information, parce que l'état du monde est toujours lisible et que le delta porte de quoi se réconcilier.
-
-### 15.6 Protection et audit
-
-- **Protection** : `setCantChangeBlockRect(playerId, pos1, pos2)` sur la coque du donjon et sur le lobby, si `protectShell` est actif. La doc déconseille `setCantChangeBlock` sur des milliers de blocs ; la variante `Rect` est prévue pour ça. Attention : protéger une zone interdit d'y créer des deltas — c'est un arbitrage de jeu, exposé en configuration (§20, Q5).
-- **Audit d'intégrité** : pour une salle `built`, `Recovery` relit un échantillon déterministe (toutes les cellules de passage + toutes les cellules modifiées + 1 cellule de sol sur `verifySampleRate`) avec `getBlock`, et compare à l'attendu. Divergence ⇒ réparation en une passe, puis nouvelle lecture ; deuxième échec ⇒ `buildState = "failed"` avec motif, et la salle sort des files sans jamais être marquée prête.
+Le format persisté ne contient **que** le donjon lui-même : seed, origine, paramètres de difficulté, salles, ouvertures, connexions, curseurs de construction. Une salle reconstruite depuis sa seed est identique au bloc près, ce qui rend la persistance vérifiable : si la reconstruction diverge, c'est un bug de génération, pas une modification de joueur oubliée.
 
 ---
 
@@ -802,17 +883,26 @@ Aucun des deux cas ne perd l'information, parce que l'état du monde est toujour
 
 ### 17.1 Tests unitaires
 
-| Fichier | Ce qui est vérifié |
-| --- | --- |
-| `tests/dungeon/geometry.test.js` | Conversions `logique ↔ local ↔ monde` aller-retour ; les 4 directions ; formes min et max ; toutes les familles de formes ; formes irrégulières ; plusieurs ouvertures par salle ; contour ; dilatation ; refus des formes déconnectées. |
-| `tests/dungeon/openings.test.js` | Cycle de vie complet ; placement refusé dans un angle, sur un trou, trop près d'une autre ; annulation de réservation ; passage à `blocked` après `maxOpenAttempts`. |
-| `tests/dungeon/validator.test.js` | Collision réelle contre rectangle englobant (les **deux** sens) ; exemption de marge sur le passage ; `DOOR_MISMATCH` ; `NO_WALKABLE_PATH` ; atomicité : une validation refusée ne laisse aucune trace. |
-| `tests/dungeon/index.test.js` | Index contre référence O(n²) sur 500 salles ; verdict identique sur 300 cas ; suppression puis réinsertion ; pas de doublon. |
-| `tests/dungeon/generator.test.js` | Reproductibilité des seeds (même seed ⇒ même donjon, ordre d'insertion indifférent) ; unicité des ids ; cohérence des ouvertures et des connexions ; connexion vers une salle existante (boucle) ; génération totalement échouée ; tous les refus produisent un code. |
-| `tests/dungeon/anticipation.test.js` | Formule de priorité avec l'exemple A120/C250/B8148/D5285 ⇒ A, C, B, D ; budget de 10 salles par cycle ; anti-doublons des trois files ; suspension des salles lointaines ; « prête » seulement après `built` ; absence de timers natifs. |
-| `tests/dungeon/persistence.test.js` | Faux magasin clé/valeur avec **plafond de caractères** et pannes injectées (écriture perdue, écriture partielle, `seq` régressive, `crc` faux) ; reprise sur double tampon ; journal d'opération rejoué une seule fois ; migration `v0 → v1` ; rétention (géométrie retirée puis reconstruite à l'identique). |
-| `tests/dungeon/modifications.test.js` | Capture par callback ; les écritures du constructeur ne produisent aucun delta ; les deltas survivent à une reconstruction et à une régénération depuis la seed ; `Air` contre absente ; application idempotente ; delta perdu reconstitué par l'audit. |
-| `tests/architecture.test.js` | Aucun `api.` dans les modules logiques ; aucun `setTimeout`/`setInterval`/`Date.now`/`await` dans `src/dungeon/` ; aucune importation d'une couche haute depuis une couche basse. |
+Les tests du moteur existent : **59 tests**, dans `tests/engine/`, exécutés par `npm test` (85 au total avec les 26 tests existants). Le tableau ci-dessous décrit ce qui est réellement vérifié, et non ce qui est prévu.
+
+| Fichier | Ce qui est vérifié | État |
+| --- | --- | --- |
+| `tests/engine/geometry.test.js` | Conversions `logique ↔ local ↔ monde` aller-retour ; masques, rotations, miroirs ; connectité ; scellement des trous ; dégagements (centre, bord, trou, L) ; contour ; chevauchement sur cellules réelles, y compris la marge, dans les deux sens ; parcours marchable ; les 7 familles de formes ; déterminisme et indépendance vis-à-vis de l'ordre d'appel ; 400 formes sans morceau détaché ni trou ; ouvertures sur le contour, hors angles, avec espacement ; reproductibilité des ouvertures ; nombre d'ouvertures variable ; `canConnectDirectly`, `placeRoomForOpening`, `jointCells`, `bridgeCells`, `passageCells`. | ✅ |
+| `tests/engine/index.test.js` | Index contre référence O(n²) sur trois seeds ; toutes les salles réellement en chevauchement sont renvoyées ; suppression d'une salle et de ses ouvertures ; coût par salle non croissant avec la taille du donjon ; une ouverture bloquée n'est jamais proposée ; `wallGap` respecté par **toutes** les connexions commitées. | ✅ |
+| `tests/engine/graph.test.js` | Réseau réel : plus d'arêtes que d'un arbre, carrefours, culs-de-sac, tout est atteignable ; aucune cellule partagée ; chaque ouverture appartient à exactement une connexion ou reste libre ; un refus ne laisse **aucune** trace ; même seed ⇒ même donjon (structure complète comparée) ; ordre d'exploration sans effet ; profondeurs cohérentes ; les ouvertures libres ne disparaissent pas ; huit difficultés ordonnées ; rayon respecté ; **aucun appel à `Math.random`** (interdit pendant le test). | ✅ |
+| `tests/engine/passage.test.js` | Parcours du donjon entier depuis l'entrée : **tous** les seuils connectés sont atteignables à pied ; chaque passage direct est franchissable ; refus d'une salle posée sur une autre ; refus d'un seuil ouvrant dans un trou ; refus hors rayon ; refus d'une salle aux ouvertures non reliées ; les cellules du passage sont contiguës, sans trou. | ✅ |
+| `tests/dungeon/anticipation.test.js` | Formule de priorité ; budget par cycle ; anti-doublons des trois files ; suspension des salles lointaines ; « prête » seulement après `built`. | ◻ Phase 3 |
+| `tests/dungeon/build.test.js` | Ordre de construction imposé ; préconditions de chunk ; reprise au curseur ; relecture et réparation ; aucun mur plein percé. | ◻ Phase 4 |
+| `tests/dungeon/persistence.test.js` | Faux magasin clé/valeur avec **plafond de caractères** et pannes injectées (écriture perdue, partielle, `seq` régressive, `crc` faux) ; reprise sur double tampon ; journal d'opération rejoué une seule fois ; migration `v0 → v1` ; rétention (géométrie retirée puis reconstruite à l'identique). | ◻ Phase 5 |
+| `tests/engine/architecture.test.js` | Aucun appel `api.*` dans `src/dungeon/engine/` ; aucun `setTimeout`/`setInterval`/`Date.now`/`performance.now`/`await`/`import()` ; aucun import hors du dossier `engine/`. Les commentaires sont retirés avant analyse, sinon la documentation d'une interdiction la déclencherait. | ✅ |
+
+**Ce que les tests ont réellement attrapé** — la liste vaut plus que le décompte :
+
+- une distance de joint fausse dans l'index faisait manquer toutes les boucles ;
+- `placeRoomForOpening` calculait le joint depuis une **cellule centre** au lieu d'un **bord**, ce qui donnait un joint de 0 cellule sur les salles dont le seuil touchait le bord local ;
+- `validator.openingsOnContour` testait une cellule au lieu de toute la largeur du seuil ;
+- `passageIsWalkable` fusionnait deux salles sans creuser le passage, donc le chemin n'existait jamais ;
+- une connexion `direct` n'avait pas de champ `bridge`, ce qui faisait planter tout lecteur qui l'itérait.
 
 ### 17.2 La règle de sortie des Phases 1 et 2
 
@@ -828,35 +918,26 @@ Le test tourne pour les huit difficultés du lobby, sur des centaines de salles 
 
 ### 17.3 Outil de visualisation logique
 
-`tools/visualize-dungeon.mjs` — hors Bloxd, sans blocs.
+**✅ Implémenté : `tools/visualize-dungeon.mjs`** (aussi disponible via `npm run visualize`).
+
+```bash
+node tools/visualize-dungeon.mjs --seed 12345 --rooms 150
+node tools/visualize-dungeon.mjs --seed 12345 --svg /tmp/d.svg --ascii /tmp/d.txt
+node tools/visualize-dungeon.mjs --seed 12345 --json      # pour un test ou un diff
+```
+
+Il rend une carte ASCII (une cellule par caractère : `#` mur, `.` sol, `o` seuil connecté, `p` seuil libre, `=` joint, `+` pont, `E` salle d'entrée), la même carte en SVG, et un rapport : nombre de salles, de connexions, de ponts, de boucles, de culs-de-sac, profondeur maximale, **ouvertures encore libres**, et **la raison de chaque refus**, avec une phrase d'explication par code. Aucun échec silencieux : c'est un test de la sortie de l'outil, pas de la sortie du jeu.
+
+Exemple de rapport (seed 12345, 150 salles) :
 
 ```
-node tools/visualize-dungeon.mjs --seed 42 --rooms 60
-node tools/visualize-dungeon.mjs --seed 42 --rooms 400 --format svg --out out/dungeon.svg
+seed 12345: 150 rooms, 155 connections (4 joints... ), 6 loops, 56 dead ends, max depth 8, 269 openings left
+refusals:
+  COLLISION_CELL          148   the candidate overlapped a real cell of an existing room
+  DOOR_MISMATCH            20   the child had no doorway of the right width on the facing wall
 ```
 
-- rendu ASCII pour le terminal : cellules de salle, murs, ouvertures avec un symbole par état (`?` pending, `+` connected, `x` blocked), connexions, et le numéro de profondeur dans chaque salle ;
-- rendu SVG pour une vue d'ensemble (couleur par profondeur, contour des salles, passage en gras) ;
-- une légende et un résumé chiffré (salles, connexions, boucles, profondeur max, refus par code) ;
-- mode `--compare` : deux seeds côte à côte, pour vérifier la reproductibilité à l'œil ;
-- mode `--failures` : n'affiche que les refus avec leur code et leur position, pour comprendre pourquoi une direction se bloque.
-
-Il utilise exactement les mêmes modules que le jeu, ce qui garantit que ce qu'on voit est ce qui sera construit.
-
-### 17.4 Les huit scénarios de charge
-
-Un harnais unique, `tools/simulate-dungeon.mjs`, avec une fausse API qui mesure au lieu d'écrire. Chaque scénario produit un rapport : salles générées, blocs écrits, coût max d'un tick, latence de file, refus par code.
-
-1. **Exploration simple** — un joueur, ligne droite, 200 salles : aucune salle manquante sous ses pieds, profondeur toujours ≥ 3 devant lui.
-2. **Branches multiples** — un joueur qui visite toutes les branches : toutes les branches conservées, aucune perdue, files sans doublon.
-3. **Changement de direction** — demi-tour brusque : les salles générées dans l'ancienne direction sont suspendues, pas supprimées, et reviennent à l'approche.
-4. **Retour en arrière** — le joueur revient : aucune reconstruction, aucun bloc réécrit inutilement (compteur d'écritures).
-5. **Deux joueurs** — séparés puis réunis : aucune duplication de salle, aucune collision, budget partagé équitablement, priorité du plus proche.
-6. **Interruption** — coupure au milieu d'une construction : reprise au curseur, aucun bloc sauté, aucun delta perdu.
-7. **Redémarrage serveur** — `onClose` puis rechargement complet : graphe identique, états de construction cohérents, deltas réappliqués.
-8. **Grande échelle** — 2 000 salles : le coût par cycle ne croît pas avec le nombre total de salles (comparaison des mesures à 200 / 1 000 / 2 000), la mémoire reste bornée, la base reste sous le budget de caractères.
-
----
+La carte produite est placée dans `docs/examples/` pour être lisible sans exécuter le projet.
 
 ## 18. Découpage en phases
 
@@ -864,14 +945,14 @@ Chaque phase est testée avant la suivante. Aucune phase ne commence sans que la
 
 | Phase | Contenu | Critère de sortie |
 | --- | --- | --- |
-| **1. Géométrie** | `DungeonGeometry`, formes procédurales, ouvertures, contours, conversions. | Toutes les formes des huit familles valides ; 400 formes sans forme déconnectée ; visualiseur ASCII opérationnel ; tests géométrie verts. |
-| **2. Graphe** | `DungeonGenerator`, `DungeonValidator`, `DungeonSpatialIndex`, `DungeonConnector`, `DungeonManager`, connexions, boucles, réutilisation. | **La règle §17.2 : plusieurs centaines de salles, cinq propriétés prouvées, huit difficultés.** Aucun bloc écrit. |
+| **1. Géométrie — ✅ livrée** | `geometry.js`, `shapes.js`, `openings.js`, `random.js`, `config.js`. | Toutes les familles de formes valides ; 400 formes sans forme déconnectée ni trou ; visualiseur ASCII/SVG opérationnel ; tests moteur verts (**59** sur les quatre fichiers du moteur). |
+| **2. Graphe — ✅ livrée** | `validator.js`, `spatialIndex.js`, `dungeonManager.js` : connexions, boucles, réutilisation, ponts. | **La règle §17.2 : plusieurs centaines de salles, cinq propriétés prouvées, huit difficultés.** Aucun bloc écrit. **Mesuré : 150 salles, 5 à 8 boucles, profondeur 8-9, 250 ouvertures libres, 4 seeds.** |
 | **3. Anticipation** | `PlayerTracker`, `DungeonController`, trois files, priorités, budgets, suspension. | Priorités conformes à l'exemple ; budget de 10 salles par cycle respecté ; scénarios 1 à 4 du harnais verts. |
 | **4. Construction** | `DungeonBuilder`, `DungeonBuildQueue`, préconditions de chunk, ordre imposé, reprise, vérification. | Salles réellement construites dans Bloxd, sans trou, sans mur plein percé ; scénarios 5 et 6 verts ; reprise au curseur prouvée. |
 | **5. Persistance** | `DungeonPersistence`, fragmentation, budget, migration, rétention. | Rechargement identique ; pannes injectées absorbées ; gain de compactage ≥ 3× mesuré ; scénarios 7 et 8 verts. |
-| **6. Fiabilité et optimisation** | `DungeonRecovery`, `DungeonModificationTracker` complet, audit, réparation, profilage. | Audit d'intégrité sur 200 salles ; deltas préservés à travers reconstruction et redémarrage ; aucune régression de coût à 2 000 salles. |
+| **6. Fiabilité et optimisation** | `DungeonRecovery`, audit, réparation, profilage. | Audit d'intégrité sur 200 salles ; géométrie reconstruite à l'identique depuis la seed après redémarrage ; aucune régression de coût à 2 000 salles. |
 
-Le code du lobby et du spawn (`src/worldCode.js`, la partie spawn de `generator.js`) n'est pas touché avant la Phase 4, où il est rebranché sur le nouveau moteur. Les 26 tests existants restent verts à chaque phase.
+Le code du lobby et du spawn (`src/worldCode.js`, la partie spawn de `generator.js`) n'est pas touché avant la Phase 4, où il est rebranché sur le nouveau moteur. Les 26 tests existants restent verts à chaque phase ; ils sont désormais rejoints par les tests du moteur (`npm test`, **85** tests).
 
 ---
 
@@ -885,7 +966,7 @@ Le code du lobby et du spawn (`src/worldCode.js`, la partie spawn de `generator.
 | 4 | Les écritures de bloc dans un chunk non chargé sont perdues. | Trous dans le sol. | Préconditions du constructeur, `isBlockInLoadedChunk`, réchauffement, vérification après écriture. | Déjà corrigé sur le code existant |
 | 5 | `getBlockSolidity` ne distingue pas « non chargé » de « plein ». | Une validation basée sur le monde serait fausse. | La validation ne lit jamais le monde. | Résolu par conception |
 | 6 | Un mouvement de caméra ou de joueur peut sortir des chunks chargés. | Salle construite derrière le joueur, jamais vue. | Construction prioritaire sous les pieds et devant, et vérification d'intégrité. | Surveillé |
-| 7 | Une modification non passée par un callback serait perdue. | Mur cassé qui réapparaît. | Audit d'intégrité qui reconstitue un delta `external`. | Filet prévu |
+| 7 | ~~Une modification non passée par un callback serait perdue.~~ | — | Sans suivi de modifications (§15), le risque n'existe plus : un mur ne peut pas être cassé. | **Supprimé** |
 | 8 | Coût d'un tick trop élevé fige le monde pour tous les joueurs. | Jeu injouable pendant un pic. | Plafond d'opérations, budgets séparés, mesure dans le harnais. | Surveillé |
 | 9 | Une boucle de connexions mal détectée pourrait produire un mur partagé par deux salles. | Incohérence géométrique. | Collisions en cellules réelles + test d'index contre référence O(n²). | Couvert par test |
 | 10 | La portée des `setCantChangeBlockRect` par joueur doit être réappliquée à chaque connexion. | Protection perdue après reconnexion. | Réapplication dans `onPlayerJoin`. | À implémenter |
@@ -901,7 +982,7 @@ Ces points changent l'architecture ; ils ne relèvent pas d'un choix technique �
 3. **Un seul niveau ou plusieurs ?** Le cahier des charges mentionne une hauteur min/max. Le moteur est conçu pour plusieurs niveaux (`floorLevel`), mais les escaliers et les connexions verticales sont un travail distinct que je propose de traiter après la Phase 4.
 4. **Placement du donjon dans le monde.** Le donjon reçoit une origine allouée (anneau de 4096 blocs), le lobby reste où il est. Cela implique une téléportation, donc le cycle « téléporter → attendre les chunks → construire » déjà en place. Confirmes-tu ce placement, ou le donjon doit-il entourer le lobby ?
 5. **Le donjon doit-il être cassable ?** « Dungeon Break » suggère que oui. Si oui, la coque n'est pas protégée et chaque modification coûte des deltas. Si seul un type de bloc est cassable, le volume de deltas diminue beaucoup et la protection par `setCantChangeBlockType` suffit.
-6. **Rétention.** Acceptes-tu que les salles lointaines, entièrement construites et **sans aucune modification**, voient leur géométrie retirée du stockage et soient régénérées à l'identique depuis leur seed ? C'est la condition pour qu'un donjon infini tienne dans une base finie. Une salle modifiée n'est jamais concernée.
+6. **Rétention.** Acceptes-tu que les salles lointaines, entièrement construites, voient leur géométrie retirée du stockage et soient régénérées à l'identique depuis leur seed ? C'est la condition pour qu'un donjon infini tienne dans une base finie. Depuis que les murs sont indestructibles (§15), aucune salle ne peut plus diverger de sa seed : la rétention est donc sans risque de perte.
 
 ---
 
@@ -923,26 +1004,30 @@ Conservé mais non utilisé par le nouveau moteur, en attendant la Phase 4 : le 
 
 ## Annexe B — Paramètres par défaut (tous dans une seule configuration)
 
-`src/dungeon/config.js`, un seul objet exporté, aucune constante numérique dispersée dans les algorithmes.
+`src/dungeon/engine/config.js`, un seul objet `DUNGEON_CONFIG` exporté, aucune constante numérique dispersée dans les algorithmes. Les paramètres qui décrivent les salles sont **ceux du code livré** ; ceux des phases suivantes (anticipation, construction, persistance) restent des valeurs cibles, marquées comme telles.
 
 | Groupe | Paramètre | Défaut |
 | --- | --- | --- |
-| Dimensions | `minWidth`, `maxWidth` | 4, 10 |
-| | `minDepth`, `maxDepth` | 4, 10 |
+| Dimensions | `minWidth`, `maxWidth` | 4, 11 |
+| | `minDepth`, `maxDepth` | 4, 11 |
 | | `wallHeight` | 4 |
 | | `cellSize` | 1 |
-| Passages | `minPassageWidth` | 1 |
-| | `passageDepth` (couloir d'approche) | 2 |
+| Passages | `minPassageWidth`, `maxPassageWidth` | 1, 1 (uniforme, §8.4) |
+| | `passageHeight` | 3 (plafond de 4, linteau de 1) |
+| | `wallGap` (**la** constante du joint) | **3** |
+| | `minCornerClearance` | 1 |
 | | `minOpeningSpacing` | 2 |
-| | `wallThickness` | 1 |
-| | `safetyMargin` | 2 |
-| | `openingsPerCells` (densité) | 12 cellules de périmètre par ouverture |
-| | `maxOpeningsPerRoom` | 8 |
-| Génération | `maxAttempts` (par tentative de salle) | 6 |
+| | `minOpenings`, `maxOpenings` | 2, 5 |
+| | `cellsPerOpening` (densité) | 6 cellules de périmètre par ouverture |
+| | `structureMargin` | 0 (une marge non nulle refuse des salles sans créer de boucle, §10.4) |
+| | `maxBridgeLength` | 4 |
+| | `braidChance` | 0,5 |
+| Génération | `maxGenerationAttempts` (par tentative de salle) | 6 |
 | | `maxOpenAttempts` (avant `blocked`) | 3 |
-| | `maxRoomDimensionSpan` (rayon du donjon) | 2048 cellules |
-| | `originStride` | 4096 |
-| Anticipation | `triggerDistance` | 30 |
+| | `maxDungeonRadius` (rayon du donjon) | 512 cellules |
+| | `regionSize` (index spatial) | 16 |
+| | `originStride` | 4096 ◻ Phase 5 |
+| Anticipation ◻ | `triggerDistance` | 30 |
 | | `crossingDistance` | 6 |
 | | `anticipationDepth` | 3 |
 | | `priorityDepthWeight` | 40 |
@@ -951,13 +1036,13 @@ Conservé mais non utilisé par le nouveau moteur, en attendant la Phase 4 : le 
 | | `maxBlocksPerCycle` | 800 |
 | | `maxOpsPerTick` | 4000 |
 | | `cycleTicks` | 20 |
-| | `trackerIntervalTicks` | 10 |
+| | `playerScanIntervalTicks` | 10 (lire les positions 2×/s, pas 20×/s) |
 | | `backlogThreshold` | 60 salles |
 | | `maxAnticipationDistance` | 96 blocs |
-| Construction | `blocksPerBatch` | 80 |
+| Construction ◻ | `blocksPerBatch` | 80 |
 | | `chunkWarmupTicks` | 3 (existant, inchangé) |
 | | `verifySampleRate` | 8 |
-| Persistance | `roomsPerShard` | 32 |
+| Persistance ◻ | `roomsPerShard` | 32 |
 | | `dbCharBudget` | 200 000 par donjon (prudent, paramétrable) |
 | | `dirtyShardThreshold` | 64 changements |
 | | `retentionDistance` | 400 blocs |
