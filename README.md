@@ -9,7 +9,7 @@ Les règles de travail du projet sont consignées dans [`AGENT_RULES.md`](AGENT_
 1. Dans ton monde Bloxd, construis les pads de difficulté avec les blocs **Concrete** listés ci-dessous. Le joueur doit pouvoir marcher directement sur leur surface.
 2. Ouvre le **World Code** (touche `F8` par défaut).
 3. Copie-colle le contenu de [`world-code/worldCode.js`](world-code/worldCode.js) dans le World Code, puis sauvegarde. Ce fichier est le bundle compacté, prêt à coller.
-4. Entre dans le monde et marche sur un pad pour tester. Quitter le pad annule le compte à rebours.
+4. Entre dans le monde (spawn `10, 21, 10`) et marche sur un pad pour tester. Le compte à rebours s'affiche avec `middleTextUpper`; quitter tous les pads de la même difficulté l'annule.
 
 ## Sources et version compacte
 

@@ -6,6 +6,7 @@
 
 import {
   setInterval as scheduleInterval,
+  setTimeout as scheduleTimeout,
   step as stepScheduler,
 } from "./utils/scheduler.js";
 import { generateDungeon, stopDungeonForPlayer } from "./dungeon/generator.js";
@@ -13,6 +14,7 @@ import { generateDungeon, stopDungeonForPlayer } from "./dungeon/generator.js";
 const LOBBY_CONFIG = {
   countdownSeconds: 10,
   ticksPerSecond: 20,
+  padSwitchGraceTicks: 2,
   // Block names are compared exactly with Bloxd's onBlockStandStart callback.
   // Keep each pad's top surface made from one of these Concrete blocks.
   difficultyByBlock: {
@@ -29,7 +31,8 @@ const LOBBY_CONFIG = {
 };
 
 // Active countdowns are per-player, so players can pick independently.
-// Each entry is { difficulty, padKey, secondsLeft, timer }.
+// Each entry tracks the pads currently supporting the player, so moving
+// between same-difficulty Concrete blocks does not restart the countdown.
 const lobbyCountdowns = {};
 
 function lobbyPadKey(x, y, z) {
@@ -37,18 +40,10 @@ function lobbyPadKey(x, y, z) {
 }
 
 function showCountdown(playerId, difficulty, secondsLeft) {
-  api.sendTopRightHelper(
+  api.setClientOption(
     playerId,
-    "hourglass",
+    "middleTextUpper",
     `${difficulty} — starting in ${secondsLeft}...`,
-    {
-      duration: 1.2,
-      width: 360,
-      height: 70,
-      color: "rgb(46, 54, 66)",
-      textAndIconColor: "white",
-      fontSize: "17px",
-    },
   );
 }
 
@@ -57,7 +52,9 @@ function stopLobbyCountdown(playerId) {
   if (!countdown) return false;
 
   countdown.timer.stop();
+  if (countdown.cancelTimer) countdown.cancelTimer.stop();
   delete lobbyCountdowns[playerId];
+  api.setClientOption(playerId, "middleTextUpper", "");
   return true;
 }
 
@@ -67,6 +64,17 @@ function cancelLobbyCountdown(playerId) {
   }
 }
 
+function deferLobbyCountdownCancellation(playerId, countdown) {
+  if (countdown.cancelTimer) return;
+
+  countdown.cancelTimer = scheduleTimeout(() => {
+    countdown.cancelTimer = null;
+    if (lobbyCountdowns[playerId] === countdown && countdown.activePadCount === 0) {
+      cancelLobbyCountdown(playerId);
+    }
+  }, LOBBY_CONFIG.padSwitchGraceTicks);
+}
+
 function startLobbyCountdown(playerId, x, y, z, blockName) {
   const difficulty = LOBBY_CONFIG.difficultyByBlock[blockName];
   if (!difficulty) return;
@@ -74,15 +82,27 @@ function startLobbyCountdown(playerId, x, y, z, blockName) {
   const padKey = lobbyPadKey(x, y, z);
   const current = lobbyCountdowns[playerId];
 
-  // Avoid restarting the countdown if the callback fires again on the same pad.
-  if (current && current.padKey === padKey) return;
+  if (current && current.difficulty === difficulty) {
+    // Preserve the timer while the player crosses pads of this difficulty.
+    if (current.cancelTimer) {
+      current.cancelTimer.stop();
+      current.cancelTimer = null;
+    }
+    if (!current.activePads[padKey]) {
+      current.activePads[padKey] = true;
+      current.activePadCount += 1;
+    }
+    return;
+  }
   if (current) stopLobbyCountdown(playerId);
 
   const countdown = {
     difficulty,
-    padKey,
+    activePads: { [padKey]: true },
+    activePadCount: 1,
     secondsLeft: LOBBY_CONFIG.countdownSeconds,
     timer: null,
+    cancelTimer: null,
   };
   lobbyCountdowns[playerId] = countdown;
 
@@ -119,15 +139,19 @@ onBlockStandStart = (playerId, x, y, z, blockName) => {
 };
 
 onBlockStandStop = (playerId, x, y, z, blockName) => {
-  // Only cancel when the player leaves the exact pad currently running their
-  // countdown. Bloxd starts the new block callback before stopping the old one
-  // when walking directly from one block to another.
+  // Keep the countdown while any same-difficulty pad is still supporting the
+  // player. Bloxd starts the new block callback before stopping the old one.
   if (!LOBBY_CONFIG.difficultyByBlock[blockName]) return;
 
   const countdown = lobbyCountdowns[playerId];
-  if (countdown && countdown.padKey === lobbyPadKey(x, y, z)) {
-    cancelLobbyCountdown(playerId);
-  }
+  if (!countdown || countdown.difficulty !== LOBBY_CONFIG.difficultyByBlock[blockName]) return;
+
+  const padKey = lobbyPadKey(x, y, z);
+  if (!countdown.activePads[padKey]) return;
+
+  delete countdown.activePads[padKey];
+  countdown.activePadCount -= 1;
+  if (countdown.activePadCount === 0) deferLobbyCountdownCancellation(playerId, countdown);
 };
 
 tick = () => {
@@ -140,6 +164,7 @@ onPlayerLeave = (playerId) => {
 };
 
 onPlayerJoin = (playerId) => {
+  api.setPosition(playerId, [10, 21, 10]);
   api.sendMessage(
     playerId,
     "Welcome to Dungeon Break! Step on a colored Concrete pad to choose your difficulty.",
