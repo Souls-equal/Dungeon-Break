@@ -2,16 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createDungeonPlan, createEndlessRoomPlan } from "../src/dungeon/generator.js";
 
-function normalizeWalls(plan, floor) {
-  return floor.walls.map((wall) => [
-    wall.from[0] - plan.originX,
-    wall.from[1] - floor.floorY,
-    wall.from[2] - plan.originZ,
-    wall.to[0] - plan.originX,
-    wall.to[1] - floor.floorY,
-    wall.to[2] - plan.originZ,
-  ]);
-}
+const ROOM_TYPES = ["open", "pillar", "twinPillars", "alcove", "fourPillars", "zigzag"];
 
 function rectangleContains(rect, x, y, z) {
   return x >= rect.from[0] && x <= rect.to[0]
@@ -19,121 +10,100 @@ function rectangleContains(rect, x, y, z) {
     && z >= rect.from[2] && z <= rect.to[2];
 }
 
-test("multi-floor plans stay in range and carve each stairwell out of the floor", () => {
+function roomsReachable(plan) {
+  const visited = new Set([0]);
+  const queue = [plan.rooms[0]];
+  while (queue.length > 0) {
+    const room = queue.shift();
+    const neighbors = [
+      room.ports.north && plan.rooms[room.index - plan.cellCount],
+      room.ports.east && plan.rooms[room.index + 1],
+      room.ports.south && plan.rooms[room.index + plan.cellCount],
+      room.ports.west && plan.rooms[room.index - 1],
+    ];
+    for (const neighbor of neighbors) {
+      if (neighbor && !visited.has(neighbor.index)) {
+        visited.add(neighbor.index);
+        queue.push(neighbor);
+      }
+    }
+  }
+  return visited.size;
+}
+
+test("the dungeon is a single-level connected grid with a continuous floor", () => {
   const plan = createDungeonPlan(123456789, "Normal");
   const [spawnX, spawnY, spawnZ] = plan.spawnPosition;
+  const maxX = plan.originX + plan.width - 1;
+  const maxZ = plan.originZ + plan.width - 1;
 
   assert.equal(plan.cellCount, 7);
   assert.equal(plan.width, 43);
-  assert.equal(plan.levelCount, 3);
-  assert.equal(plan.floors.length, 3);
-  assert.equal(plan.passageCount, plan.cellCount * plan.cellCount - 1);
+  assert.equal(plan.roomCount, 49);
+  assert.equal(plan.rooms.length, plan.roomCount);
+  assert.equal(plan.passageCount, plan.roomCount - 1);
+  assert.equal(spawnY, plan.floorY + 1);
+  assert.ok(spawnX > plan.originX && spawnX < maxX);
+  assert.ok(spawnZ > plan.originZ && spawnZ < maxZ);
   assert.ok(plan.originX >= -50000);
-  assert.ok(plan.originZ >= -50000);
-  assert.ok(plan.originX + plan.width - 1 <= 50000);
-  assert.ok(plan.originZ + plan.width - 1 <= 50000);
-  assert.ok(plan.floors[0].floorRects.some((rect) => rect.from[2] < plan.originZ), "the entrance has a landing");
-  assert.ok(
-    plan.floors.at(-1).floorRects.some((rect) => rect.to[2] > plan.originZ + plan.width - 1),
-    "the exit has a landing",
-  );
-  for (const floor of plan.floors) {
-    for (const rect of floor.floorRects) {
-      assert.ok(rect.from[0] >= -50000 && rect.from[2] >= -50000);
-      assert.ok(rect.to[0] <= 50000 && rect.to[2] <= 50000);
+  assert.ok(maxX <= 50000);
+  assert.ok(plan.originZ - 2 >= -50000);
+  assert.ok(maxZ + 2 <= 50000);
+  assert.equal(roomsReachable(plan), plan.roomCount, "every room connects back to the entrance");
+
+  for (let x = plan.originX; x <= maxX; x += 1) {
+    for (let z = plan.originZ - 2; z <= maxZ + 2; z += 1) {
+      assert.ok(plan.floorRects.some((rect) => rectangleContains(rect, x, plan.floorY, z)), "the floor has no gaps");
     }
   }
-  assert.ok(plan.endlessFrontier.z > plan.originZ + plan.width - 1);
+  assert.ok(plan.floorRects.every((rect) => rect.from[1] === plan.floorY && rect.to[1] === plan.floorY));
+  assert.ok(plan.walls.every((wall) => (
+    wall.from[1] >= plan.floorY + 1 && wall.to[1] <= plan.floorY + 3
+      && wall.randomWallTexture === true
+  )), "the only raised blocks are room walls and decorations, not another floor");
 
-  assert.equal(spawnY, plan.floorY + 1);
-  assert.ok(spawnX > plan.originX && spawnX < plan.originX + plan.width - 1);
-  assert.ok(spawnZ > plan.originZ && spawnZ < plan.originZ + plan.width - 1);
-
-  for (let levelIndex = 0; levelIndex < plan.floors.length; levelIndex += 1) {
-    const floor = plan.floors[levelIndex];
-    assert.equal(floor.floorY, plan.floorY + levelIndex * plan.levelGap);
-    assert.ok(floor.floorRects.length > 0);
-    assert.ok(floor.walls.length > 0);
-    assert.ok(floor.walls.every((wall) => wall.randomWallTexture === true));
-    assert.ok(floor.floorRects.every((rect) => !rectangleContains(
-      rect,
-      plan.stairwell.minX + 1,
-      floor.floorY,
-      plan.stairwell.minZ + 1,
-    )), "the 3x3 stairwell must remain open through every floor");
+  const start = plan.rooms[0];
+  const exit = plan.rooms.at(-1);
+  assert.equal(start.ports.north, true, "the first module has an entrance socket");
+  assert.equal(exit.ports.south, true, "the last module has an exit socket for streamed rooms");
+  for (const room of plan.rooms) {
+    if (room.column + 1 < plan.cellCount && room.ports.east) {
+      assert.equal(plan.rooms[room.index + 1].ports.west, true);
+    }
+    if (room.row + 1 < plan.cellCount && room.ports.south) {
+      assert.equal(plan.rooms[room.index + plan.cellCount].ports.north, true);
+    }
+    assert.ok(ROOM_TYPES.includes(room.type));
   }
-
-  const spawnFloor = plan.floors[0].floorRects.some((rect) => rectangleContains(
-    rect,
-    spawnX - 0.5,
-    plan.floorY,
-    spawnZ - 0.5,
-  ));
-  assert.equal(spawnFloor, true, "the player spawns above a floor tile, not the stairwell");
 });
 
-test("difficulty controls dungeon size and staircase steps connect every floor", () => {
+test("difficulty changes room-grid size; room modules vary while sharing matching sockets", () => {
   const easy = createDungeonPlan(87654321, "Very Easy");
   const hell = createDungeonPlan(87654322, "Hell");
+  const styles = new Set(hell.rooms.map((room) => room.type));
+  const differentSeed = createDungeonPlan(87654323, "Hell");
 
   assert.equal(easy.cellCount, 4);
+  assert.equal(easy.roomCount, 16);
   assert.equal(easy.width, 25);
-  assert.equal(easy.levelCount, 2);
   assert.equal(hell.cellCount, 11);
+  assert.equal(hell.roomCount, 121);
   assert.equal(hell.width, 67);
-  assert.equal(hell.levelCount, 5);
-  assert.equal(hell.passageCount, 11 * 11 - 1);
-  assert.equal(
-    hell.stairBlocks.length,
-    (hell.levelCount - 1) * 8 + 1,
-    "each level gap has a full eight-step spiral and the top gets a landing block",
+  assert.equal(roomsReachable(hell), hell.roomCount);
+  assert.ok(styles.size >= 4, "many distinct jigsaw room templates appear in one dungeon");
+  assert.notDeepEqual(
+    hell.rooms.map(({ type, ports }) => [type, ports]),
+    differentSeed.rooms.map(({ type, ports }) => [type, ports]),
+    "different seeds produce different room pieces and connector layouts",
   );
-
-  for (let index = 1; index < hell.stairBlocks.length; index += 1) {
-    const previous = hell.stairBlocks[index - 1].from;
-    const current = hell.stairBlocks[index].from;
-    const horizontalStep = Math.abs(current[0] - previous[0]) + Math.abs(current[2] - previous[2]);
-    assert.equal(horizontalStep, 1, "consecutive stair blocks are horizontally adjacent");
-    assert.equal(current[1] - previous[1], 1, "each stair block rises by one block");
-  }
+  assert.ok(Object.values(hell.roomStyleCounts).every((count) => count > 0));
 });
 
-test("levels include varied rooms and passages, and seeds change the generated layout", () => {
-  const planA = createDungeonPlan(123456789, "Hell");
-  const planB = createDungeonPlan(123456790, "Hell");
-  const allStyles = planA.floors.reduce((counts, floor) => {
-    for (const [style, count] of Object.entries(floor.roomStyleCounts)) {
-      counts[style] = (counts[style] || 0) + count;
-    }
-    return counts;
-  }, {});
-
-  assert.ok(planA.pillarCount > 0);
-  assert.ok(planA.alcoveCount > 0);
-  const wallSegments = planA.floors.flatMap((floor) => floor.walls);
-  assert.ok(wallSegments.length > 0);
-  assert.ok(wallSegments.every((wall) => wall.randomWallTexture === true));
-  assert.ok(planA.narrowCorridorCount > 0);
-  assert.ok(planA.widePassageCount > 0);
-  assert.equal(
-    planA.narrowCorridorCount + planA.widePassageCount,
-    planA.passageCount * planA.levelCount,
-    "every maze connection is generated as a narrow corridor or a wide passage",
-  );
-  assert.equal(
-    Object.values(allStyles).reduce((sum, count) => sum + count, 0),
-    planA.cellCount * planA.cellCount * planA.levelCount,
-    "every cell has a room style on every floor",
-  );
-  assert.notDeepEqual(normalizeWalls(planA, planA.floors[0]), normalizeWalls(planB, planB.floors[0]));
-  assert.notDeepEqual(normalizeWalls(planA, planA.floors[0]), normalizeWalls(planA, planA.floors[1]));
-});
-
-test("endless room modules join door-to-door and close cleanly at the boundary", () => {
-  const first = createEndlessRoomPlan(2468, 12, -984, 100, true);
-  const second = createEndlessRoomPlan(3579, 12, -984, first.endZ + 1, true);
-  const last = createEndlessRoomPlan(4680, 12, -984, second.endZ + 1, false);
-  const boundary = createEndlessRoomPlan(5791, 12, -984, 49994, false, 50000);
+test("endless room modules keep their door sockets aligned and close at the boundary", () => {
+  const first = createEndlessRoomPlan(2468, 12, -1000, 100, true);
+  const second = createEndlessRoomPlan(3579, 12, -1000, first.endZ + 1, true);
+  const last = createEndlessRoomPlan(4680, 12, -1000, second.endZ + 1, false);
+  const boundary = createEndlessRoomPlan(5791, 12, -1000, 49994, false, 50000);
 
   assert.ok([7, 9].includes(first.roomWidth));
   assert.ok([7, 9].includes(first.roomDepth));
@@ -141,12 +111,12 @@ test("endless room modules join door-to-door and close cleanly at the boundary",
   assert.equal(last.startZ, second.endZ + 1);
   assert.equal(boundary.endZ, 50000);
   assert.equal(boundary.roomDepth, 7, "room depth shrinks when needed to stay within world bounds");
-  assert.ok(first.operations.length >= 5);
-  assert.equal(first.operations[0].randomWallTexture, undefined, "the room floor keeps the base block material");
-  assert.ok(first.operations.slice(1).every((wall) => wall.randomWallTexture === true));
-  assert.ok(last.operations.some((rect) => (
-    rect.from[1] === -983 && rect.to[1] === -981
-      && rect.from[2] === last.endZ && rect.to[2] === last.endZ
-      && rect.from[0] <= 12 && rect.to[0] >= 12
-  )), "the terminal room closes its south doorway instead of opening into the void");
+  assert.ok(ROOM_TYPES.includes(first.type));
+  assert.equal(first.floorRects.length, 1);
+  assert.ok(first.walls.every((wall) => wall.randomWallTexture === true));
+  assert.ok(last.walls.some((wall) => (
+    wall.from[2] === last.endZ && wall.to[2] === last.endZ
+      && wall.from[0] <= 12 - (last.roomWidth - 1) / 2
+      && wall.to[0] >= 12 + (last.roomWidth - 1) / 2
+  )), "the terminal module closes its exit instead of opening into the void");
 });
