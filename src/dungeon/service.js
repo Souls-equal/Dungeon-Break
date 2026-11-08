@@ -86,7 +86,9 @@ export function createDungeonService(options) {
       worldBuilder,
       entranceRoomId: null,
       spawn: null,
-      protectDone: false,
+      // The world is `survivalAdventure`: players cannot break anything, so the
+      // only permission ever granted is the ore list, and it is empty for now.
+      miningAllowed: false,
       emptyTicks: 0,
     };
     dungeons.set(keyOf(difficulty), dungeon);
@@ -211,9 +213,12 @@ export function createDungeonService(options) {
           api.setPosition(playerId, LOBBY_POSITION);
           return;
         }
-        if (!dungeon.protectDone) {
-          dungeon.worldBuilder.protectRoom(dungeon.manager.getRoom(dungeon.entranceRoomId));
-          dungeon.protectDone = true;
+        if (!dungeon.miningAllowed) {
+          // `DUNGEON_CONFIG.breakableBlocks` is empty until ores exist; the call
+          // is then a no-op, and the dungeon stays sealed by the game mode
+          // itself rather than by a per-block lock.
+          dungeon.worldBuilder.allowMining(DUNGEON_CONFIG.breakableBlocks || []);
+          dungeon.miningAllowed = true;
         }
         playerDungeons.set(playerId, dungeon);
         // The controller reads a position as `{ x, z }` and derives the room
