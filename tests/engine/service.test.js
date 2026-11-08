@@ -16,6 +16,18 @@ import {
  * player has been placed there. That is the whole spawn rule — read, teleport,
  * wait, build — expressed as a constraint the fake enforces.
  */
+/**
+ * How far the fake server keeps chunks loaded around a player.
+ *
+ * Bigger than the 48 originally used, and deliberately so: at ×3 a room is up to
+ * 33 cells across and the masonry between two rooms is 9 cells, so a room built
+ * beside a player who never moves can sit beyond the old radius — and then the
+ * fake "loses" those writes, which is the fake being wrong, not the builder. The
+ * case this number must never hide (a write into an unloaded chunk) is covered
+ * directly by `worldBuilder.test`, which can put the boundary anywhere it likes.
+ */
+const LOAD_RADIUS = 160;
+
 function fakeApi() {
   const cells = new Map();
   const calls = { setBlock: [], setPosition: [], sendMessage: [], setCanChangeType: [] };
@@ -44,8 +56,8 @@ function fakeApi() {
       // unlimited — a fake that accepts every write cannot catch a builder that
       // writes into the void. `worldBuilder.test` covers that case directly.
       loadedRects.push({
-        x1: Math.floor(position[0]) - 48, x2: Math.floor(position[0]) + 48,
-        z1: Math.floor(position[2]) - 48, z2: Math.floor(position[2]) + 48,
+        x1: Math.floor(position[0]) - LOAD_RADIUS, x2: Math.floor(position[0]) + LOAD_RADIUS,
+        z1: Math.floor(position[2]) - LOAD_RADIUS, z2: Math.floor(position[2]) + LOAD_RADIUS,
       });
     },
     getPosition(playerId) {

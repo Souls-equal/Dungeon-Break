@@ -19,7 +19,7 @@ Cette séparation n'est pas décorative : `builder.js` est testé dans Node cont
 | --- | --- | --- |
 | 1 | `Air` **au-dessus du plafond** (niveaux `wallHeight+2` à `+4`), **seulement si la lecture de quatre cellules y trouve de la roche** | idempotence d'une reconstruction, sans payer un déblaiement sur un donjon neuf |
 | 2 | sol, toutes les cellules de la forme, pierre tirée une par une | on marche avant d'avoir des murs |
-| 3 | murs, linteau compris, cellules de passage sautées jusqu'à `passageHeight` | le mur n'est jamais plein puis percé |
+| 3 | murs, linteau compris, cellules de passage sautées jusqu'à `passageHeight` | le mur n'est jamais plein puis percé, et le linteau n'est pas une phase séparée |
 | 4 | plafond, cellules de passage sautées | ferme le volume sans bloquer |
 | 5 | pad de difficulté, sur une cellule de sol connue | dernier, pour ne jamais retarder une salle marchable |
 
@@ -57,15 +57,18 @@ Les passages comptent aussi dans le budget de blocs du tick : sans cela, un cycl
 
 ## Mesure de sortie
 
-Trois donjons complets, faux serveur, joueur immobile dans l'entrée :
+Quatre donjons, faux serveur, joueur immobile dans l'entrée, **à l'échelle ×3** :
 
-| Donjon | Salles | Connexions | Passages construits | Salles atteignables à pied | Écritures perdues | Prêt à jouer |
-| --- | --- | --- | --- | --- | --- | --- |
-| alpha | 20 | 20 | 20 | **20 / 20** | 0 | 0,0 s |
-| beta | 28 | 31 | 31 | **28 / 28** | 0 | 2,15 s |
-| gamma | 30 | 29 | 29 | **30 / 30** | 0 | 2,10 s |
+| Donjon | Difficulté | Salles | Connexions | Passages | Atteignables à pied | Écritures perdues | Audits / échecs | Tous les passages au tick |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| alpha | Very Easy | 11 | 10 | 10 | **11 / 11** | 0 | 7 / 0 | 24 (1,2 s) |
+| beta | Easy | 9 | 8 | 8 | **9 / 9** | 0 | 5 / 0 | 23 (1,1 s) |
+| gamma | Medium | 14 | 13 | 13 | **14 / 14** | 0 | 8 / 0 | 26 (1,3 s) |
+| delta | Normal | 13 | 12 | 12 | **13 / 13** | 0 | 8 / 0 | 25 (1,3 s) |
 
-Mesure refaite **après** l'optimisation de vitesse ci-dessous : le BFS part de la cellule d'entrée, ne marche que sur des cellules de sol non recouvertes, et ignore l'`Air`. Les tailles diffèrent de la mesure d'origine parce que la difficulté plafonne le nombre de salles et que le graphe s'arrête avant ; ce qui compte est la colonne des atteignables, pleine à chaque fois.
+Le BFS part de la cellule d'entrée, ne marche que sur des cellules de sol non recouvertes, et ignore l'`Air`. À l'échelle ×3, une seule salle pèse autant que quatre salles de ×1 (22 912 blocs pour 11 salles dans alpha), donc ces quatre donjons valent à peu près les trois donjons de ×1 mesurés auparavant.
+
+Le test d'intégration `tests/engine/service.test.js` fait exactement cela sur la difficulté Easy, et vérifie en plus que **chaque connexion a son passage construit** (`stats.passages === connections.length`).
 
 Le test d'intégration `tests/engine/service.test.js` fait exactement cela : il part de l'entrée, marche de cellule en cellule au niveau du sol, et échoue si une salle construite n'est pas atteignable.
 
@@ -101,7 +104,7 @@ Rien n'est écrit avant que la zone soit chargée. Le pont sonde `getBlock` sur 
 6. onReady — et seulement là, le joueur entre dans le donjon
 ```
 
-Mesuré sur un faux serveur : entrée prête au tick 9, 457 blocs, 25/25 cellules du pad posées, **0 écriture perdue**, jamais plus de 80 blocs dans un tick. Le sol de la cellule d'atterrissage est relu en `Stone Bricks` au moment exact de `onReady` : rien n'est annoncé avant que le sol existe.
+Mesuré sur un faux serveur **à l'échelle ×3** : entrée prête au tick **5** (0,25 s), **975 blocs** écrits (dont les 225 du pad de 15×15 à l'atterrissage, puis la salle par lots), **0 écriture perdue**, jamais plus de **720** blocs dans un tick — c'est la taille du lot, et c'est elle qui borne un tick à l'entrée, pas le budget. Le pad de 5×5 est devenu 15×15 avec l'échelle : un îlot de 5 blocs au milieu d'une salle de 20 se lit comme une erreur de placement. Le sol de la cellule d'atterrissage est relu en `Stone Bricks` au moment exact de `onReady` : rien n'est annoncé avant que le sol existe.
 
 **Aucune protection de bloc n'est posée.** Le monde tourne en `survivalAdventure` : un joueur ne peut rien casser, donc verrouiller la coque serait un appel qui coûte et n'achète rien. Le seul sens utile de l'API est l'inverse — autoriser la casse — et il s'écrit **par type de bloc** (`setCanChangeType`), jamais par rectangle : un minerai est cassable, la pierre autour ne l'est pas, et les deux partagent la même colonne. `worldBuilder.allowMining()` existe déjà et ne fait aucun appel tant que `DUNGEON_CONFIG.breakableBlocks` est vide — c'est-à-dire aujourd'hui.
 
@@ -122,7 +125,7 @@ Quatre défauts réels, tous invisibles à la lecture et tous attrapés par un f
 
 ## Mesures
 
-Deux séries, avant et après l'optimisation de vitesse (même faux serveur, même graine, donjon Hell) :
+Deux séries, avant et après l'optimisation de vitesse (même faux serveur, même graine, donjon Hell, **échelle ×1**) :
 
 | Mesure | Avant | Après |
 | --- | --- | --- |
@@ -139,6 +142,8 @@ Deux séries, avant et après l'optimisation de vitesse (même faux serveur, mê
 Le coût par tick est désormais dominé par la génération, comme en Phase 3 ; la construction ne pèse plus rien au regard du reste, parce qu'elle n'a plus de temps d'attente.
 
 ## La vitesse : où passaient les 21,9 secondes
+
+> Les chiffres de cette section sont ceux de l'échelle ×1, celle sur laquelle l'optimisation a été faite et mesurée. Ils restent valables en proportion : le budget par tick et le nombre de blocs par salle ont été multipliés avec le donjon (§ « Changement d'échelle »), pas la logique.
 
 La première version mettait **21,9 s** à bâtir un donjon Hell complet (34 salles, 439 ticks) alors que le CPU ne coûtait presque rien : `buildMs` cumulé sur tout le donjon, 60 ms ; `generateMs`, 113 ms. Le temps n'était donc pas dans le travail, il était dans **la cadence** — et dans des blocs écrits pour rien.
 
@@ -176,6 +181,57 @@ Effet cumulé, même faux serveur, même graine :
 Soit **×8,3** sur le temps d'apparition du donjon, sans écrire un bloc de plus que nécessaire. Ce qui n'a **pas** été fait, volontairement : passer `cycleTicks` à 5 (mesuré à 1,50 s, mais la génération moyenne tombe à 0,65 ms et le pire cas à 11,5 ms — la marge entre le pire cycle et la demi-seconde de budget devient trop mince pour une machine chargée), et regrouper les écritures en `setBlockRect` (un rectangle est uniforme : il détruit la texture, et il est plafonné à 360 blocs par appel).
 
 Un détail qui compte pour la suite : `cycle()` **ne construit plus**. Tout test qui veut des écritures de bloc doit appeler `controller.cycle()` d'abord (pour remplir la file) puis laisser tourner les ticks. Le contrat est plus net ainsi — le graphe décide, le tick écrit — mais il se paie d'un piège : un `buildStep()` seul, sans cycle préalable, ne trouve rien à construire.
+
+## Changement d'échelle : ×3 en tout sens
+
+Le donjon est passé de salles de 4 à 11 cellules et de couloirs d'une cellule à des salles de 12 à 33 et des couloirs de 3. Les valeurs multipliées sont des **triples exacts** des anciennes, pour que ce soit le même donjon en trois fois plus grand, et pas un autre donjon.
+
+| Paramètre | ×1 | ×3 | Pourquoi |
+| --- | --- | --- | --- |
+| `minWidth` / `maxWidth` | 4 / 11 | **12 / 33** | la taille des salles |
+| `minDepth` / `maxDepth` | 4 / 11 | **12 / 33** | idem |
+| `wallHeight` | 4 | **12** | 12 blocs de hauteur sous plafond |
+| `wallGap` | 3 | **9** | la maçonnerie entre deux salles suit |
+| `minPassageWidth` / `maxPassageWidth` | 1 / 1 | **3 / 3** | « taille des couloirs » |
+| `minCornerClearance` | 1 | **3** | une porte ne colle plus au coin |
+| `minOpeningSpacing` | 2 | **6** | deux portes d'une même face |
+| `cellsPerOpening` | 6 | **18** | la densité de portes, pas leur nombre |
+| `maxBridgeLength` | 4 | **12** | un pont est un couloir |
+| `worldMargin` | 8 | **24** | marge autour du donjon |
+| `discoveryDistance` / `crossingDistance` | 30 / 6 | **90 / 18** | mesurés depuis la porte, donc en blocs |
+| `activeRoomDistance` / `suspendDistance` | 48 / 96 | **144 / 288** | idem |
+| `maxDungeonRadius` | 512 | **1536** | neuf fois la surface, trois fois le rayon |
+| `maxRadius` par difficulté | 96…384 | **288…1152** | idem |
+| `maxBlocksPerTick` | 800 | **2400** | une salle pèse ~7× plus de blocs |
+| `blocksPerBatch` | 240 | **720** | suit le budget |
+| `REGION_SIZE` (index) | 16 | **48** | une région contient toujours une salle |
+
+**Ce qui n'a volontairement pas été multiplié**, et pourquoi :
+
+- **`passageHeight` reste 3.** C'est 3 blocs de haut sur 12 de hauteur de mur, soit exactement la proportion de 1 sur 4 d'avant. En faire 9 ferait une porte plus haute que large sur un couloir de 3, un portique.
+- **`minOpenings` / `maxOpenings` restent 2 / 5.** Ce sont des **nombres**, pas des longueurs : une salle garde deux à cinq portes, sinon chaque salle devient un carrefour.
+- **`minApproachDepth` reste 1**, et c'est le seul chiffre pour lequel le ×3 **casse** le moteur : la règle est `clearance > minApproachDepth`, donc 1 exige un dégagement de 2 et 3 exige un dégagement de 4. À 4, plus aucune forme ne peut héberger une porte — l'entrée elle-même échoue, six fois sur six (`ROOM_DISCONNECTED`). Le dégagement 2 est une cellule avec au plus deux voisins vides, et `faceRuns` refuse déjà les deux vides derrière une porte : la porte n'est jamais plus étroite que le mur qu'elle perce, à n'importe quelle échelle.
+- **`anticipationDepth` (3), `priorityDepthWeight` (40), `backlogThreshold` (60)** sont des profondeurs et des poids, pas des distances.
+- **`chunkSize` (32)** est une propriété du serveur, pas du donjon.
+
+### Ce que le ×3 a révélé : les formes aussi avaient une échelle
+
+Les familles de formes sont écrites en proportions là où elles peuvent l'être (une entaille fait 35 % du côté, une barre un tiers de la largeur), mais quelques épaisseurs sont **absolues** : une aile d'une cellule, une prise de deux cellules. À ×3, une aile d'une cellule sur une salle de 33 est un cheveu — et aucune porte de 3 ne s'y ouvre. Ces épaisseurs sont désormais exprimées en `UNIT` = `DUNGEON_CONFIG.scale`, et une forme qui **ne peut pas héberger le minimum de portes est refusée dans `generateShape`** (`NO_OPENING`), au lieu d'être renvoyée au générateur qui la refusera ensuite.
+
+Mesure sur 200 formes, après le correctif : **0 forme sans porte**, moyenne 3,48 portes (histogramme 2 : 49, 3 : 51, 4 : 54, 5 : 46). La famille `cross`, dont les bras ne peuvent pas tenir une porte de 3 avec 3 de dégagement de coin (il faudrait 9 blocs de large), est simplement redessinée quand elle tombe : 57 formes sur 120 tirées passent le filtre, les autres sont remplacées par un autre tirage.
+
+### Mesure de la nouvelle échelle
+
+| Mesure | ×1 | ×3 |
+| --- | --- | --- |
+| taille des salles | 4–11 blocs | **12–33 blocs** |
+| hauteur sous plafond | 4 | **12** |
+| largeur des couloirs | 1 | **3** |
+| genèse d'une salle (blocs) | ~360 | **~3 500** (11×11) à **7 000** (33×33) |
+| donjon Hell complet (débit actuel) | 13 584 blocs | **~82 000 blocs** |
+| donjon Hell complet, temps | 2,65 s | **~9 s** |
+
+Le temps suit le nombre de blocs, et le budget par tick a été triplé en conséquence : c'est la même quantité de travail par tick, répartie sur des salles plus grosses. Un donjon ×3 est donc plus long à apparaître, mais chaque tick coûte ce qu'il coûtait.
 
 ## Ce qui n'est pas fait
 

@@ -15,7 +15,10 @@
 import { DUNGEON_CONFIG } from "./config.js";
 import { OPENING_STATUS } from "./openings.js";
 
-export const REGION_SIZE = 16;
+// 48 = 16 × 3, following the dungeon's scale: a room is at most 33 cells across,
+// and the grid must still be able to hold one room and its immediate
+// neighbourhood per cell rather than smearing a single room over nine regions.
+export const REGION_SIZE = 48;
 
 export function regionKey(x, y) {
   return `${Math.floor(x / REGION_SIZE)},${Math.floor(y / REGION_SIZE)}`;
