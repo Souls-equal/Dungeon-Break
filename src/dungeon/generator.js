@@ -4,10 +4,11 @@ const DUNGEON_CONFIG = {
   minCoordinate: -50000,
   maxCoordinate: 50000,
   floorY: -1000,
-  // Rooms are 5x5 interiors walled on every side. Neighbouring rooms are
+  // Every room is 7x7 and walled on all four sides. Neighbouring rooms are
   // separated by exactly one free cell, which becomes their connection
-  // corridor when both rooms own a door on that side.
-  roomSize: 5,
+  // corridor. Both rooms own a centred 3-wide door on that side, so the shape
+  // of a module is nothing more than the set of doors it carries.
+  roomSize: 7,
   roomGap: 1,
   wallHeight: 3,
   doorWidth: 3,
@@ -21,11 +22,10 @@ const DUNGEON_CONFIG = {
   entranceLandingDepth: 2,
   // Streamed rooms stay at least this many blocks ahead of the player.
   streamBufferDistance: 36,
-  maxStreamRoomSize: 9,
-  minStreamRoomSize: 7,
   streamingRunway: 50000,
-  extraPassageChance: 0.12,
+  extraPassageChance: 0.14,
   blockName: "Stone Bricks",
+  stairBlockNames: ["Stone Bricks", "Stone Brick Stairs"],
   wallBlockNames: [
     "Stone",
     "Messy Stone",
@@ -34,29 +34,65 @@ const DUNGEON_CONFIG = {
     "Cracked Stone Bricks",
     "Mossy Stone Bricks",
   ],
-  cellsByDifficulty: {
+  // Rock deliberately avoids Stone Bricks: the walkable floor stays readable
+  // at a glance, and a floor tile is always the floor material.
+  rockBlockNames: ["Stone", "Messy Stone", "Smooth Stone"],
+  // Rocky footprint in rooms, by difficulty.
+  footprintByDifficulty: {
     "Very Easy": 4,
     Easy: 5,
-    Medium: 6,
-    Normal: 7,
-    Hard: 8,
-    Insane: 9,
-    "Ultra Insane": 10,
-    Hell: 11,
+    Medium: 5,
+    Normal: 6,
+    Hard: 7,
+    Insane: 8,
+    "Ultra Insane": 9,
+    Hell: 10,
+  },
+  // Rooms carved into that footprint; the rest stays rock.
+  roomsByDifficulty: {
+    "Very Easy": 8,
+    Easy: 12,
+    Medium: 16,
+    Normal: 22,
+    Hard: 28,
+    Insane: 34,
+    "Ultra Insane": 40,
+    Hell: 48,
   },
 };
 
-export const ROOM_TYPES = ["open", "pillar", "twinPillars", "alcove", "fourPillars", "zigzag"];
+const SIDE_ORDER = ["north", "east", "south", "west"];
+const OPPOSITE_SIDE = { north: "south", south: "north", east: "west", west: "east" };
+const SIDE_VECTOR = { north: [0, -1], east: [1, 0], south: [0, 1], west: [-1, 0] };
+
+// A module is defined by its doors; the label is what the player sees.
+const MODULE_TYPES = {
+  END: { id: "end", label: "Salle à une entrée" },
+  CORRIDOR: { id: "corridor", label: "Couloir" },
+  TURN: { id: "turn", label: "Virage" },
+  T_JUNCTION: { id: "tJunction", label: "Chemin à 3 directions" },
+  CROSSROADS: { id: "crossroads", label: "Chemin vers les 4 directions" },
+  STAIRS: { id: "stairs", label: "Escalier" },
+};
+
+export const MODULE_TYPE_IDS = Object.keys(MODULE_TYPES).map((key) => MODULE_TYPES[key].id);
 
 const RANDOM_MODULUS = 2147483647;
-// Two consecutive rooms (grid room or streamed room) are always separated by
-// one corridor cell, so the next room starts two cells after the previous end.
+// Two consecutive rooms are always separated by one corridor cell, so the next
+// streamed room starts two cells after the previous one ends.
 const ROOM_CONNECTION_GAP = 1;
+// Step height of each band of a staircase room, measured from the room floor.
+// Both ends stay at floor level so the doors line up with their corridors, and
+// every step is exactly one block high, which the player can walk both ways.
+const STAIR_PROFILE = [0, 0, 1, 2, 2, 1, 0];
 let dungeonSequence = 0;
 
 function makeRandom(seed) {
   let state = seed % RANDOM_MODULUS;
   if (state <= 0) state += RANDOM_MODULUS - 1;
+  // Small or consecutive seeds start with strongly correlated values, so the
+  // state is warmed up before it is used.
+  for (let warmUp = 0; warmUp < 8; warmUp += 1) state = (state * 48271) % RANDOM_MODULUS;
 
   return () => {
     state = (state * 48271) % RANDOM_MODULUS;
@@ -69,67 +105,57 @@ function randomInteger(random, min, max) {
   return min + (scaled - (scaled % 1));
 }
 
-function wallBlockName(random) {
+function pick(random, values) {
+  return values[randomInteger(random, 0, values.length - 1)];
+}
+
+function randomWallBlock(random) {
   return DUNGEON_CONFIG.wallBlockNames[
     randomInteger(random, 0, DUNGEON_CONFIG.wallBlockNames.length - 1)
   ];
 }
 
-function roomTypeFor(random) {
-  return ROOM_TYPES[randomInteger(random, 0, ROOM_TYPES.length - 1)];
+function randomRockBlock(random) {
+  return DUNGEON_CONFIG.rockBlockNames[
+    randomInteger(random, 0, DUNGEON_CONFIG.rockBlockNames.length - 1)
+  ];
 }
 
-/**
- * Randomized spanning tree over the room grid, then a few braided passages so
- * big dungeons keep loops instead of turning into one long dead-end maze.
- * Every edge is stored once, so both rooms always agree on a shared door.
- */
-function makeMazeEdges(cellCount, random) {
-  const totalRooms = cellCount * cellCount;
-  const visited = new Array(totalRooms).fill(false);
-  const eastOpen = new Array(totalRooms).fill(false);
-  const southOpen = new Array(totalRooms).fill(false);
-  const stack = [0];
-  visited[0] = true;
+function doorHalfWidth() {
+  return (DUNGEON_CONFIG.doorWidth - 1) / 2;
+}
 
-  while (stack.length > 0) {
-    const current = stack[stack.length - 1];
-    const column = current % cellCount;
-    const row = (current - column) / cellCount;
-    const candidates = [];
+function roomStride() {
+  return DUNGEON_CONFIG.roomSize + DUNGEON_CONFIG.roomGap;
+}
 
-    if (column > 0 && !visited[current - 1]) candidates.push([current - 1, "west"]);
-    if (column + 1 < cellCount && !visited[current + 1]) candidates.push([current + 1, "east"]);
-    if (row > 0 && !visited[current - cellCount]) candidates.push([current - cellCount, "north"]);
-    if (row + 1 < cellCount && !visited[current + cellCount]) candidates.push([current + cellCount, "south"]);
+function roomCenterX(room) {
+  return room.x + (room.width - 1) / 2;
+}
 
-    if (candidates.length === 0) {
-      stack.pop();
-      continue;
-    }
+function roomCenterZ(room) {
+  return room.z + (room.depth - 1) / 2;
+}
 
-    const [next, direction] = candidates[randomInteger(random, 0, candidates.length - 1)];
-    if (direction === "west") eastOpen[next] = true;
-    if (direction === "east") eastOpen[current] = true;
-    if (direction === "north") southOpen[next] = true;
-    if (direction === "south") southOpen[current] = true;
-    visited[next] = true;
-    stack.push(next);
-  }
+function openSides(ports) {
+  return SIDE_ORDER.filter((side) => ports[side] === true);
+}
 
-  for (let row = 0; row < cellCount; row += 1) {
-    for (let column = 0; column < cellCount; column += 1) {
-      const index = row * cellCount + column;
-      if (column + 1 < cellCount && !eastOpen[index] && random() < DUNGEON_CONFIG.extraPassageChance) {
-        eastOpen[index] = true;
-      }
-      if (row + 1 < cellCount && !southOpen[index] && random() < DUNGEON_CONFIG.extraPassageChance) {
-        southOpen[index] = true;
-      }
-    }
-  }
+function countPorts(ports) {
+  return openSides(ports).length;
+}
 
-  return { eastOpen, southOpen };
+function isStraightPair(sides) {
+  return (sides.indexOf("north") !== -1 && sides.indexOf("south") !== -1)
+    || (sides.indexOf("east") !== -1 && sides.indexOf("west") !== -1);
+}
+
+/** The shape of a module is exactly the set of doors it opens on. */
+export function moduleTypeForSides(sides) {
+  if (sides.length <= 1) return MODULE_TYPES.END;
+  if (sides.length === 2) return isStraightPair(sides) ? MODULE_TYPES.CORRIDOR : MODULE_TYPES.TURN;
+  if (sides.length === 3) return MODULE_TYPES.T_JUNCTION;
+  return MODULE_TYPES.CROSSROADS;
 }
 
 function addRect(rects, x1, y1, z1, x2, y2, z2) {
@@ -137,19 +163,137 @@ function addRect(rects, x1, y1, z1, x2, y2, z2) {
   rects.push({ from: [x1, y1, z1], to: [x2, y2, z2] });
 }
 
-function doorHalfWidth() {
-  return (DUNGEON_CONFIG.doorWidth - 1) / 2;
+// ------------------------------------------------------------------ layout --
+
+/**
+ * Randomized spanning tree over the module grid, then a few braided passages.
+ * Every connection is stored once, so both rooms always agree on a shared door.
+ */
+function makeConnections(cellCount, cells, cellsSet, random) {
+  const visited = new Set();
+  const eastOpen = new Set();
+  const southOpen = new Set();
+  const start = cells[0];
+  const stack = [start];
+  visited.add(start);
+
+  const connect = (from, to) => {
+    const delta = to - from;
+    if (delta === 1) eastOpen.add(from);
+    else if (delta === -1) eastOpen.add(to);
+    else if (delta === cellCount) southOpen.add(from);
+    else southOpen.add(to);
+  };
+
+  // Depth-first spanning tree, strictly inside the carved cells: every room is
+  // reachable and no connection ever points at solid rock.
+  while (stack.length > 0) {
+    const current = stack[stack.length - 1];
+    const candidates = gridNeighbourIndexes(cellCount, current)
+      .filter((cell) => cellsSet.has(cell) && !visited.has(cell));
+
+    if (candidates.length === 0) {
+      stack.pop();
+      continue;
+    }
+
+    const next = pick(random, candidates);
+    connect(current, next);
+    visited.add(next);
+    stack.push(next);
+  }
+
+  // A few braided passages so big dungeons keep loops and junctions.
+  for (const cell of cells) {
+    const row = Math.floor(cell / cellCount);
+    const column = cell % cellCount;
+    if (column + 1 < cellCount && cellsSet.has(cell + 1)
+      && !eastOpen.has(cell) && random() < DUNGEON_CONFIG.extraPassageChance) {
+      eastOpen.add(cell);
+    }
+    if (row + 1 < cellCount && cellsSet.has(cell + cellCount)
+      && !southOpen.has(cell) && random() < DUNGEON_CONFIG.extraPassageChance) {
+      southOpen.add(cell);
+    }
+  }
+
+  return { eastOpen, southOpen };
 }
 
-function roomPorts(index, row, column, cellCount, edges) {
-  const isStart = index === 0;
-  const isExit = index === cellCount * cellCount - 1;
+function portsFor(index, cellCount, connections) {
+  const column = index % cellCount;
+  const row = (index - column) / cellCount;
   return {
-    north: row === 0 ? isStart : edges.southOpen[index - cellCount],
-    east: column + 1 < cellCount && edges.eastOpen[index],
-    south: row + 1 < cellCount ? edges.southOpen[index] : isExit,
-    west: column > 0 && edges.eastOpen[index - 1],
+    north: row > 0 && connections.southOpen.has(index - cellCount),
+    east: column + 1 < cellCount && connections.eastOpen.has(index),
+    south: row + 1 < cellCount && connections.southOpen.has(index),
+    west: column > 0 && connections.eastOpen.has(index - 1),
   };
+}
+
+function gridNeighbourIndexes(cellCount, index) {
+  const row = Math.floor(index / cellCount);
+  const column = index % cellCount;
+  const list = [];
+  if (row > 0) list.push(index - cellCount);
+  if (row + 1 < cellCount) list.push(index + cellCount);
+  if (column > 0) list.push(index - 1);
+  if (column + 1 < cellCount) list.push(index + 1);
+  return list;
+}
+
+/**
+ * Carves the rooms out of the rocky footprint by growing the set from the
+ * entrance, which keeps it connected by construction. Growth is mostly random
+ * with a bias for extending the last added room, so dungeons get corridors and
+ * lobes instead of a perfect square.
+ */
+function pickRoomCells(cellCount, targetCount, originIndex, random) {
+  const chosen = new Set([originIndex]);
+  const frontier = gridNeighbourIndexes(cellCount, originIndex).slice();
+  let lastAdded = originIndex;
+
+  while (chosen.size < targetCount && frontier.length > 0) {
+    let index = null;
+    const extensions = gridNeighbourIndexes(cellCount, lastAdded).filter((cell) => !chosen.has(cell));
+
+    if (extensions.length > 0 && random() < 0.4) {
+      index = pick(random, extensions);
+      const at = frontier.indexOf(index);
+      if (at !== -1) frontier.splice(at, 1);
+    } else {
+      const at = randomInteger(random, 0, frontier.length - 1);
+      index = frontier[at];
+      frontier.splice(at, 1);
+    }
+    if (chosen.has(index)) continue;
+
+    chosen.add(index);
+    lastAdded = index;
+    for (const neighbour of gridNeighbourIndexes(cellCount, index)) {
+      if (!chosen.has(neighbour) && frontier.indexOf(neighbour) === -1) frontier.push(neighbour);
+    }
+  }
+  return chosen;
+}
+
+function makeRoom(index, row, column, x, z, floorY, ports, width, depth) {
+  const room = {
+    index,
+    row,
+    column,
+    x,
+    z,
+    width,
+    depth,
+    floorY,
+    ports,
+    type: moduleTypeForSides(openSides(ports)),
+    stairKind: null,
+    stairDirection: null,
+  };
+  room.floorRects = roomFloorRects(room);
+  return room;
 }
 
 /** Interior floor plus the corridor cells the room itself owns. */
@@ -160,8 +304,8 @@ function roomFloorRects(room) {
   const maxX = room.x + room.width - 1;
   const minZ = room.z;
   const maxZ = room.z + room.depth - 1;
-  const centerX = room.x + (room.width - 1) / 2;
-  const centerZ = room.z + (room.depth - 1) / 2;
+  const centerX = roomCenterX(room);
+  const centerZ = roomCenterZ(room);
   const rects = [];
 
   addRect(rects, minX, floorY, minZ, maxX, floorY, maxZ);
@@ -173,208 +317,93 @@ function roomFloorRects(room) {
   return rects;
 }
 
-function* solidColumn(random, x, z, bottomY, topY) {
-  for (let y = bottomY; y <= topY; y += 1) {
-    yield { x, y, z, blockName: wallBlockName(random) };
-  }
+// ------------------------------------------------------------------ stairs --
+
+function stairRunsAlongZ(room) {
+  return room.stairDirection === "north" || room.stairDirection === "south";
 }
 
-function* solidRow(random, minX, maxX, z, bottomY, topY) {
-  for (let x = minX; x <= maxX; x += 1) {
-    yield* solidColumn(random, x, z, bottomY, topY);
-  }
+/** A staircase keeps both doors at floor level on the axis of its two doors. */
+function canHostStairs(room) {
+  const sides = openSides(room.ports);
+  if (sides.length !== 2 || !isStraightPair(sides)) return false;
+  return room.width === STAIR_PROFILE.length && room.depth === STAIR_PROFILE.length;
 }
 
-function* wallAlongX(random, minX, maxX, z, bottomY, topY, doorCenter, hasDoor) {
-  const half = doorHalfWidth();
-  const doorMin = doorCenter - half;
-  const doorMax = doorCenter + half;
-
-  for (let x = minX; x <= maxX; x += 1) {
-    if (hasDoor && x >= doorMin && x <= doorMax) continue;
-    yield* solidColumn(random, x, z, bottomY, topY);
-  }
-}
-
-function* wallAlongZ(random, x, minZ, maxZ, bottomY, topY, doorCenter, hasDoor) {
-  const half = doorHalfWidth();
-  const doorMin = doorCenter - half;
-  const doorMax = doorCenter + half;
-
-  for (let z = minZ; z <= maxZ; z += 1) {
-    if (hasDoor && z >= doorMin && z <= doorMax) continue;
-    yield* solidColumn(random, x, z, bottomY, topY);
-  }
-}
-
-/**
- * Decoration templates stay in the corner quadrants of a room. The centred
- * 3-wide cross that links every doorway is never obstructed, so a room can be
- * crossed in a straight line whatever its template.
- */
-function* roomDecorationBlocks(room, random) {
-  if (room.type === "open") return;
+function stairBlocks(room, random) {
+  const blocks = [];
+  if (!room.stairKind) return blocks;
 
   const bottomY = room.floorY + 1;
-  const pillarTopY = room.floorY + 2;
-  const fullTopY = room.floorY + DUNGEON_CONFIG.wallHeight;
-  const centerX = room.x + (room.width - 1) / 2;
-  const centerZ = room.z + (room.depth - 1) / 2;
-  const cornerX = (room.width - 1) / 2 - 1;
-  const cornerZ = (room.depth - 1) / 2 - 1;
-  const pillar = (dx, dz, topY = pillarTopY) => solidColumn(
-    random,
-    centerX + dx * cornerX,
-    centerZ + dz * cornerZ,
-    bottomY,
-    topY,
-  );
+  const half = doorHalfWidth();
+  const centerX = roomCenterX(room);
+  const centerZ = roomCenterZ(room);
+  const alongZ = stairRunsAlongZ(room);
+  const span = STAIR_PROFILE.length;
 
-  if (room.type === "pillar") {
-    yield* pillar(-1, -1, fullTopY);
-  } else if (room.type === "twinPillars") {
-    yield* pillar(-1, -1);
-    yield* pillar(1, 1);
-  } else if (room.type === "fourPillars") {
-    yield* pillar(-1, -1);
-    yield* pillar(1, -1);
-    yield* pillar(-1, 1);
-    yield* pillar(1, 1);
-  } else if (room.type === "alcove") {
-    // Two opposing ledges frame the crossing without narrowing it.
-    yield* solidRow(random, centerX - cornerX, centerX - cornerX, room.z + 1, bottomY, pillarTopY);
-    yield* solidRow(random, centerX + cornerX, centerX + cornerX, room.z + room.depth - 2, bottomY, pillarTopY);
-  } else if (room.type === "zigzag") {
-    yield* pillar(-1, -1);
-    yield* pillar(1, 1, fullTopY);
-  }
-}
+  for (let band = 0; band < span; band += 1) {
+    const height = STAIR_PROFILE[band];
+    if (height === 0) continue;
+    // Only the 3-wide walking lane is raised; the sides stay as open ledges.
+    const x1 = alongZ ? centerX - half : room.x + band;
+    const x2 = alongZ ? centerX + half : room.x + band;
+    const z1 = alongZ ? room.z + band : centerZ - half;
+    const z2 = alongZ ? room.z + band : centerZ + half;
 
-/**
- * One complete room: its four walls with the doors it owns, then decorations.
- * Corners are emitted by the north/south walls only, so no block is written
- * twice and every opening is exactly `doorWidth` blocks wide.
- */
-export function* roomBlockIterator(room, random) {
-  const bottomY = room.floorY + 1;
-  const topY = room.floorY + DUNGEON_CONFIG.wallHeight;
-  const minX = room.x;
-  const maxX = room.x + room.width - 1;
-  const minZ = room.z;
-  const maxZ = room.z + room.depth - 1;
-  const centerX = room.x + (room.width - 1) / 2;
-  const centerZ = room.z + (room.depth - 1) / 2;
-
-  yield* wallAlongX(random, minX, maxX, minZ, bottomY, topY, centerX, room.ports.north);
-  yield* wallAlongX(random, minX, maxX, maxZ, bottomY, topY, centerX, room.ports.south);
-  yield* wallAlongZ(random, minX, minZ + 1, maxZ - 1, bottomY, topY, centerZ, room.ports.west);
-  yield* wallAlongZ(random, maxX, minZ + 1, maxZ - 1, bottomY, topY, centerZ, room.ports.east);
-  yield* roomDecorationBlocks(room, random);
-}
-
-function makeRoom(index, row, column, x, z, floorY, type, ports, width, depth) {
-  const room = {
-    index,
-    row,
-    column,
-    x,
-    z,
-    width,
-    depth,
-    floorY,
-    type,
-    ports,
-  };
-  room.floorRects = roomFloorRects(room);
-  return room;
-}
-
-function makeDungeonRooms(seed, cellCount, originX, originZ, floorY) {
-  const random = makeRandom(seed);
-  const edges = makeMazeEdges(cellCount, random);
-  const stride = DUNGEON_CONFIG.roomSize + DUNGEON_CONFIG.roomGap;
-  const rooms = [];
-  const roomStyleCounts = Object.fromEntries(ROOM_TYPES.map((type) => [type, 0]));
-
-  for (let row = 0; row < cellCount; row += 1) {
-    for (let column = 0; column < cellCount; column += 1) {
-      const index = row * cellCount + column;
-      const room = makeRoom(
-        index,
-        row,
-        column,
-        originX + 1 + column * stride,
-        originZ + 1 + row * stride,
-        floorY,
-        roomTypeFor(random),
-        roomPorts(index, row, column, cellCount, edges),
-        DUNGEON_CONFIG.roomSize,
-        DUNGEON_CONFIG.roomSize,
-      );
-      rooms.push(room);
-      roomStyleCounts[room.type] += 1;
+    for (let x = x1; x <= x2; x += 1) {
+      for (let z = z1; z <= z2; z += 1) {
+        for (let y = bottomY; y <= room.floorY + height; y += 1) {
+          blocks.push({ x, y, z, blockName: pick(random, DUNGEON_CONFIG.stairBlockNames) });
+        }
+      }
     }
   }
-
-  const startRoom = rooms[0];
-  const exitRoom = rooms[rooms.length - 1];
-  const startCenterX = startRoom.x + (startRoom.width - 1) / 2;
-  const startCenterZ = startRoom.z + (startRoom.depth - 1) / 2;
-  const exitCenterX = exitRoom.x + (exitRoom.width - 1) / 2;
-  const exitMaxZ = exitRoom.z + exitRoom.depth - 1;
-  const half = doorHalfWidth();
-  const floorRects = [];
-
-  for (const room of rooms) {
-    for (const rect of room.floorRects) floorRects.push(rect);
-  }
-  // Entrance landing in front of the start room's north door. The exit
-  // corridor is owned by the exit room itself and leads to streamed rooms.
-  addRect(
-    floorRects,
-    startCenterX - half,
-    floorY,
-    originZ + 1 - DUNGEON_CONFIG.entranceLandingDepth,
-    startCenterX + half,
-    floorY,
-    originZ,
-  );
-
-  const width = cellCount * stride + 1;
-  const passageCount = rooms.reduce(
-    (total, room) => total + Number(room.ports.east) + Number(room.ports.south),
-    0,
-  ) - 1;
-
-  return {
-    seed,
-    originX,
-    originZ,
-    width,
-    cellCount,
-    roomCount: rooms.length,
-    floorY,
-    floorRects,
-    rooms,
-    roomStyleCounts,
-    passageCount,
-    spawnPosition: [startCenterX + 0.5, floorY + 1, startCenterZ + 0.5],
-    endlessFrontier: {
-      centerX: exitCenterX,
-      floorY,
-      z: exitMaxZ + ROOM_CONNECTION_GAP,
-      nextRoomZ: exitMaxZ + ROOM_CONNECTION_GAP + 1,
-    },
-  };
+  return blocks;
 }
 
-// The plan is pure so tests can verify room sockets, floor coverage and bounds.
-export function createDungeonPlan(seed, difficulty) {
-  const cellCount = DUNGEON_CONFIG.cellsByDifficulty[difficulty] || DUNGEON_CONFIG.cellsByDifficulty.Normal;
-  const stride = DUNGEON_CONFIG.roomSize + DUNGEON_CONFIG.roomGap;
-  const width = cellCount * stride + 1;
+/** Stairs spell out how deep the level goes, so the message says it too. */
+function stairLabel(room) {
+  return room.stairKind === "descending" ? "Escalier descendant" : "Escalier montant";
+}
+
+// ------------------------------------------------------------------- build --
+
+/**
+ * The way out always starts from the deepest row that still has a room, so the
+ * streamed rooms continue the level instead of opening a hole in its middle.
+ */
+function chooseExitPort(rooms, byIndex, cellCount) {
+  let best = null;
+  for (const room of rooms) {
+    if (!best || room.row > best.row) best = room;
+    else if (room.row === best.row && roomCenterX(room) < roomCenterX(best)) best = room;
+  }
+  const candidate = best || rooms[rooms.length - 1];
+  // Prefer a room that is not already crowded with doors.
+  let exitRoom = candidate;
+  for (const room of rooms) {
+    if (room.row !== candidate.row) continue;
+    if (countPorts(room.ports) < countPorts(exitRoom.ports)) exitRoom = room;
+  }
+  exitRoom.ports.south = true;
+  exitRoom.type = moduleTypeForSides(openSides(exitRoom.ports));
+  // The new door carves a corridor, so the room must re-own its floor: without
+  // this the exit lane stays a rock row and the streamed rooms are cut off.
+  exitRoom.floorRects = roomFloorRects(exitRoom);
+  void byIndex;
+  void cellCount;
+  return exitRoom;
+}
+
+function makeDungeonLevel(seed, difficulty) {
+  const cellCount = DUNGEON_CONFIG.footprintByDifficulty[difficulty]
+    || DUNGEON_CONFIG.footprintByDifficulty.Normal;
+  const targetRooms = DUNGEON_CONFIG.roomsByDifficulty[difficulty]
+    || DUNGEON_CONFIG.roomsByDifficulty.Normal;
   const random = makeRandom(seed);
-  const maxOriginX = DUNGEON_CONFIG.maxCoordinate - width - DUNGEON_CONFIG.maxStreamRoomSize;
+  const stride = roomStride();
+  const width = cellCount * stride + 1;
+  const maxOriginX = DUNGEON_CONFIG.maxCoordinate - width - DUNGEON_CONFIG.roomSize;
   const maxOriginZ = DUNGEON_CONFIG.maxCoordinate - width - DUNGEON_CONFIG.streamingRunway - 2;
   const originX = randomInteger(random, DUNGEON_CONFIG.minCoordinate, maxOriginX);
   const originZ = randomInteger(
@@ -382,50 +411,183 @@ export function createDungeonPlan(seed, difficulty) {
     DUNGEON_CONFIG.minCoordinate + DUNGEON_CONFIG.entranceLandingDepth,
     maxOriginZ,
   );
+  const floorY = DUNGEON_CONFIG.floorY;
+  const chosen = pickRoomCells(cellCount, targetRooms, 0, random);
+  const cellList = Array.from(chosen).sort((a, b) => a - b);
+  const connections = makeConnections(cellCount, cellList, chosen, random);
+  const rooms = [];
+  const byIndex = {};
 
-  return makeDungeonRooms(seed, cellCount, originX, originZ, DUNGEON_CONFIG.floorY);
+  for (let row = 0; row < cellCount; row += 1) {
+    for (let column = 0; column < cellCount; column += 1) {
+      const index = row * cellCount + column;
+      if (!chosen.has(index)) continue;
+      const room = makeRoom(
+        index,
+        row,
+        column,
+        originX + 1 + column * stride,
+        originZ + 1 + row * stride,
+        floorY,
+        portsFor(index, cellCount, connections),
+        DUNGEON_CONFIG.roomSize,
+        DUNGEON_CONFIG.roomSize,
+      );
+      rooms.push(room);
+      byIndex[index] = room;
+    }
+  }
+
+  const bestExitRoom = chooseExitPort(rooms, byIndex, cellCount);
+
+  const openCells = new Set();
+  for (const room of rooms) {
+    for (let x = room.x; x < room.x + room.width; x += 1) {
+      for (let z = room.z; z < room.z + room.depth; z += 1) openCells.add(`${x},${z}`);
+    }
+    for (const rect of room.floorRects) {
+      for (let x = rect.from[0]; x <= rect.to[0]; x += 1) {
+        for (let z = rect.from[2]; z <= rect.to[2]; z += 1) openCells.add(`${x},${z}`);
+      }
+    }
+  }
+  const level = {
+    seed,
+    originX,
+    originZ,
+    width,
+    cellCount,
+    floorY,
+    rooms,
+    rockCells: new Set(),
+    stairCount: 0,
+    roomAt: (row, column) => byIndex[row * cellCount + column] || null,
+    roomCount: rooms.length,
+    passageCount: rooms.reduce(
+      (total, room) => total + Number(room.ports.east) + Number(room.ports.south),
+      0,
+    ),
+  };
+  // Solid rock fills every cell the player can never reach, and closes the
+  // footprint so the level reads as a set of chambers carved in stone. It hugs
+  // the rooms that were actually kept: rock past the deepest room would bury
+  // the streamed rooms that continue the route beyond the exit.
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  for (const room of rooms) {
+    minX = Math.min(minX, room.x);
+    maxX = Math.max(maxX, room.x + room.width - 1);
+    minZ = Math.min(minZ, room.z);
+    maxZ = Math.max(maxZ, room.z + room.depth - 1);
+  }
+  minX = Math.min(minX, originX + 1);
+  minZ = Math.min(minZ, originZ + 1);
+  for (let x = minX - 1; x <= maxX + 1; x += 1) {
+    for (let z = minZ - 1; z <= maxZ + 1; z += 1) {
+      const key = `${x},${z}`;
+      if (!openCells.has(key)) level.rockCells.add(key);
+    }
+  }
+  // The landing in front of the entrance stays open.
+  const startRoom = byIndex[0];
+  for (let z = originZ + 1 - DUNGEON_CONFIG.entranceLandingDepth; z < originZ + 1; z += 1) {
+    for (let x = roomCenterX(startRoom) - doorHalfWidth(); x <= roomCenterX(startRoom) + doorHalfWidth(); x += 1) {
+      level.rockCells.delete(`${x},${z}`);
+    }
+  }
+
+  level.spawnPosition = [roomCenterX(startRoom) + 0.5, floorY + 1, roomCenterZ(startRoom) + 0.5];
+  level.entrance = { centerX: roomCenterX(startRoom), floorY, z: originZ + 1 };
+  level.exit = {
+    room: bestExitRoom,
+    side: "south",
+    centerX: roomCenterX(bestExitRoom),
+    z: bestExitRoom.z + bestExitRoom.depth - 1,
+    corridorZ: bestExitRoom.z + bestExitRoom.depth,
+  };
+  // The exit corridor is carved out of the rock that closes the footprint.
+  for (let x = level.exit.centerX - doorHalfWidth(); x <= level.exit.centerX + doorHalfWidth(); x += 1) {
+    level.rockCells.delete(`${x},${level.exit.corridorZ}`);
+  }
+  return level;
 }
 
-function* floorRectBlocks(rect) {
-  const [minX, y, minZ] = rect.from;
-  const [maxX, , maxZ] = rect.to;
+function placeStaircasesIn(level, seed) {
+  const random = makeRandom((seed + 7717) % RANDOM_MODULUS || 1);
+  const used = new Set();
 
-  for (let x = minX; x <= maxX; x += 1) {
-    for (let z = minZ; z <= maxZ; z += 1) {
-      yield { x, y, z, blockName: DUNGEON_CONFIG.blockName };
+  const candidates = level.rooms.filter(canHostStairs);
+  for (const room of candidates) {
+    if (random() > 0.4 || used.has(room.index)) continue;
+    room.stairKind = random() < 0.5 ? "descending" : "ascending";
+    room.stairDirection = pick(random, openSides(room.ports));
+    room.type = MODULE_TYPES.STAIRS;
+    room.label = stairLabel(room);
+    level.stairCount += 1;
+    // One room of clearance so two staircases never share a corridor.
+    for (const side of SIDE_ORDER) {
+      const [dx, dz] = SIDE_VECTOR[side];
+      const neighbour = level.roomAt(room.row + dz, room.column + dx);
+      if (neighbour) used.add(neighbour.index);
     }
   }
 }
 
-export function blockKey(x, y, z) {
-  return `${x},${y},${z}`;
+/** Where the endless streamed rooms start, aligned with the exit door. */
+function exitFrontier(level) {
+  return {
+    centerX: level.exit.centerX,
+    floorY: level.floorY,
+    z: level.exit.corridorZ,
+    nextRoomZ: level.exit.corridorZ + 1,
+  };
 }
 
+function decorateLevelTypes(level) {
+  for (const room of level.rooms) {
+    if (!room.label) room.label = room.type.label;
+  }
+}
+
+// The plan is pure so tests can verify doors, floor coverage and bounds.
+export function createDungeonPlan(seed, difficulty) {
+  const level = makeDungeonLevel(seed, difficulty);
+  placeStaircasesIn(level, seed);
+  decorateLevelTypes(level);
+  return { seed, level, frontier: exitFrontier(level) };
+}
+
+// ------------------------------------------------------- streamed modules --
+
 /**
- * Streams the whole dungeon: every floor block first, then each room's walls
- * and decorations. Nothing is materialised as a block list, so the build cost
- * stays constant whatever the dungeon size.
+ * Rooms generated further along the route. `entry` is the route axis seen from
+ * the new room (the side facing the previous room), and `mode` is either
+ * "through" (route continues) or "end" (the route stops here).
  */
-export function* dungeonBlockIterator(plan, options = {}) {
-  const random = makeRandom(options.textureSeed === undefined ? plan.seed : options.textureSeed);
-  const skipFloorKeys = options.skipFloorKeys;
-  const floorRects = options.floorRects || plan.floorRects;
+function streamedPorts(entry, mode) {
+  const ports = { north: false, east: false, south: false, west: false };
+  const entrySides = Array.isArray(entry) ? entry : [entry];
+  for (const side of entrySides) ports[side] = true;
+  if (mode !== "through") return ports;
 
-  for (const rect of floorRects) {
-    for (const block of floorRectBlocks(rect)) {
-      if (skipFloorKeys && skipFloorKeys.has(blockKey(block.x, block.y, block.z))) continue;
-      yield block;
-    }
+  if (entrySides.length > 1) {
+    // Rejoining a previous module: keep going on the opposite axis.
+    const [first] = entrySides;
+    ports[OPPOSITE_SIDE[first]] = true;
+    return ports;
   }
 
-  for (const room of plan.rooms) {
-    yield* roomBlockIterator(room, random);
-  }
+  ports[OPPOSITE_SIDE[entrySides[0]]] = true;
+  return ports;
 }
 
 /**
- * Builds a streamed room. It keeps the same centred 3-wide door sockets as
- * the grid rooms, so each new room clips into the previous one.
+ * Rooms generated further along the route. The entry door always faces the
+ * previous room, and the exit door is chosen among the other sides, so the
+ * stream keeps producing turns, corridors, three-way rooms and dead ends
+ * instead of one repeated chamber.
  */
 export function createEndlessRoomPlan(
   seed,
@@ -436,53 +598,199 @@ export function createEndlessRoomPlan(
   maxEndZ = DUNGEON_CONFIG.maxCoordinate,
 ) {
   const random = makeRandom(seed);
-  const roomWidth = randomInteger(random, 0, 1) === 0
-    ? DUNGEON_CONFIG.minStreamRoomSize
-    : DUNGEON_CONFIG.maxStreamRoomSize;
+  const size = DUNGEON_CONFIG.roomSize;
   // When another room follows, one cell must stay free for the corridor.
   const availableDepth = maxEndZ - startZ + 1 - (hasFollowingRoom ? 1 : 0);
-  const requestedDepth = randomInteger(random, 0, 1) === 0
-    ? DUNGEON_CONFIG.minStreamRoomSize
-    : DUNGEON_CONFIG.maxStreamRoomSize;
-  const roomDepth = requestedDepth > availableDepth ? availableDepth : requestedDepth;
-  const roomX = centerX - (roomWidth - 1) / 2;
-  const room = makeRoom(
-    0,
-    0,
-    0,
-    roomX,
-    startZ,
-    floorY,
-    roomTypeFor(random),
-    { north: true, east: false, south: hasFollowingRoom, west: false },
-    roomWidth,
-    roomDepth,
-  );
+  const roomDepth = Math.min(size, availableDepth);
+  const roomWidth = size;
+  const ports = { north: true, east: false, south: false, west: false };
 
-  const endZ = startZ + roomDepth - 1;
+  if (hasFollowingRoom) {
+    const exitSides = ["south", "south", "south", "east", "west"];
+    ports[pick(random, exitSides)] = true;
+    // Sometimes a side branch makes the streamed room a three-way junction.
+    if (random() < 0.15) {
+      const extra = pick(random, SIDE_ORDER.filter((side) => side !== "north" && !ports[side]));
+      ports[extra] = true;
+    }
+  }
+
+  const entryIndex = 0;
+  // The door of a streamed room is the middle 3 cells of its north wall, so the
+  // room must be centred on the corridor: x = centerX - (width - 1) / 2.
+  const roomX = centerX - (roomWidth - 1) / 2;
+  const room = makeRoom(entryIndex, 0, 0, roomX, startZ, floorY, ports, roomWidth, roomDepth);
 
   return {
     seed,
     startZ,
-    endZ,
+    endZ: startZ + roomDepth - 1,
     roomWidth,
     roomDepth,
     hasFollowingRoom,
-    type: room.type,
     floorY,
     room,
-    floorRects: room.floorRects,
+    ports,
   };
 }
 
 export function* endlessRoomBlockIterator(roomPlan, textureSeed = roomPlan.seed) {
   const random = makeRandom(textureSeed);
-
-  for (const rect of roomPlan.floorRects) {
-    yield* floorRectBlocks(rect);
+  for (const rect of roomPlan.room.floorRects) {
+    for (const block of floorRectBlocks(rect)) yield block;
   }
-  yield* roomBlockIterator(roomPlan.room, random);
+  yield* moduleBlocksWithRandom(roomPlan.room, random);
 }
+
+// ------------------------------------------------------------ block stream --
+
+export function blockKey(x, y, z) {
+  return `${x},${y},${z}`;
+}
+
+function floorRectBlocks(rect) {
+  const blocks = [];
+  const [minX, y, minZ] = rect.from;
+  const [maxX, , maxZ] = rect.to;
+
+  for (let x = minX; x <= maxX; x += 1) {
+    for (let z = minZ; z <= maxZ; z += 1) blocks.push({ x, y, z, blockName: DUNGEON_CONFIG.blockName });
+  }
+  return blocks;
+}
+
+function moduleBlocksWithoutRock(room, random) {
+  return moduleBlocksWithRandom(room, random);
+}
+
+function* moduleBlocksWithRandom(room, random) {
+  yield* roomBlockIterator(room, random);
+  for (const block of stairBlocks(room, random)) yield block;
+  yield* roomDecorationBlocks(room, random);
+}
+
+/**
+ * Streams the whole level: every floor block first (rooms and corridors),
+ * then each module's walls, stairs and decorations, then the surrounding rock.
+ * The spawn pad is skipped because it was already laid down.
+ */
+export function* dungeonBlockIterator(plan, options = {}) {
+  const random = makeRandom(options.textureSeed === undefined ? plan.seed : options.textureSeed);
+  const skipFloorKeys = options.skipFloorKeys;
+  const level = plan.level;
+
+  for (const room of level.rooms) {
+    for (const rect of room.floorRects) {
+      for (const block of floorRectBlocks(rect)) {
+        if (skipFloorKeys && skipFloorKeys.has(blockKey(block.x, block.y, block.z))) continue;
+        yield block;
+      }
+    }
+  }
+  for (const room of level.rooms) yield* moduleBlocksWithRandom(room, random);
+  yield* rockBlocks(level, random);
+}
+
+/**
+ * The footprint is solid rock, so rooms read as carved chambers and unexplored
+ * cells stay opaque: the floor layer plus the wall layer, exactly as tall as a
+ * room, so the level keeps its single floor height.
+ */
+function* rockBlocks(level, random) {
+  const walls = level.rockCells;
+
+  for (const key of walls) {
+    const [x, z] = key.split(",").map(Number);
+    for (let y = level.floorY; y <= level.floorY + DUNGEON_CONFIG.wallHeight; y += 1) {
+      yield { x, y, z, blockName: randomRockBlock(random) };
+    }
+  }
+}
+
+// -------------------------------------------------------------- wall blocks --
+
+function* solidColumn(random, x, z, bottomY, topY) {
+  for (let y = bottomY; y <= topY; y += 1) yield { x, y, z, blockName: randomWallBlock(random) };
+}
+
+function* solidRow(random, minX, maxX, z, bottomY, topY) {
+  for (let x = minX; x <= maxX; x += 1) yield* solidColumn(random, x, z, bottomY, topY);
+}
+
+function* wallAlongX(random, minX, maxX, z, bottomY, topY, doorCenter, hasDoor) {
+  const half = doorHalfWidth();
+
+  for (let x = minX; x <= maxX; x += 1) {
+    if (hasDoor && Math.abs(x - doorCenter) <= half) continue;
+    yield* solidColumn(random, x, z, bottomY, topY);
+  }
+}
+
+function* wallAlongZ(random, x, minZ, maxZ, bottomY, topY, doorCenter, hasDoor) {
+  const half = doorHalfWidth();
+
+  for (let z = minZ; z <= maxZ; z += 1) {
+    if (hasDoor && Math.abs(z - doorCenter) <= half) continue;
+    yield* solidColumn(random, x, z, bottomY, topY);
+  }
+}
+
+/**
+ * One module: its four walls with the doors it owns, corners included. Corners
+ * are emitted by the north/south walls only, so no block is written twice and
+ * every opening is exactly `doorWidth` blocks wide.
+ */
+function* roomBlockIterator(room, random) {
+  const bottomY = room.floorY + 1;
+  const topY = room.floorY + DUNGEON_CONFIG.wallHeight;
+  const minX = room.x;
+  const maxX = room.x + room.width - 1;
+  const minZ = room.z;
+  const maxZ = room.z + room.depth - 1;
+  const centerX = roomCenterX(room);
+  const centerZ = roomCenterZ(room);
+
+  yield* wallAlongX(random, minX, maxX, minZ, bottomY, topY, centerX, room.ports.north);
+  yield* wallAlongX(random, minX, maxX, maxZ, bottomY, topY, centerX, room.ports.south);
+  yield* wallAlongZ(random, minX, minZ + 1, maxZ - 1, bottomY, topY, centerZ, room.ports.west);
+  yield* wallAlongZ(random, maxX, minZ + 1, maxZ - 1, bottomY, topY, centerZ, room.ports.east);
+}
+
+/**
+ * Decorations are short pillars standing in the inner corners of a room. The
+ * centred 3-wide cross that links the doors is always free, and the corners are
+ * kept one cell away from the walls, so a pillar can never grow on a wall,
+ * inside a doorway or on a corridor cell.
+ */
+function* roomDecorationBlocks(room, random) {
+  if (room.stairKind) return;
+  if (random() > 0.55) return;
+
+  const bottomY = room.floorY + 1;
+  const topY = room.floorY + 2;
+  const minX = room.x + 1;
+  const maxX = room.x + room.width - 2;
+  const minZ = room.z + 1;
+  const maxZ = room.z + room.depth - 2;
+  const centerX = roomCenterX(room);
+  const centerZ = roomCenterZ(room);
+  const corners = [
+    [minX, minZ],
+    [maxX, minZ],
+    [minX, maxZ],
+    [maxX, maxZ],
+  ].filter(([x, z]) => x !== centerX && z !== centerZ);
+
+  const count = 1 + randomInteger(random, 0, 2);
+  for (let index = 0; index < count && corners.length > 0; index += 1) {
+    const at = randomInteger(random, 0, corners.length - 1);
+    const [x, z] = corners[at];
+    corners.splice(at, 1);
+    yield* solidColumn(random, x, z, bottomY, topY);
+  }
+}
+
+// ---------------------------------------------------------------- runtime ---
 
 function nextDungeonSeed() {
   dungeonSequence += 1;
@@ -530,14 +838,12 @@ function reportGenerationFailure(playerId, error) {
 
 function spawnPadTiles(plan) {
   const radius = DUNGEON_CONFIG.spawnPadRadius;
-  const padX = plan.spawnPosition[0] - 0.5;
-  const padZ = plan.spawnPosition[2] - 0.5;
+  const padX = plan.level.spawnPosition[0] - 0.5;
+  const padZ = plan.level.spawnPosition[2] - 0.5;
   const tiles = [];
 
   for (let dx = -radius; dx <= radius; dx += 1) {
-    for (let dz = -radius; dz <= radius; dz += 1) {
-      tiles.push({ x: padX + dx, z: padZ + dz });
-    }
+    for (let dz = -radius; dz <= radius; dz += 1) tiles.push({ x: padX + dx, z: padZ + dz });
   }
   return tiles;
 }
@@ -553,21 +859,20 @@ function readBlockName(x, y, z) {
 }
 
 // A block can only be written into a chunk that already exists server side.
-// Poking the target cell in the previous tick makes the engine create the
-// chunk before the real write, which is what used to swallow the spawn floor.
+// Poking the target cell makes the engine create the chunk before the real
+// write, which is what used to swallow the spawn floor.
 function primeChunk(plan) {
-  readBlockName(plan.spawnPosition[0] - 0.5, plan.floorY, plan.spawnPosition[2] - 0.5);
+  readBlockName(plan.level.spawnPosition[0] - 0.5, plan.level.floorY, plan.level.spawnPosition[2] - 0.5);
 }
 
 /**
  * Tiles of the pad that are not the expected floor block. Returns null when the
- * engine cannot read blocks, so callers fall back to rewriting the whole pad
- * instead of assuming it is correct.
+ * engine cannot read blocks, so callers rewrite the pad instead of trusting it.
  */
 function missingSpawnPadTiles(plan) {
   const missing = [];
   for (const tile of spawnPadTiles(plan)) {
-    const current = readBlockName(tile.x, plan.floorY, tile.z);
+    const current = readBlockName(tile.x, plan.level.floorY, tile.z);
     if (current === null) return null;
     if (current !== DUNGEON_CONFIG.blockName) missing.push(tile);
   }
@@ -577,16 +882,19 @@ function missingSpawnPadTiles(plan) {
 function placeSpawnPad(plan) {
   const tiles = spawnPadTiles(plan);
 
-  for (const { x, z } of tiles) api.setBlock(x, plan.floorY, z, DUNGEON_CONFIG.blockName);
-  return new Set(tiles.map(({ x, z }) => blockKey(x, plan.floorY, z)));
+  for (const { x, z } of tiles) api.setBlock(x, plan.level.floorY, z, DUNGEON_CONFIG.blockName);
+  return new Set(tiles.map(({ x, z }) => blockKey(x, plan.level.floorY, z)));
 }
 
 function startBlockBuild(session, iterator, onComplete, onTick) {
   let done = false;
   let failure = null;
+  let placedThisTick = 0;
+
   const timer = scheduleInterval(() => {
     try {
-      for (let placed = 0; placed < DUNGEON_CONFIG.blocksPerTick && !done; placed += 1) {
+      placedThisTick = 0;
+      for (; placedThisTick < DUNGEON_CONFIG.blocksPerTick && !done; placedThisTick += 1) {
         const step = iterator.next();
         if (step.done) {
           done = true;
@@ -624,9 +932,7 @@ function startBlockBuild(session, iterator, onComplete, onTick) {
 
 /**
  * Last line of defence: once the player stands on the spawn cell, read the pad
- * back and rewrite whatever the world did not keep. A chunk that was still
- * being generated when the pad was first written is repaired here instead of
- * leaving the player over a hole.
+ * back and rewrite whatever the world did not keep.
  */
 function startSpawnGuard(session, plan) {
   let attempts = 0;
@@ -637,7 +943,7 @@ function startSpawnGuard(session, plan) {
 
     let missing = missingSpawnPadTiles(plan);
     // Rewrite the whole pad on the first sweep: an unreadable block still gets
-    // a fresh write, so a lost spawn floor is repaired without any read support.
+    // a fresh write, so a lost spawn floor is repaired without read support.
     if (attempts > 1 || missing === null) missing = spawnPadTiles(plan);
     if (missing.length === 0) {
       session.spawnGuardTimer.stop();
@@ -646,15 +952,14 @@ function startSpawnGuard(session, plan) {
     }
 
     try {
-      for (const { x, z } of missing) api.setBlock(x, plan.floorY, z, DUNGEON_CONFIG.blockName);
+      for (const { x, z } of missing) api.setBlock(x, plan.level.floorY, z, DUNGEON_CONFIG.blockName);
     } catch (error) {
       logFailure("Spawn pad repair failed", error);
     }
 
-    // Keep the player supported while the repair is applied.
     try {
       const position = api.getPosition(session.playerId);
-      if (position && position[1] < plan.floorY + 1) api.setPosition(session.playerId, plan.spawnPosition);
+      if (position && position[1] < plan.level.floorY + 1) api.setPosition(session.playerId, plan.level.spawnPosition);
     } catch (_) {
       // A failed position read must not stop the repair loop.
     }
@@ -683,7 +988,7 @@ function finishStreaming(session, message) {
 
 function buildNextStreamRoom(session, playerZ) {
   const startZ = session.nextRoomZ;
-  if (startZ + DUNGEON_CONFIG.minStreamRoomSize - 1 > DUNGEON_CONFIG.maxCoordinate) {
+  if (startZ + DUNGEON_CONFIG.roomSize - 1 > DUNGEON_CONFIG.maxCoordinate) {
     finishStreaming(session, "The dungeon reached the world boundary.");
     return;
   }
@@ -698,7 +1003,7 @@ function buildNextStreamRoom(session, playerZ) {
     DUNGEON_CONFIG.maxCoordinate,
   );
   const nextStartZ = preview.endZ + ROOM_CONNECTION_GAP + 1;
-  const canFollow = nextStartZ + DUNGEON_CONFIG.minStreamRoomSize - 1 <= DUNGEON_CONFIG.maxCoordinate;
+  const canFollow = nextStartZ + DUNGEON_CONFIG.roomSize - 1 <= DUNGEON_CONFIG.maxCoordinate;
   const roomPlan = canFollow
     ? preview
     : createEndlessRoomPlan(
@@ -746,7 +1051,6 @@ function continueStreaming(session, knownPlayerZ) {
     }
   }
   if (playerZ === null || playerZ === undefined) return;
-  // The dungeon is built room by room until the buffer ahead is filled.
   if (session.frontierZ - playerZ >= DUNGEON_CONFIG.streamBufferDistance) return;
 
   buildNextStreamRoom(session, playerZ);
@@ -767,13 +1071,18 @@ function startDungeonProgress(session) {
   }, DUNGEON_CONFIG.progressCheckTicks);
 }
 
+function moduleSummary(level) {
+  const counts = {};
+  for (const id of MODULE_TYPE_IDS) counts[id] = 0;
+  for (const room of level.rooms) counts[room.type.id] += 1;
+  return counts;
+}
+
 export function generateDungeon(playerId, difficulty) {
   stopDungeonForPlayer(playerId);
   const seed = nextDungeonSeed();
   const plan = createDungeonPlan(seed, difficulty);
-  // The plan puts the start room close to the randomized dungeon origin, so a
-  // "get" on its cell in this tick forces the engine to create the chunk before
-  // the real writes land. Placed before the first setBlock on purpose.
+  // Forces the engine to create the spawn chunk before the real writes land.
   try {
     primeChunk(plan);
   } catch (error) {
@@ -783,16 +1092,17 @@ export function generateDungeon(playerId, difficulty) {
   const session = {
     playerId,
     seed,
-    centerX: plan.endlessFrontier.centerX,
-    floorY: plan.endlessFrontier.floorY,
-    frontierZ: plan.endlessFrontier.z,
-    nextRoomZ: plan.endlessFrontier.nextRoomZ,
+    centerX: plan.frontier.centerX,
+    floorY: plan.frontier.floorY,
+    frontierZ: plan.frontier.z,
+    nextRoomZ: plan.frontier.nextRoomZ,
     streamRoomIndex: 0,
     isBuilding: false,
     finished: false,
     active: true,
     buildTimer: null,
     progressTimer: null,
+    spawnGuardTimer: null,
   };
   dungeonSessions[playerId] = session;
 
@@ -808,24 +1118,26 @@ export function generateDungeon(playerId, difficulty) {
     api.sendMessage(playerId, `Building a ${difficulty} single-level dungeon...`);
   }
 
-  // Floors are streamed before any wall, so no room can be walled in on bare
-  // ground; the teleport still happens only once the whole level is placed.
-  // Each build tick re-pokes the spawn chunk in case it was not ready yet.
+  const summary = moduleSummary(plan.level);
   startBlockBuild(
     session,
     dungeonBlockIterator(plan, { skipFloorKeys: padKeys, textureSeed: seed }),
     () => {
-      // Re-assert the pad right before the teleport, then keep checking it.
       try {
-        for (const { x, z } of spawnPadTiles(plan)) api.setBlock(x, plan.floorY, z, DUNGEON_CONFIG.blockName);
+        for (const { x, z } of spawnPadTiles(plan)) {
+          api.setBlock(x, plan.level.floorY, z, DUNGEON_CONFIG.blockName);
+        }
       } catch (error) {
         logFailure("Spawn pad refresh failed", error);
       }
 
-      api.setPosition(playerId, plan.spawnPosition);
+      api.setPosition(playerId, plan.level.spawnPosition);
       api.sendMessage(
         playerId,
-        `${difficulty} dungeon ready: ${plan.roomCount} connected rooms. Keep advancing to generate more rooms!`,
+        `${difficulty} dungeon ready: ${plan.level.roomCount} rooms `
+          + `(${summary.crossroads} four-way, ${summary.tJunction} three-way, ${summary.turn} turns, `
+          + `${summary.corridor} corridors, ${summary.end} dead ends, ${summary.stairs} stairs). `
+          + "Keep advancing to generate more rooms!",
       );
       startSpawnGuard(session, plan);
       startDungeonProgress(session);
