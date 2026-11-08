@@ -274,7 +274,14 @@ export function roomBlocks(room, world, options = {}) {
   // 1. Clear what will not be rebuilt: the cells above the ceiling. The floor,
   //    the walls and the ceiling are written unconditionally below, so clearing
   //    them first would write the same cell twice with two different blocks.
-  for (let localY = 0; localY < room.mask.h; localY += 1) {
+  //
+  //    This pass is now **conditional**, and off by default. It was 38 % of the
+  //    blocks of a whole dungeon, written to erase a rock that is not there: on a
+  //    fresh dungeon nothing exists six blocks above the floor. It is kept for
+  //    the one case that needs it — rebuilding a room over an older dungeon —
+  //    and the caller asks for it explicitly after reading the volume.
+  const clearAbove = options.clearAbove === true;
+  for (let localY = 0; clearAbove && localY < room.mask.h; localY += 1) {
     for (let localX = 0; localX < room.mask.w; localX += 1) {
       if (!filled(localX, localY)) continue;
       for (let level = wallHeight + 2; level <= wallHeight + 4; level += 1) {

@@ -52,6 +52,8 @@ export function createWorldBuilder(options) {
   const batchSize = options.batchSize || DUNGEON_CONFIG.blocksPerBatch;
   const verifyEvery = options.verifyEvery || 8;
   const rooms = new Map();
+  /** Rooms finished but not yet read back. One is audited per tick, at most. */
+  const auditQueue = [];
 
   /** Chunk identifiers a room's cells touch, so a build can wait for them. */
   function chunksOf(room) {
@@ -123,6 +125,9 @@ export function createWorldBuilder(options) {
         total: 0,
         attempts: 0,
         repairs: 0,
+        audits: 0,
+        pendingAudit: false,
+        clearedAbove: false,
       };
       rooms.set(roomId, state);
     }
@@ -154,6 +159,12 @@ export function createWorldBuilder(options) {
 
     const world_ = { x: room.origin.x, y: floorY, z: room.origin.y };
     if (!state.writer) {
+      // Ask the world whether there is anything to clear above this room, once,
+      // instead of writing a clearance pass over its whole footprint. The read is
+      // a handful of cells; the pass was four blocks per cell of the room.
+      const clearAbove = needsClearAbove(room);
+      state.clearedAbove = clearAbove;
+      buildOptions = { ...buildOptions, clearAbove };
       state.writer = createRoomWriter({ setBlock: writeBlock }, { batchSize });
       state.total = roomBlocks(room, world_, buildOptions).length;
     }
@@ -173,30 +184,14 @@ export function createWorldBuilder(options) {
       };
     }
 
-    state.state = ROOM_BUILD_STATE.VERIFYING;
-    const wrong = verifyRoom(room, world_, buildOptions);
-    if (wrong.length === 0) {
-      state.state = ROOM_BUILD_STATE.BUILT;
-      return { roomId: room.id, state: state.state, done: true, written: step.written };
-    }
-
-    // Repair, once. A second failure is a real failure: the room is reported as
-    // such instead of being quietly marked ready.
-    if (state.repairs >= 1) {
-      state.state = ROOM_BUILD_STATE.FAILED;
-      log(`room ${room.id} failed verification twice, ${wrong.length} cells wrong`);
-      return { roomId: room.id, state: state.state, done: false, written: step.written, wrong };
-    }
-    state.repairs += 1;
-    state.state = ROOM_BUILD_STATE.REPAIRING;
-    for (const cell of wrong) writeBlock(cell.x, cell.y, cell.z, cell.expected);
-    const recheck = verifyRoom(room, world_, buildOptions);
-    if (recheck.length === 0) {
-      state.state = ROOM_BUILD_STATE.BUILT;
-      return { roomId: room.id, state: state.state, done: true, written: step.written + wrong.length };
-    }
-    state.state = ROOM_BUILD_STATE.FAILED;
-    return { roomId: room.id, state: state.state, done: false, wrong: recheck };
+    // The room is complete. It is *not* verified here any more: reading back
+    // costs a `getBlock` per checked cell, and doing it inside the build step
+    // spent build budget on reading. It is queued for the audit instead, which
+    // runs one room per tick with its own cost.
+    state.state = ROOM_BUILD_STATE.BUILT;
+    state.pendingAudit = true;
+    auditQueue.push(room.id);
+    return { roomId: room.id, state: state.state, done: true, written: step.written };
   }
 
   /**
@@ -314,6 +309,29 @@ export function createWorldBuilder(options) {
   }
 
   /**
+   * Is there anything at all above this room's ceiling?
+   *
+   * Four probes per room are enough to answer a boolean: a dungeon built on empty
+   * air has air everywhere up there, and a room rebuilt over an older one has
+   * rock everywhere. Reading four cells is cheaper than writing four blocks per
+   * cell of the footprint, which is what the unconditional clearance pass did.
+   */
+  function needsClearAbove(room) {
+    const level = floorY + DUNGEON_CONFIG.wallHeight + 3;
+    const probes = [
+      { x: room.origin.x, z: room.origin.y },
+      { x: room.origin.x + room.mask.w - 1, z: room.origin.y },
+      { x: room.origin.x, z: room.origin.y + room.mask.h - 1 },
+      { x: room.origin.x + room.mask.w - 1, z: room.origin.y + room.mask.h - 1 },
+    ];
+    for (let index = 0; index < probes.length; index += 1) {
+      const name = readBlock(probes[index].x, level, probes[index].z);
+      if (name !== null && name !== BLOCKS.EMPTY) return true;
+    }
+    return false;
+  }
+
+  /**
    * Reads back a sample of the room: every pad and every doorway, plus one cell
    * in `verifyEvery`.
    *
@@ -413,6 +431,53 @@ export function createWorldBuilder(options) {
     return { allowed: applied, callable: true };
   }
 
+  /**
+   * Audits one finished room, and repairs it once if needed.
+   *
+   * The verification is deliberately out of the build path: reading back a room
+   * is the price of trusting it, not the price of building it, and mixing the
+   * two made a tick that wrote 800 blocks also read 40 cells. One room per tick
+   * is enough to catch a write the server dropped, and it never delays the build.
+   *
+   * Returns `null` when there is nothing to audit.
+   */
+  function auditNext(roomsById) {
+    while (auditQueue.length > 0) {
+      const roomId = auditQueue.shift();
+      const state = rooms.get(roomId);
+      if (!state || state.state !== ROOM_BUILD_STATE.BUILT || !state.pendingAudit) continue;
+      const room = roomsById ? roomsById(roomId) : null;
+      if (!room) continue;
+      state.pendingAudit = false;
+      const world_ = { x: room.origin.x, y: floorY, z: room.origin.y };
+      const options_ = { clearAbove: state.clearedAbove === true };
+      const wrong = verifyRoom(room, world_, options_);
+      if (wrong.length === 0) {
+        state.audits += 1;
+        return { roomId, repaired: 0, verified: true };
+      }
+      if (state.repairs >= 1) {
+        state.state = ROOM_BUILD_STATE.FAILED;
+        log(`room ${roomId} failed its audit, ${wrong.length} cells wrong`);
+        return { roomId, repaired: 0, verified: false };
+      }
+      state.repairs += 1;
+      for (const cell of wrong) writeBlock(cell.x, cell.y, cell.z, cell.expected);
+      // Repairing is not the same as having repaired: the cells are read back,
+      // and a world that drops the writes anyway is reported as failed instead
+      // of passing for good.
+      const stillWrong = verifyRoom(room, world_, options_);
+      state.audits += 1;
+      if (stillWrong.length > 0) {
+        state.state = ROOM_BUILD_STATE.FAILED;
+        log(`room ${roomId} still has ${stillWrong.length} wrong cell(s) after repair`);
+        return { roomId, repaired: wrong.length, verified: false };
+      }
+      return { roomId, repaired: wrong.length, verified: true };
+    }
+    return null;
+  }
+
   function forget(roomId) {
     rooms.delete(roomId);
   }
@@ -421,6 +486,7 @@ export function createWorldBuilder(options) {
     buildBatch,
     buildPassage,
     reopenDoorways,
+    auditNext,
     verifyRoom,
     areaLoaded,
     chunksOf,
@@ -449,6 +515,9 @@ export function createWorldBuilder(options) {
         },
         reopenDoorways(room) {
           return reopenDoorways(room);
+        },
+        auditRoom(manager) {
+          return auditNext((roomId) => (manager ? manager.getRoom(roomId) : null));
         },
         stateOf(roomId) {
           const state = stateOf(roomId);

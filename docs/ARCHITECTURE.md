@@ -716,7 +716,16 @@ Une file est une **indication**, pas une autorité : le graphe l'est. Une entré
 controller.tick()   // appelé depuis le scheduler du jeu, une fois par tick
 ```
 
-`tick()` compte, et exécute un **cycle** tous les `cycleTicks = 20` ticks (une seconde). Un cycle réentrant est **refusé**, pas mis en file : deux cycles qui se disputent la même ouverture, c'est exactement ainsi qu'une salle est générée deux fois. Le refus est compté (`stats.deferred`).
+`tick()` fait deux choses, sur deux horloges **séparées** :
+
+1. **la construction**, à chaque tick, dans `buildStep()`, bornée par `maxBlocksPerTick = 800` blocs et par l'audit d'une salle ;
+2. **le graphe** (découverte puis génération), tous les `cycleTicks = 10` ticks (une demi-seconde).
+
+La séparation est une correction de conception, pas un réglage. Les deux étaient soudés : le monde n'était écrit qu'un tick sur vingt, soit 22 ticks avec écriture sur 434 pour un donjon complet, et **21,9 s** pour bâtir ce que le CPU produisait en 200 ms. Écrire est bon marché par tick ; décider ne l'est pas, et les deux n'ont pas à partager la même horloge. Un cycle réentrant est **refusé**, pas mis en file : deux cycles qui se disputent la même ouverture, c'est exactement ainsi qu'une salle est générée deux fois. Le refus est compté (`stats.deferred`). Le verrou `cycleRunning` appartient au cycle, jamais à `buildStep()`.
+
+`cycleTicks` reste à 10 et non à 5 : mesuré à 5, le donjon est prêt en 1,50 s au lieu de 2,10 s, mais la génération moyenne tombe à 0,65 ms et le pire cycle à 11,5 ms — la marge entre le pire cycle et la demi-seconde devient trop mince pour une machine chargée. Un chiffre plus flatteur au repos n'est pas un gain si le pire cas passe le budget.
+
+Conséquence de contrat, à connaître avant d'écrire un test : **`cycle()` ne construit plus**. Un test qui veut des écritures appelle `cycle()` pour remplir la file, puis laisse tourner les ticks (ou appelle `buildStep()`).
 
 Mesures (`npm run simulate`, builder qui coûte `w × h` blocs par salle) :
 
@@ -730,7 +739,7 @@ Les pics des premiers cycles ne sont pas la charge de travail : un cycle coûte 
 
 ### 12.6 Anti-cycles concurrents
 
-Un seul contrôleur par donjon, un indicateur `cycleRunning`, un `try/finally` qui le relâche même si un builder lève. Un test fait sciemment rappeler `cycle()` depuis l'intérieur d'un builder et vérifie que le second appel est refusé et que le contrôleur n'est pas resté verrouillé : c'est le genre de verrou qu'on ne remarque qu'après un blocage en production.
+Un seul contrôleur par donjon, un indicateur `cycleRunning`, un `try/finally` qui le relâche même si un builder lève. Le verrou ne couvre que le cycle : `buildStep()` n'y touche pas, sinon un tick qui construit bloquerait la découverte du tick suivant pour rien — les deux ne partagent aucun état (le builder écrit des blocs, le cycle décide des ouvertures). Un test fait sciemment rappeler `cycle()` depuis l'intérieur d'un builder et vérifie que le second appel est refusé et que le contrôleur n'est pas resté verrouillé : c'est le genre de verrou qu'on ne remarque qu'après un blocage en production.
 
 ### 12.7 Salle suspendue plutôt que salle perdue
 
@@ -761,15 +770,17 @@ Si une précondition manque, la salle est reportée, pas abandonnée.
 
 | Phase | Action | Raison |
 | --- | --- | --- |
-| 1 | dégagement **au-dessus du plafond seulement** (`Air`, niveaux `wallHeight+2` à `+4`) | idempotence : une reconstruction repart propre, sans réécrire une cellule que la phase 2 va poser |
+| 1 | dégagement **au-dessus du plafond seulement** (`Air`, niveaux `wallHeight+2` à `+4`), **et seulement si quatre `getBlock` y trouvent de la roche** | idempotence : une reconstruction repart propre, sans réécrire une cellule que la phase 2 va poser — et sans payer 5 631 `Air` sur un donjon neuf (38 % des écritures, mesuré) |
 | 2 | sol : toutes les cellules de la forme | on marche avant d'avoir des murs |
 | 3 | **murs**, linteau compris, cellules de passage sautées jusqu'à `passageHeight` | le mur n'est jamais plein puis percé, et le linteau n'est pas une phase séparée |
 | 4 | plafond, cellules de passage sautées | ferme le volume, ne bloque rien |
 | 4 bis | **passage d'une connexion** : colonne nettoyée, sol, flancs, plafond | le seuil entre deux salles est un couloir, pas un trou (voir ci-dessous) |
 | 5 | **pose du pad** de difficulté, si la salle en porte un | après la géométrie, sur une cellule de sol connue et jamais dans un passage (§15.2) |
-| 6 | vérification : relecture déterministe, pads et passages toujours, le reste un bloc sur huit | ne jamais faire confiance à une écriture |
+| 6 | vérification **hors du chemin de construction** : la salle finie entre en file d'audit, `auditNext` en traite une par tick, répare une fois et **relit** ce qu'il a réparé | ne jamais faire confiance à une écriture, et ne pas mêler le coût de la lecture à celui de l'écriture |
 
 **Texture, décidée en Phase 4** : chaque bloc structurel est tiré **un par un** dans la palette `"Stone"`, `"Messy Stone"`, `"Smooth Stone"`, `"Stone Bricks"`, `"Cracked Stone Bricks"`, `"Mossy Stone Bricks"`. Le sol reste dans la famille des briques (`Stone Bricks`, `Cracked Stone Bricks`) et le plafond en `Smooth Stone`, pour que la variété soit sur les murs, là où elle se voit. Le tirage est un **hachage de la graine de la salle et de la cellule**, jamais un générateur aléatoire : une salle interrompue puis reprise, ou reconstruite depuis sa graine, doit avoir exactement les mêmes pierres. C'est aussi la raison pour laquelle `setBlockRect` ne peut pas servir à la structure : un rectangle uniforme efface la texture, et il est plafonné à 360 blocs par appel.
+
+Le déblaiement est en outre **conditionnel** : `roomBlocks(room, world, { clearAbove })` ne l'émet que si l'appelant l'a demandé, et `worldBuilder` ne le demande qu'après avoir lu quatre cellules au-dessus de la salle (`needsClearAbove`). Sur un donjon neuf, ces quatre lectures remplacent 5 631 écritures de `Air`.
 
 **Livré ainsi en Phase 4, avec une différence assumée sur la proposition initiale** : la phase 1 ne vide plus le volume du sol au plafond. Une cellule écrite deux fois — effacée par le dégagement puis reposée par le sol — rend le monde dépendant du découpage en lots, et c'est exactement le bug qui a été observé. Le dégagement est limité aux niveaux au-dessus du plafond, et un test vérifie qu'aucune cellule n'est écrite deux fois (`tests/engine/builder.test.js`).
 
@@ -790,6 +801,8 @@ Le constructeur est un **générateur** qui produit des lots de blocs (`buildRoo
 - au rechargement, `DungeonRecovery` reprend les salles `building` à leur curseur, et rejoue `not_started` depuis zéro.
 
 Le curseur est enregistré par la persistance groupée, pas à chaque bloc : la granularité est un lot, ce qui borne le coût d'écriture en base à `blocksPerShardWrite` blocs plutôt qu'à un bloc.
+
+Un lot n'est pas une salle divisée en cinq par principe : `blocksPerBatch = 240` suit `maxBlocksPerTick = 800`, donc une salle médiane (359 blocs) tient en deux lots et non en cinq. Le lot est la granularité de reprise, le budget est la granularité du tick ; les confondre ajoutait de la latence sans rien protéger. Le budget, lui, se vérifie **entre** deux salles et jamais au milieu d'un lot, donc un tick peut dépasser `maxBlocksPerTick` d'un lot au plus : c'est le prix assumé d'une reprise propre, et le test du hôte le vérifie (`budget + un lot`).
 
 ### 13.4 Priorité de construction
 
@@ -920,7 +933,7 @@ Le format persisté ne contient **que** le donjon lui-même : seed, origine, par
 
 ### 17.1 Tests unitaires
 
-Les tests du moteur existent : **105 tests** dans `tests/engine/`, rejoints par `builder`, `worldBuilder` et `service` (**129** dans `tests/engine/`), exécutés par `npm test` (**148** au total avec les tests du scheduler et de l'hôte). Le tableau ci-dessous décrit ce qui est réellement vérifié, et non ce qui est prévu.
+Les tests du moteur existent : **105 tests** dans `tests/engine/`, rejoints par `builder`, `worldBuilder` et `service` (**147** dans `tests/engine/`), exécutés par `npm test` (**162** au total avec les tests du scheduler et de l'hôte). Le tableau ci-dessous décrit ce qui est réellement vérifié, et non ce qui est prévu.
 
 | Fichier | Ce qui est vérifié | État |
 | --- | --- | --- |
@@ -929,9 +942,9 @@ Les tests du moteur existent : **105 tests** dans `tests/engine/`, rejoints par 
 | `tests/engine/graph.test.js` | Réseau réel : plus d'arêtes que d'un arbre, carrefours, culs-de-sac, tout est atteignable ; aucune cellule partagée ; chaque ouverture appartient à exactement une connexion ou reste libre ; un refus ne laisse **aucune** trace ; même seed ⇒ même donjon (structure complète comparée) ; ordre d'exploration sans effet ; profondeurs cohérentes ; les ouvertures libres ne disparaissent pas ; huit difficultés ordonnées ; rayon respecté ; **aucun appel à `Math.random`** (interdit pendant le test). | ✅ |
 | `tests/engine/passage.test.js` | Parcours du donjon entier depuis l'entrée : **tous** les seuils connectés sont atteignables à pied ; chaque passage direct est franchissable ; refus d'une salle posée sur une autre ; refus d'un seuil ouvrant dans un trou ; refus hors rayon ; refus d'une salle aux ouvertures non reliées ; les cellules du passage sont contiguës, sans trou. | ✅ |
 | `tests/engine/discovery.test.js` | Formule de priorité et exemple chiffré ; pénalité de profondeur ; `crossing` prioritaire ; distance au plus proche seuil ; portée et profondeur respectées ; ordre total et reproductible ; un seuil vu par deux joueurs n'est offert qu'une fois ; coût d'un scan qui ne croît pas avec le donjon. | ✅ |
-| `tests/engine/controller.test.js` | Anti-doublons des trois files ; budget de génération **compté en tentatives** ; construction bornée par son budget ; aucune ouverture générée deux fois ; builder appelé exactement pour les salles créées ; un cycle réentrant est refusé et ne verrouille pas le contrôleur ; un tick ne déclenche pas de cycle avant l'échéance ; une salle suspendue reste dans le graphe ; travail borné quelle que soit la taille du donjon ; **un passage est demandé pour chaque connexion, boucles comprises** ; **une salle inachevée n'affame pas la file**. | ✅ |
+| `tests/engine/controller.test.js` | Anti-doublons des trois files ; budget de génération **compté en tentatives** ; construction bornée par son budget ; **la construction avance à chaque tick alors que le cycle ne tourne qu'un tick sur `cycleTicks`** ; **`cycle()` ne construit plus rien** ; deux cycles de graphe ne tournent jamais en même temps, et le verrou est relâché même si le builder lève ; un tick ne déclenche pas de cycle avant l'échéance ; une salle suspendue reste dans le graphe ; travail borné quelle que soit la taille du donjon ; **un passage est demandé pour chaque connexion, boucles comprises** ; **une salle inachevée n'affame pas la file**. | ✅ |
 | `tests/engine/builder.test.js` | **Un passage est un couloir** : sol, flancs, plafond, hauteur marchable libre ; **aucune cellule d'une salle n'est écrite par un passage** ; **0 doublon sur tout le donjon, passages compris** ; sol complet sur **chaque** salle ; aucune cellule de passage murée sous `passageHeight` ; une ouverture libre est murée ; ordre des phases ; **aucune cellule écrite deux fois** ; 0 doublon entre deux salles voisines ; reprise du curseur explicite (et refus sans curseur) ; pad hors passage ; pad écrit en dernier ; audit qui nomme le trou ; déterminisme. | ✅ |
-| `tests/engine/worldBuilder.test.js` | Altitude absente refusée (`TypeError`) au lieu d'écrire à `NaN` ; rien n'est écrit avant chargement du chunk ; une salle finie n'est jamais réécrite ; réparation unique puis `failed` ; séquence d'atterrissage (lecture, téléport au milieu de la cellule) ; pad 5×5 ; protection par rectangle ; coût **et** `done` transmis au contrôleur. | ✅ |
+| `tests/engine/worldBuilder.test.js` | Altitude absente refusée (`TypeError`) au lieu d'écrire à `NaN` ; rien n'est écrit avant chargement du chunk ; une salle finie n'est jamais réécrite ; **l'audit se fait une salle à la fois, et seulement sur une salle finie** ; une salle fausse est réparée **une fois**, relue, puis `failed` ; séquence d'atterrissage (lecture, téléport au milieu de la cellule) ; pad 5×5 ; protection par rectangle ; coût **et** `done` transmis au contrôleur. | ✅ |
 | `tests/engine/service.test.js` | **Toutes les salles d'un donjon fini sont atteignables à pied depuis l'entrée** (parcours cellule par cellule au niveau du sol) ; graine indépendante de l'horloge ; pads de difficulté et fin de progression ; sol présent à `onReady` ; un seul donjon par difficulté ; cellule d'atterrissage hors passage ; difficulté inconnue refusée ; `usePad` ; sortie vers le lobby ; donjon vide qui ne génère pas. | ✅ |
 | `tests/world-code.test.js` | Lobby (compte à rebours, même couleur, annulation, dernier tick) ; séquence de spawn sur le script **bundlé** ; aucun bloc écrit dans le tick de lecture ; lots bornés ; **aucune écriture hors chunk chargé** ; pad d'atterrissage intact après croissance ; retour au lobby. | ✅ |
 | `tests/dungeon/persistence.test.js` | Faux magasin clé/valeur avec **plafond de caractères** et pannes injectées (écriture perdue, partielle, `seq` régressive, `crc` faux) ; reprise sur double tampon ; journal d'opération rejoué une seule fois ; migration `v0 → v1` ; rétention (géométrie retirée puis reconstruite à l'identique). | ◻ Phase 5 |
@@ -995,11 +1008,11 @@ Chaque phase est testée avant la suivante. Aucune phase ne commence sans que la
 | **1. Géométrie — ✅ livrée** | `geometry.js`, `shapes.js`, `openings.js`, `random.js`, `config.js`. | Toutes les familles de formes valides ; 400 formes sans forme déconnectée ni trou ; visualiseur ASCII/SVG opérationnel ; tests moteur verts (**59** sur les quatre fichiers du moteur). |
 | **2. Graphe — ✅ livrée** | `validator.js`, `spatialIndex.js`, `dungeonManager.js` : connexions, boucles, réutilisation, ponts. | **La règle §17.2 : plusieurs centaines de salles, cinq propriétés prouvées, huit difficultés.** Aucun bloc écrit. **Mesuré : 150 salles, 5 à 8 boucles, profondeur 8-9, 250 ouvertures libres, 4 seeds.** |
 | **3. Anticipation — ✅ livrée** | `discovery.js`, `queues.js`, `controller.js` : `PlayerTracker`, trois files, priorités, budgets, suspension. | Priorités conformes à l'exemple ; budget par cycle respecté **et vérifié en comptant les tentatives** ; files sans doublon ; reprise refusée ; scénarios 1 à 4 du harnais verts. |
-| **4. Construction — ✅ livrée** | `builder.js`, `worldBuilder.js`, `service.js`, rebranchement de l'hôte. Préconditions de chunk, ordre imposé, reprise au curseur, vérification et réparation unique. | Salles construites sans trou ni mur plein percé et **aucune cellule écrite deux fois** ; reprise au curseur refusée sans curseur explicite ; **0 écriture perdue** hors chunk chargé ; spawn vérifié avant `onReady` ; 148 tests verts. Voir `docs/PHASE4.md`. |
+| **4. Construction — ✅ livrée** | `builder.js`, `worldBuilder.js`, `service.js`, rebranchement de l'hôte. Préconditions de chunk, ordre imposé, reprise au curseur, vérification et réparation unique. | Salles construites sans trou ni mur plein percé et **aucune cellule écrite deux fois** ; reprise au curseur refusée sans curseur explicite ; **0 écriture perdue** hors chunk chargé ; spawn vérifié avant `onReady` ; **162 tests verts**. Voir `docs/PHASE4.md`. |
 | **5. Persistance** | `DungeonPersistence`, fragmentation, budget, migration, rétention. | Rechargement identique ; pannes injectées absorbées ; gain de compactage ≥ 3× mesuré ; scénarios 7 et 8 verts. |
 | **6. Fiabilité et optimisation** | `DungeonRecovery`, audit, réparation, profilage. | Audit d'intégrité sur 200 salles ; géométrie reconstruite à l'identique depuis la seed après redémarrage ; aucune régression de coût à 2 000 salles. |
 
-Le code du lobby et du compte à rebours (`src/worldCode.js`) est resté intact jusqu'en Phase 4, où seul le point d'entrée est rebranché : `onLobbyCountdownComplete` appelle le service, `tick` avance le service, `onPlayerLeave` délie le joueur. L'ancien générateur et ses 14 tests sont supprimés avec lui — les `tests/world-code.test.js` qui décrivaient son comportement (boîte de spawn, patch de 25 blocs, messages « dungeon ready ») sont réécrits pour décrire le comportement réel, et le test « 60 blocs » qui ne mesurait rien est remplacé par une vérification d'écriture hors chunk chargé. `npm test` : **148** tests.
+Le code du lobby et du compte à rebours (`src/worldCode.js`) est resté intact jusqu'en Phase 4, où seul le point d'entrée est rebranché : `onLobbyCountdownComplete` appelle le service, `tick` avance le service, `onPlayerLeave` délie le joueur. L'ancien générateur et ses 14 tests sont supprimés avec lui — les `tests/world-code.test.js` qui décrivaient son comportement (boîte de spawn, patch de 25 blocs, messages « dungeon ready ») sont réécrits pour décrire le comportement réel, et le test « 60 blocs » qui ne mesurait rien est remplacé par une vérification d'écriture hors chunk chargé. `npm test` : **162** tests.
 
 ---
 

@@ -1,6 +1,6 @@
 # Phase 4 — construction physique
 
-**Livré.** `builder.js`, `worldBuilder.js`, `service.js`, et le rebranchement de l'hôte (`src/worldCode.js`). Le moteur ne décide plus seulement : il pose des blocs. L'ancien générateur (`src/dungeon/generator.js`, 1 583 lignes) et ses deux fichiers de tests sont supprimés — c'est le remplacement, pas une cohabitation. `npm test` : **148 tests verts**.
+**Livré.** `builder.js`, `worldBuilder.js`, `service.js`, et le rebranchement de l'hôte (`src/worldCode.js`). Le moteur ne décide plus seulement : il pose des blocs. L'ancien générateur (`src/dungeon/generator.js`, 1 583 lignes) et ses deux fichiers de tests sont supprimés — c'est le remplacement, pas une cohabitation. `npm test` : **162 tests verts**.
 
 ## Les trois couches
 
@@ -17,7 +17,7 @@ Cette séparation n'est pas décorative : `builder.js` est testé dans Node cont
 
 | Phase | Écrit | Raison |
 | --- | --- | --- |
-| 1 | `Air` **au-dessus du plafond** (niveaux `wallHeight+2` à `+4`) | idempotence d'une reconstruction |
+| 1 | `Air` **au-dessus du plafond** (niveaux `wallHeight+2` à `+4`), **seulement si la lecture de quatre cellules y trouve de la roche** | idempotence d'une reconstruction, sans payer un déblaiement sur un donjon neuf |
 | 2 | sol, toutes les cellules de la forme, pierre tirée une par une | on marche avant d'avoir des murs |
 | 3 | murs, linteau compris, cellules de passage sautées jusqu'à `passageHeight` | le mur n'est jamais plein puis percé |
 | 4 | plafond, cellules de passage sautées | ferme le volume sans bloquer |
@@ -59,11 +59,13 @@ Les passages comptent aussi dans le budget de blocs du tick : sans cela, un cycl
 
 Trois donjons complets, faux serveur, joueur immobile dans l'entrée :
 
-| Donjon | Salles | Connexions | Passages construits | Salles atteignables à pied | Écritures perdues |
-| --- | --- | --- | --- | --- | --- |
-| alpha | 20 | 20 | 20 | **20 / 20** | 0 |
-| beta | 30 | 33 | 33 | **30 / 30** | 0 |
-| gamma | 38 | 37 | 37 | **38 / 38** | 0 |
+| Donjon | Salles | Connexions | Passages construits | Salles atteignables à pied | Écritures perdues | Prêt à jouer |
+| --- | --- | --- | --- | --- | --- | --- |
+| alpha | 20 | 20 | 20 | **20 / 20** | 0 | 0,0 s |
+| beta | 28 | 31 | 31 | **28 / 28** | 0 | 2,15 s |
+| gamma | 30 | 29 | 29 | **30 / 30** | 0 | 2,10 s |
+
+Mesure refaite **après** l'optimisation de vitesse ci-dessous : le BFS part de la cellule d'entrée, ne marche que sur des cellules de sol non recouvertes, et ignore l'`Air`. Les tailles diffèrent de la mesure d'origine parce que la difficulté plafonne le nombre de salles et que le graphe s'arrête avant ; ce qui compte est la colonne des atteignables, pleine à chaque fois.
 
 Le test d'intégration `tests/engine/service.test.js` fait exactement cela : il part de l'entrée, marche de cellule en cellule au niveau du sol, et échoue si une salle construite n'est pas atteignable.
 
@@ -82,7 +84,9 @@ Une ouverture `pending` (qui ne mène nulle part) est **murée** : c'est un cul-
 
 `writeRoom` renvoie un curseur et refuse de repartir de zéro sans lui (`room r1.2 is half built: an explicit cursor is required to resume it`). Ce refus est volontaire : la version implicite réécrivait des blocs et renvoyait quand même `done`.
 
-Le pont vérifie ce qu'il a écrit par `getBlock` — les pads et les passages toujours, le reste un bloc sur huit — répare **une fois**, puis déclare la salle `failed` si elle reste fausse. Une salle fausse déclarée `built` est le pire des états : le joueur tombe dedans et rien ne le signale.
+Le pont vérifie ce qu'il a écrit par `getBlock` — les pads et les passages toujours, le reste un bloc sur huit — répare **une fois**, relit ce qu'il vient de réparer, puis déclare la salle `failed` si elle reste fausse. Une salle fausse déclarée `built` est le pire des états : le joueur tombe dedans et rien ne le signale.
+
+Cette vérification ne se fait plus **dans** le chemin de construction : terminé, un lot de blocs met la salle en file d'audit (`auditQueue`), et `auditNext` en traite **une par tick**, hors du budget d'écriture. Lire quarante cellules dans le même tick que l'écriture de huit cents blocs, c'était payer deux fois dans le même tick et retarder le monde. `worldBuilder.asControllerBuilder().auditRoom(manager)` est le point d'entrée que le contrôleur appelle avant de construire, pour qu'un tick à court de budget n'affame pas l'audit.
 
 Rien n'est écrit avant que la zone soit chargée. Le pont sonde `getBlock` sur quatre cellules de la salle ; un `null` vaut « chunk absent », une exception aussi. Ce n'est pas de la prudence gratuite : sur un faux serveur, dix cellules écrites à `y = NaN` avaient été acceptées sans le moindre message.
 
@@ -118,19 +122,60 @@ Quatre défauts réels, tous invisibles à la lecture et tous attrapés par un f
 
 ## Mesures
 
-Donjon Hell complet sur le faux serveur (3 000 ticks, 150 cycles) :
+Deux séries, avant et après l'optimisation de vitesse (même faux serveur, même graine, donjon Hell) :
 
-| Mesure | Valeur |
-| --- | --- |
-| salles générées | 33 (plafond de la difficulté atteint) |
-| blocs écrits | 13 748 |
-| écritures perdues (chunk non chargé) | **0** |
-| cellules de sol non posées | **0** sur 2 047 |
-| salles `built` | 34 / 34 |
-| génération cumulée | 125 ms sur 150 cycles |
-| construction cumulée | 42 ms |
+| Mesure | Avant | Après |
+| --- | --- | --- |
+| ticks avant la dernière salle | 439 | **53** |
+| temps avant la dernière salle | 21,9 s | **2,65 s** |
+| blocs écrits | 14 512 | **9 132** |
+| écritures perdues (chunk non chargé) | **0** | **0** |
+| cellules de sol non posées | **0** sur 2 047 | **0** |
+| salles `built` | 34 / 34 | 34 / 34 |
+| salles auditées / échecs / réparations | — | 34 / **0** / **0** |
+| génération cumulée | 125 ms | 118 ms |
+| construction cumulée | 42 ms | **0,8 ms** de planification |
 
-Le coût par tick reste dominé par la génération, comme en Phase 3 ; la construction ne pèse qu'un tiers du reste.
+Le coût par tick est désormais dominé par la génération, comme en Phase 3 ; la construction ne pèse plus rien au regard du reste, parce qu'elle n'a plus de temps d'attente.
+
+## La vitesse : où passaient les 21,9 secondes
+
+La première version mettait **21,9 s** à bâtir un donjon Hell complet (34 salles, 439 ticks) alors que le CPU ne coûtait presque rien : `buildMs` cumulé sur tout le donjon, 60 ms ; `generateMs`, 113 ms. Le temps n'était donc pas dans le travail, il était dans **la cadence** — et dans des blocs écrits pour rien.
+
+Mesure de la répartition, sur 34 salles et 14 671 blocs écrits :
+
+| Poste | Blocs | Part |
+| --- | --- | --- |
+| déblaiement (`Air`) | 5 631 | 38,4 % |
+| murs | 4 304 | 29,3 % |
+| plafond | 2 124 | 14,5 % |
+| sol | 1 877 | 12,8 % |
+| passages | 735 | 5,0 % |
+
+**41 % des écritures étaient de l'`Air`**, et la médiane était de 5 lots de 80 blocs par salle — donc cinq ticks de latence par salle, pour 359 blocs. Quatre leviers, tous mesurés :
+
+| Levier | Ce qui change | Effet |
+| --- | --- | --- |
+| 1. construire **hors** du cycle | `tick()` appelle `buildStep()` à chaque tick ; `cycle()` ne fait plus que découvrir et générer | le monde n'attend plus l'horloge du graphe : 22 ticks avec écriture sur 434 deviennent la quasi-totalité |
+| 2. cadence du graphe | `cycleTicks` 20 → **10** (une demi-seconde) | génération moyenne 4,40 ms → 1,47 ms par cycle ; dernier bloc à 5,10 s → **2,10 s** à lui seul |
+| 3. déblaiement conditionnel | `roomBlocks(..., { clearAbove })` : quatre `getBlock` au-dessus de la salle décident si la passe `Air` sert à quelque chose | 5 631 blocs de `Air` → **0** sur un donjon neuf |
+| 4. lots qui suivent le budget | `blocksPerBatch` 80 → **240** (le budget est de 800 : un lot était cinq fois trop petit) | médiane 5 lots par salle → 2 ; 178 passes pour tout le donjon → 34 |
+
+Effet cumulé, même faux serveur, même graine :
+
+| Métrique | Avant | Après |
+| --- | --- | --- |
+| dernière salle bâtie | tick 439 = **21,9 s** | tick **53 = 2,65 s** |
+| blocs écrits | 14 512 | **9 132** |
+| déblaiement `Air` | 5 631 blocs | **0** sur donjon neuf |
+| lots par salle (médiane) | 5 | ~1,5 |
+| vérification | dans le cycle chaud | **1 salle par tick**, hors budget |
+| écritures perdues | 0 | **0** |
+| salles auditées / échecs | 34 / 0 | **34 / 0** |
+
+Soit **×8,3** sur le temps d'apparition du donjon, sans écrire un bloc de plus que nécessaire. Ce qui n'a **pas** été fait, volontairement : passer `cycleTicks` à 5 (mesuré à 1,50 s, mais la génération moyenne tombe à 0,65 ms et le pire cas à 11,5 ms — la marge entre le pire cycle et la demi-seconde de budget devient trop mince pour une machine chargée), et regrouper les écritures en `setBlockRect` (un rectangle est uniforme : il détruit la texture, et il est plafonné à 360 blocs par appel).
+
+Un détail qui compte pour la suite : `cycle()` **ne construit plus**. Tout test qui veut des écritures de bloc doit appeler `controller.cycle()` d'abord (pour remplir la file) puis laisser tourner les ticks. Le contrat est plus net ainsi — le graphe décide, le tick écrit — mais il se paie d'un piège : un `buildStep()` seul, sans cycle préalable, ne trouve rien à construire.
 
 ## Ce qui n'est pas fait
 

@@ -58,8 +58,13 @@ export function createDungeonController(options) {
     suspended: 0,
     deferred: 0,
     resumed: 0,
+    repairs: 0,
     passages: 0,
     discoveryScans: 0,
+    buildTicks: 0,
+    verified: 0,
+    verifyFailures: 0,
+    skippedAir: 0,
   };
 
   let elapsedTicks = 0;
@@ -84,20 +89,35 @@ export function createDungeonController(options) {
   const playerList = () => [...players.values()];
 
   /**
-   * One tick. Cheap by design: it counts, and runs a cycle when due.
+   * One tick.
+   *
+   * Construction runs **every tick**, on its own budget; discovery and
+   * generation keep running at their own, much slower cadence. They were once
+   * welded together, which meant the world was written one tick in twenty: a
+   * dungeon took twenty seconds to appear and the graph was not the reason.
+   * Writing is cheap per tick; deciding is not, and the two do not belong to the
+   * same clock.
    */
   function tick() {
     elapsedTicks += 1;
     stats.ticks += 1;
+    // Construction first: it is what the player is waiting for, and it costs a
+    // bounded number of blocks.
+    const built = buildStep();
+    stats.buildTicks += 1;
+    if (built) lastState = built;
     if (elapsedTicks % DUNGEON_CONFIG.cycleTicks !== 0) return null;
     return cycle();
   }
 
   /**
-   * One full cycle: discovery, then generation, then construction.
+   * One full graph cycle: discovery, then generation.
    *
    * Re-entrance is refused rather than queued: two cycles fighting over the same
    * opening is exactly how a room gets generated twice.
+   *
+   * Construction used to run here too, which tied the world's write rate to the
+   * graph's rate. It now runs every tick, in `buildStep`.
    */
   function cycle() {
     if (cycleRunning) {
@@ -109,11 +129,39 @@ export function createDungeonController(options) {
     const started = nowMs();
     try {
       const afterDiscovery = timeJob(discover, stats, "discoverMs", started);
-      const afterGeneration = timeJob(generate, stats, "generateMs", afterDiscovery);
-      timeJob(build, stats, "buildMs", afterGeneration);
+      timeJob(generate, stats, "generateMs", afterDiscovery);
       lastState = CYCLE_STATE.IDLE;
     } finally {
       cycleRunning = false;
+    }
+    return lastState;
+  }
+
+  /**
+   * The construction step of one tick, on its own budget.
+   *
+   * It is a separate entry point so the host can drive it without touching the
+   * graph, and so a cycle that generates nothing still builds something.
+   */
+  function buildStep() {
+    if (!builder) return null;
+    const started = nowMs();
+    // The audit first: it is a bounded read of one finished room, and doing it
+    // before the writes keeps a tick that is out of budget from starving it.
+    if (typeof builder.auditRoom === "function") {
+      const audited = builder.auditRoom(manager);
+      if (audited) {
+        stats.verified += 1;
+        if (audited.repaired > 0) stats.repairs += audited.repaired;
+        if (audited.verified === false) stats.verifyFailures += 1;
+      }
+    }
+    if (ownQueues.size(QUEUE.BUILD) > 0) {
+      // Construction and the graph never touch the same state (the builder
+      // writes blocks, the cycle decides openings), so both may run in one tick.
+      timeJob(build, stats, "buildMs", started);
+    } else {
+      stats.buildMs += nowMs() - started;
     }
     return lastState;
   }
@@ -389,6 +437,7 @@ export function createDungeonController(options) {
     stats,
     tick,
     cycle,
+    buildStep,
     upsertPlayer,
     removePlayer,
     playerList,

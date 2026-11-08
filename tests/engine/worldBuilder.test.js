@@ -149,17 +149,37 @@ test("a lost block is detected and repaired once", () => {
   assert.ok(isFloor(entry.expected), `the audit expected ${entry.expected}, which is not a floor block`);
 });
 
-test("a room that stays wrong is reported as failed, not as built", () => {
+test("a room that stays wrong is reported as failed by the audit, not as built", () => {
   const manager = grow(4321, 5);
   const room = manager.allRooms()[1];
-  // A world that refuses every write below the ceiling: the repair cannot work.
+  // A world that refuses every write: the audit finds the room empty, repairs it
+  // once, and still finds it empty.
   const api = fakeApi();
   const refusing = { ...api, setBlock() {} };
   const builder = createWorldBuilder({ api: refusing, batchSize: 100_000, verifyEvery: 1 });
   const result = builder.buildBatch(room);
-  assert.equal(result.done, false, "a room that could not be written was reported as built");
-  assert.equal(result.state, ROOM_BUILD_STATE.FAILED);
+  // The build itself succeeds: it cannot know the writes were dropped.
+  assert.equal(result.done, true);
+  // The audit is what notices, and it is what reports the failure.
+  const audited = builder.auditNext((roomId) => manager.getRoom(roomId));
+  assert.ok(audited, "the finished room was never audited");
+  assert.equal(audited.verified, false, "a room that could not be written passed its audit");
+  assert.equal(builder.stateOf(room.id).state, ROOM_BUILD_STATE.FAILED);
   assert.equal(builder.stateOf(room.id).repairs, 1, "the room was repaired more than once");
+});
+
+test("auditing works one room at a time, and only on finished rooms", () => {
+  const manager = grow(999, 5);
+  const rooms = manager.allRooms();
+  const api = fakeApi();
+  const builder = createWorldBuilder({ api, batchSize: 100_000 });
+  for (const room of rooms) builder.buildBatch(room);
+  let audited = 0;
+  for (let guard = 0; guard < rooms.length + 2; guard += 1) {
+    if (!builder.auditNext((roomId) => manager.getRoom(roomId))) break;
+    audited += 1;
+  }
+  assert.equal(audited, rooms.length, "an audit step handled more or fewer rooms than one");
 });
 
 test("the landing sequence reads, teleports to the middle of the cell, then waits", () => {

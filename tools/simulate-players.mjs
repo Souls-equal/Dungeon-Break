@@ -143,4 +143,5 @@ process.stdout.write(`${JSON.stringify({
   perCycleMs: Number((elapsedMs / Math.max(1, controller.stats.cycles)).toFixed(2)),
   stats: controller.stats,
   cycleTicks: DUNGEON_CONFIG.cycleTicks,
-}, null, 2)}\n`);
+}, null, 2)}
+`);
