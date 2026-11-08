@@ -7,7 +7,7 @@
   "scripts": {
     "build": "node tools/build-world-code.mjs",
     "watch": "node tools/build-world-code.mjs --watch",
-    "check": "node tools/build-world-code.mjs --check && node --check src/worldCode.js && node --check src/utils/scheduler.js && node --check world-code/worldCode.js",
+    "check": "node tools/build-world-code.mjs --check && node --check src/worldCode.js && node --check src/utils/scheduler.js && node --check src/dungeon/generator.js && node --check world-code/worldCode.js",
     "test": "node --test"
   },
   "devDependencies": {

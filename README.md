@@ -1,6 +1,6 @@
 # Dungeon Break — Bloxd.io
 
-Première étape du projet : un lobby de sélection de difficulté avec un compte à rebours individuel par joueur.
+Prototype actuel : lobby de sélection de difficulté, compte à rebours individuel, génération d'un premier labyrinthe et téléportation.
 
 Les règles de travail du projet sont consignées dans [`AGENT_RULES.md`](AGENT_RULES.md).
 
@@ -13,13 +13,13 @@ Les règles de travail du projet sont consignées dans [`AGENT_RULES.md`](AGENT_
 
 ## Sources et version compacte
 
-Le code lisible est dans `src/` : `src/worldCode.js` contient le lobby et `src/utils/scheduler.js` le scheduler piloté par les callbacks `tick` de Bloxd. Le script de build les assemble en un seul fichier compact, `world-code/worldCode.js`, sans imports ni timers JavaScript natifs.
+Le code lisible est dans `src/` : `src/worldCode.js` contient le lobby, `src/utils/scheduler.js` le scheduler piloté par le callback `tick` de Bloxd, et `src/dungeon/generator.js` le générateur procédural. Le script de build les assemble en un seul fichier compact, `world-code/worldCode.js`, sans imports ni timers JavaScript natifs.
 
 - `npm ci` installe le compilateur de build.
 - `npm run build` régénère le fichier compact après les changements.
 - `npm run watch` le régénère automatiquement à chaque sauvegarde dans `src/`.
 - `npm run check` vérifie que la version compacte est à jour et valide les syntaxes.
-- `npm test` lance les tests du scheduler.
+- `npm test` lance les tests du scheduler, de la génération et du flux de téléportation simulé.
 
 Le workflow GitHub vérifie la version générée sur les Pull Requests et resynchronise `world-code/` après les changements fusionnés dans `main`. Modifie toujours `src/`, jamais le fichier généré directement.
 
@@ -38,15 +38,14 @@ Le workflow GitHub vérifie la version générée sur les Pull Requests et resyn
 
 Tous les textes visibles par les joueurs sont en anglais.
 
-## Fonctionnement actuel
+## Génération actuelle du donjon
 
-- La sélection se déclenche quand un joueur entre sur un bloc Concrete reconnu.
-- Chaque joueur a son propre compte à rebours de 10 secondes.
-- Marcher hors du pad pendant le compte à rebours l'annule. Passer directement sur un autre pad remplace la sélection en cours.
-- À la fin du compte à rebours, le script confirme la difficulté choisie.
-- La génération du donjon et la téléportation ne sont pas encore incluses : elles seront ajoutées à l'étape suivante.
+- Après le compte à rebours, un labyrinthe procédural est construit avec des sols et murs en **Stone Bricks**.
+- La taille évolue selon la difficulté : de 4×4 salles en Very Easy à 11×11 en Hell. Un algorithme de parcours aléatoire choisit les passages.
+- Chaque donjon reçoit un emplacement horizontal aléatoire dans les bornes `-50000..50000` en X et Z ; son sol est à `Y = -1000`.
+- Les blocs sont posés par lots sur plusieurs ticks. Une fois la construction terminée, le joueur est téléporté dans la salle de départ ; une ouverture opposée sert de sortie.
 
-Le délai est configurable via `countdownSeconds` en haut de `src/worldCode.js`.
+C'est volontairement une première version : pas encore de mobs, butin, salles spéciales, nettoyage après une partie ni contrôle d'accès au donjon. Le délai est configurable via `countdownSeconds` dans `src/worldCode.js`; dimensions et matériau sont configurés dans `src/dungeon/generator.js`.
 
 ## Documentation Bloxd utilisée
 
