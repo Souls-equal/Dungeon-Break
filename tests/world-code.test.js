@@ -14,6 +14,7 @@ const WALL_BLOCKS = new Set([
 ]);
 
 function createWorld(onlinePlayerIds) {
+  const world = {};
   const messages = [];
   const blocks = [];
   const positions = [];
@@ -30,6 +31,7 @@ function createWorld(onlinePlayerIds) {
       },
       setClientOption: (playerId, option, value) => clientOptions.push({ playerId, option, value }),
       setBlock: (x, y, z, blockName) => {
+        if (world.shouldDropBlock && world.shouldDropBlock(x, y, z)) return;
         blocks.push({ x, y, z, blockName });
         events.push("block");
       },
@@ -39,14 +41,17 @@ function createWorld(onlinePlayerIds) {
         events.push("position");
       },
       getPosition: (playerId) => playerLocations[playerId],
+      getBlock: (x, y, z) => blocks.find((b) => b.x === x && b.y === y && b.z === z)?.blockName ?? "Air",
       getPlayerIds: () => onlinePlayerIds,
       now: () => 1710000000000,
       log: (message) => messages.push({ playerId: null, message }),
     },
   };
   vm.runInNewContext(worldCode, context);
+  world.shouldDropBlock = null;
   return {
     context,
+    world,
     messages,
     blocks,
     positions,
@@ -92,24 +97,33 @@ test("the World Code floors the spawn pad first, then streams floors before wall
 
   const [spawnX, spawnY, spawnZ] = positions[0].position;
   const floorY = spawnY - 1;
-  const keys = new Set(blocks.map(({ x, y, z }) => `${x},${y},${z}`));
-  assert.equal(keys.size, blocks.length, "no block is placed twice");
 
-  const padBlocks = blocks.slice(0, 9).map(({ x, y, z }) => `${x},${y},${z}`).sort();
   const expectedPad = [];
   for (let dx = -1; dx <= 1; dx += 1) {
     for (let dz = -1; dz <= 1; dz += 1) expectedPad.push(`${spawnX - 0.5 + dx},${floorY},${spawnZ - 0.5 + dz}`);
   }
+  const padKeySet = new Set(expectedPad);
+  const padBlocks = blocks.slice(0, 9).map(({ x, y, z }) => `${x},${y},${z}`).sort();
   assert.deepEqual(padBlocks, expectedPad.sort(), "the teleport tile and its neighbours are supported first");
   assert.ok(padBlocks.includes(`${spawnX - 0.5},${floorY},${spawnZ - 0.5}`));
   assert.ok(blocks.slice(0, 9).every(({ blockName }) => blockName === "Stone Bricks"));
+  assert.ok(
+    events.lastIndexOf("block") > events.lastIndexOf("position") - 2 - 9 * 2,
+    "the pad is re-asserted just before the teleport",
+  );
+  const padWrites = blocks.filter(({ x, y, z }) => padKeySet.has(`${x},${y},${z}`));
+  assert.ok(padWrites.length >= 18, "the pad is written again before teleporting, for safety");
+
+  const levelBlocks = blocks.filter(({ x, y, z }) => !padKeySet.has(`${x},${y},${z}`));
+  const levelKeys = new Set(levelBlocks.map(({ x, y, z }) => `${x},${y},${z}`));
+  assert.equal(levelKeys.size, levelBlocks.length, "the level itself is never written twice");
 
   const floors = blocks.filter(({ y }) => y === floorY);
   const walls = blocks.filter(({ y }) => y !== floorY);
   assert.ok(floors.every(({ blockName }) => blockName === "Stone Bricks"));
   assert.ok(floors.length >= 16 * 25, "every 5x5 room interior is floored");
   assert.ok(
-    blocks.slice(0, floors.length).every(({ y }) => y === floorY),
+    blocks.slice(0, walls.length ? blocks.indexOf(walls[0]) : blocks.length).every(({ y }) => y === floorY),
     "every room floor is streamed before the first wall",
   );
   assert.ok(walls.every(({ y }) => y > floorY && y <= floorY + 3), "the dungeon has a single storey");
@@ -254,4 +268,33 @@ test("switching directly between pads keeps the new countdown active", () => {
   assert.ok(messages.some(({ message }) => message.includes("Hell dungeon ready: 121 connected rooms")));
   assert.equal(positions.length, 1);
   assert.equal(messages.some(({ message }) => message.includes("Very Easy dungeon ready")), false);
+});
+
+test("a spawn floor swallowed by an unready chunk is repaired after the teleport", () => {
+  const { context, world, blocks, positions, messages } = createWorld(["player-lost-floor"]);
+
+  // Reproduce the reported bug: the engine silently drops writes aimed at a
+  // chunk that is not ready, until the player is actually teleported into it.
+  let teleported = false;
+  world.shouldDropBlock = (x, y, z) => !teleported && y < 0;
+
+  context.onBlockStandStart("player-lost-floor", 1, 10, 1, "Lime Concrete");
+  for (let tick = 0; tick < 1500 && positions.length === 0; tick += 1) context.tick();
+  assert.equal(positions.length, 1);
+  assert.equal(blocks.length, 0, "the simulated chunk swallowed every write of the build");
+
+  teleported = true;
+  const [spawnX, spawnY, spawnZ] = positions[0].position;
+
+  // The guard must notice the hole and fill it, without a second teleport.
+  for (let tick = 0; tick < 60; tick += 1) context.tick();
+
+  const padBlocks = new Set(
+    blocks
+      .filter(({ x, y, z }) => y === spawnY - 1 && Math.abs(x - (spawnX - 0.5)) <= 1 && Math.abs(z - (spawnZ - 0.5)) <= 1)
+      .map(({ x, z }) => `${x},${z}`),
+  );
+  assert.equal(padBlocks.size, 9, "the whole 3x3 pad is restored under the player");
+  assert.equal(positions.length, 1, "the repair never teleports the player again");
+  assert.ok(!messages.some(({ message }) => message.includes("generation failed")));
 });
