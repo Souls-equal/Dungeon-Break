@@ -17,10 +17,10 @@ test("grid and streamed rooms never place the same block twice", () => {
     const gridBlocks = Array.from(dungeonBlockIterator(plan));
     const gridKeys = roomKeySet(gridBlocks);
 
-    let startZ = plan.endlessFrontier.nextRoomZ;
+    let startZ = plan.frontier.nextRoomZ;
     let streamed = [];
     for (let index = 0; index < 4; index += 1) {
-      const room = createEndlessRoomPlan(index + 1, plan.endlessFrontier.centerX, plan.floorY, startZ);
+      const room = createEndlessRoomPlan(index + 1, plan.frontier.centerX, plan.level.floorY, startZ);
       streamed = streamed.concat(Array.from(endlessRoomBlockIterator(room)));
       startZ = room.endZ + 2;
     }

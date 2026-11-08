@@ -120,8 +120,12 @@ test("the World Code floors the spawn pad first, then streams floors before wall
 
   const floors = blocks.filter(({ y }) => y === floorY);
   const walls = blocks.filter(({ y }) => y !== floorY);
-  assert.ok(floors.every(({ blockName }) => blockName === "Stone Bricks"));
-  assert.ok(floors.length >= 16 * 25, "every 5x5 room interior is floored");
+  const walkableFloors = floors.filter(({ blockName }) => blockName === "Stone Bricks");
+  assert.ok(walkableFloors.length >= 8 * 7 * 7, "every room interior is floored with walkable bricks");
+  assert.ok(
+    floors.every(({ blockName }) => blockName === "Stone Bricks" || WALL_BLOCKS.has(blockName)),
+    "the floor layer is either room floor or solid rock",
+  );
   assert.ok(
     blocks.slice(0, walls.length ? blocks.indexOf(walls[0]) : blocks.length).every(({ y }) => y === floorY),
     "every room floor is streamed before the first wall",
@@ -131,7 +135,9 @@ test("the World Code floors the spawn pad first, then streams floors before wall
   assert.ok(wallMaterials.size > 1, "wall blocks are textured individually with randomized materials");
   assert.ok(walls.every(({ blockName }) => WALL_BLOCKS.has(blockName)));
 
-  assert.ok(messages.some(({ message }) => message.includes("Very Easy dungeon ready: 16 connected rooms")));
+  assert.ok(messages.some(({ message }) => /Very Easy dungeon ready: \d+ rooms \(/.test(message)));
+  assert.ok(messages.some(({ message }) => message.includes("four-way") && message.includes("dead ends")));
+  assert.ok(messages.some(({ message }) => message.includes("stairs")));
   assert.ok(messages.some(({ message }) => message.includes("Keep advancing to generate more rooms")));
   context.onBlockStandStop("player-1", 2, 10, 3, "Lime Concrete");
   assert.equal(messages.some(({ message }) => message.includes("Countdown cancelled")), false);
@@ -184,61 +190,82 @@ test("a stale pad-stop in the final countdown tick does not cancel dungeon gener
   assert.equal(positions.length, 1);
 });
 
-test("advancing toward the exit streams new rooms without teleporting again", () => {
-  const { context, messages, blocks, positions, movePlayer } = createWorld(["player-4"]);
+test("advancing toward the exit streams new rooms that stay walkable", () => {
+  const { context, messages, blocks, positions, movePlayer } = createWorld(["player-8"]);
 
-  context.onBlockStandStart("player-4", 3, 10, 4, "Lime Concrete");
-  for (let tick = 0; tick < 1500 && positions.length === 0; tick += 1) context.tick();
+  context.onBlockStandStart("player-8", 3, 10, 4, "Lime Concrete");
+  for (let tick = 0; tick < 4000 && positions.length === 0; tick += 1) context.tick();
   assert.equal(positions.length, 1);
 
-  const initialBlockCount = blocks.length;
-  const currentPosition = positions[0].position;
-  const floorY = currentPosition[1] - 1;
-  const initialFloors = blocks.filter(({ y }) => y === floorY);
-  const corridorZ = Math.max(...initialFloors.map(({ z }) => z));
-  const corridorX = initialFloors.filter(({ z }) => z === corridorZ).map(({ x }) => x).sort((a, b) => a - b);
-  assert.deepEqual(corridorX, [corridorX[0], corridorX[0] + 1, corridorX[0] + 2], "the corridor is 3 wide");
-  const centerX = corridorX[1];
-  const gridWallsAtCorridor = blocks.filter(({ y, z }) => y === floorY + 1 && z === corridorZ - 1);
-  assert.equal(gridWallsAtCorridor.length > 0, true, "the grid exit room is walled");
+  const spawnPosition = positions[0].position;
+  const floorY = spawnPosition[1] - 1;
+  const walkable = (levelY) => {
+    const floor = new Set();
+    const walls = new Set();
+    for (const { x, y, z, blockName } of blocks) {
+      const key = `${x},${z}`;
+      const isFloor = y === levelY;
+      if (isFloor && blockName === "Stone Bricks") floor.add(key);
+      else if (!isFloor) walls.add(key);
+    }
+    const reachable = new Set();
+    const start = `${Math.floor(spawnPosition[0])},${Math.floor(spawnPosition[2])}`;
+    if (!floor.has(start)) return { reachable, deepest: null };
+    const stack = [start];
+    reachable.add(start);
+    let deepest = Number(start.split(",")[1]);
+    while (stack.length > 0) {
+      const key = stack.pop();
+      const [x, z] = key.split(",").map(Number);
+      deepest = Math.max(deepest, z);
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const next = `${x + dx},${z + dz}`;
+        if (reachable.has(next) || !floor.has(next) || walls.has(next)) continue;
+        reachable.add(next);
+        stack.push(next);
+      }
+    }
+    return { reachable, deepest };
+  };
+
+  const before = walkable(floorY);
+  const spawnTile = `${Math.floor(spawnPosition[0])},${Math.floor(spawnPosition[2])}`;
+  const floorBricks = blocks.filter(({ y, blockName }) => y === floorY && blockName === "Stone Bricks");
   assert.ok(
-    !gridWallsAtCorridor.some(({ x }) => Math.abs(x - centerX) <= 1),
-    "the exit room opens a door onto the corridor",
-  );
-  assert.ok(
-    [centerX - 1, centerX, centerX + 1].every((x) => initialFloors.some(
-      (floor) => floor.x === x && floor.z === corridorZ,
-    )),
-    "the grid exit already owns its 3-wide corridor",
+    before.reachable.size > 100,
+    `the level is walkable from the spawn (reached ${before.reachable.size}, spawn ${spawnTile}, `
+      + `floor bricks ${floorBricks.length}, teleport y ${spawnPosition[1]})`,
   );
 
-  movePlayer("player-4", [currentPosition[0], currentPosition[1], corridorZ + 40]);
-  for (let tick = 0; tick < 30 && blocks.length === initialBlockCount; tick += 1) context.tick();
+  const initialBlockCount = blocks.length;
+  movePlayer("player-8", [spawnPosition[0], spawnPosition[1], before.deepest + 20]);
+  for (let tick = 0; tick < 40 && blocks.length === initialBlockCount; tick += 1) context.tick();
   assert.ok(blocks.length > initialBlockCount, "a new room is added ahead of the player's position");
   assert.equal(positions.length, 1, "streaming rooms does not reset the player's position");
 
-  const streamed = blocks.slice(initialBlockCount);
-  const streamedFloors = streamed.filter(({ y }) => y === floorY);
-  const streamedMinZ = Math.min(...streamedFloors.map(({ z }) => z));
-  assert.equal(streamedMinZ, corridorZ + 1, "the streamed room starts right behind the shared door");
-  for (let offset = -1; offset <= 1; offset += 1) {
-    assert.ok(
-      streamedFloors.some(({ x, z }) => x === centerX + offset && z === streamedMinZ),
-      "the new room opens a 3-wide door facing the previous room",
-    );
-    assert.ok(
-      !streamed.some(({ x, y, z }) => x === centerX + offset && y === floorY + 1 && z === streamedMinZ),
-      "the door lane is left free of walls",
-    );
-  }
+  // Let the buffer fill, then walk the whole route again: the streamed rooms
+  // must be reachable from the spawn, without a wall in a doorway.
+  for (let tick = 0; tick < 200; tick += 1) context.tick();
+  const after = walkable(floorY);
+  assert.ok(
+    after.deepest > before.deepest,
+    `the streamed rooms extend the route further than the static level `
+      + `(before ${before.deepest}, after ${after.deepest}, streamed ${blocks.length - initialBlockCount})`,
+  );
+  assert.ok(after.reachable.size > before.reachable.size, "the new rooms are reachable on foot");
+  const streamedFloors = blocks
+    .slice(initialBlockCount)
+    .filter(({ y, blockName }) => y === floorY && blockName === "Stone Bricks");
+  assert.ok(streamedFloors.length > 0, "the streamed rooms bring their own floor");
+
   assert.ok(messages.some(({ message }) => message.includes("Keep advancing to generate more rooms")));
   assert.ok(blocks.every(({ blockName }) => blockName === "Stone Bricks" || WALL_BLOCKS.has(blockName)));
-  assert.ok(blocks.some(({ blockName }) => blockName !== "Stone Bricks"), "streamed room walls use per-block stone textures");
+  assert.ok(blocks.some(({ blockName }) => blockName !== "Stone Bricks"), "streamed walls use stone textures");
 
-  context.onPlayerLeave("player-4");
+  context.onPlayerLeave("player-8");
   const finalBlockCount = blocks.length;
-  movePlayer("player-4", [currentPosition[0], currentPosition[1], currentPosition[2] + 1000]);
-  for (let tick = 0; tick < 30; tick += 1) context.tick();
+  movePlayer("player-8", [spawnPosition[0], spawnPosition[1], after.deepest + 1000]);
+  for (let tick = 0; tick < 40; tick += 1) context.tick();
   assert.equal(blocks.length, finalBlockCount, "the player's streaming timer stops when they leave");
 });
 
@@ -265,7 +292,7 @@ test("switching directly between pads keeps the new countdown active", () => {
   assert.equal(clientOptions.at(-1).value, "Hell — starting in 10...");
   for (let tick = 0; tick < 2000 && positions.length === 0; tick += 1) context.tick();
 
-  assert.ok(messages.some(({ message }) => message.includes("Hell dungeon ready: 121 connected rooms")));
+  assert.ok(messages.some(({ message }) => /Hell dungeon ready: \d+ rooms \(/.test(message)));
   assert.equal(positions.length, 1);
   assert.equal(messages.some(({ message }) => message.includes("Very Easy dungeon ready")), false);
 });
