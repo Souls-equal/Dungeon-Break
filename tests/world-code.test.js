@@ -76,7 +76,7 @@ test("the World Code builds with setBlock and lays the spawn floor before telepo
 
   context.tick();
   assert.equal(clientOptions.at(-1).value, "", "the middle-screen countdown is cleared on completion");
-  assert.equal(blocks.length, 0, "generation is scheduled after the countdown callback");
+  assert.equal(blocks.length, 1, "the safety block is placed immediately in the countdown callback");
   assert.equal(positions.length, 0);
 
   let maxBlocksPlacedPerTick = 0;
@@ -90,18 +90,29 @@ test("the World Code builds with setBlock and lays the spawn floor before telepo
   assert.equal(positions.length, 1);
   assert.equal(positions[0].playerId, "player-1");
   const [spawnX, spawnY, spawnZ] = positions[0].position;
-  assert.deepEqual([blocks[0].x, blocks[0].y, blocks[0].z], [spawnX - 2.5, spawnY - 1, spawnZ - 2.5]);
-  assert.equal(blocks[0].blockName, "Stone Bricks", "the safety floor is the first block placed");
-  assert.ok(blocks.some(({ x, y, z }) => x === spawnX - 0.5 && y === spawnY - 1 && z === spawnZ - 0.5));
+  assert.deepEqual([blocks[0].x, blocks[0].y, blocks[0].z], [spawnX - 0.5, spawnY - 1, spawnZ - 0.5]);
+  assert.equal(blocks[0].blockName, "Stone Bricks", "the exact teleport tile is supported first");
   assert.ok(blocks.every(({ blockName }) => blockName === "Stone Bricks" || WALL_BLOCKS.has(blockName)));
-  assert.ok(blocks.filter(({ y }) => y === -1000).every(({ blockName }) => blockName === "Stone Bricks"));
+
+  const firstWallIndex = blocks.findIndex(({ y }) => y > -1000);
+  assert.ok(firstWallIndex > 1);
+  const initialFloors = blocks.slice(0, firstWallIndex);
+  assert.ok(initialFloors.every(({ y, blockName }) => y === -1000 && blockName === "Stone Bricks"));
+  assert.equal(initialFloors.length, 25 * 29, "the complete flat floor is placed before any room walls");
+  assert.equal(
+    new Set(initialFloors.map(({ x, y, z }) => `${x},${y},${z}`)).size,
+    initialFloors.length,
+    "the direct safety block is not duplicated during the remaining floor build",
+  );
+  assert.ok(blocks.slice(firstWallIndex).every(({ y }) => y > -1000 && y <= -997));
+  assert.ok(blocks.every(({ y }) => y >= -1000 && y <= -997), "the dungeon has no second storey");
 
   const wallMaterials = new Set(
     blocks.filter(({ y, blockName }) => y > -1000 && WALL_BLOCKS.has(blockName))
       .map(({ blockName }) => blockName),
   );
   assert.ok(wallMaterials.size > 1, "wall blocks are textured individually with randomized materials");
-  assert.ok(messages.some(({ message }) => message.includes("Very Easy dungeon ready: 2 floors")));
+  assert.ok(messages.some(({ message }) => message.includes("Very Easy dungeon ready: 16 connected rooms")));
   assert.ok(messages.some(({ message }) => message.includes("Keep advancing to generate more rooms")));
   context.onBlockStandStop("player-1", 2, 10, 3, "Lime Concrete");
   assert.equal(messages.some(({ message }) => message.includes("Countdown cancelled")), false);
@@ -132,7 +143,7 @@ test("moving between same-difficulty Concrete pads preserves the active countdow
   assert.equal(clientOptions.at(-1).value, "Very Easy — starting in 8...", "switching pads does not reset the timer");
 
   for (let tick = 0; tick < 160; tick += 1) context.tick();
-  assert.ok(messages.some(({ message }) => message.includes("Building a Very Easy dungeon")));
+  assert.ok(messages.some(({ message }) => message.includes("Building a Very Easy single-level dungeon")));
   assert.equal(messages.some(({ message }) => message.includes("Countdown cancelled")), false);
 
   for (let tick = 0; tick < 1500 && positions.length === 0; tick += 1) context.tick();
@@ -148,7 +159,7 @@ test("a stale pad-stop in the final countdown tick does not cancel dungeon gener
   context.tick();
   context.tick();
 
-  assert.ok(messages.some(({ message }) => message.includes("Building a Very Easy dungeon")));
+  assert.ok(messages.some(({ message }) => message.includes("Building a Very Easy single-level dungeon")));
   assert.equal(messages.some(({ message }) => message.includes("Countdown cancelled")), false);
   for (let tick = 0; tick < 1500 && positions.length === 0; tick += 1) context.tick();
   assert.equal(positions.length, 1);
@@ -202,7 +213,7 @@ test("switching directly between pads keeps the new countdown active", () => {
   assert.equal(clientOptions.at(-1).value, "Hell — starting in 10...");
   for (let tick = 0; tick < 2000 && positions.length === 0; tick += 1) context.tick();
 
-  assert.ok(messages.some(({ message }) => message.includes("Hell dungeon ready: 5 floors")));
+  assert.ok(messages.some(({ message }) => message.includes("Hell dungeon ready: 121 connected rooms")));
   assert.equal(positions.length, 1);
   assert.equal(messages.some(({ message }) => message.includes("Very Easy dungeon ready")), false);
 });

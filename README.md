@@ -1,6 +1,6 @@
 # Dungeon Break — Bloxd.io
 
-Prototype actuel : lobby de sélection de difficulté, compte à rebours individuel, génération procédurale de donjons multi-niveaux et téléportation.
+Prototype actuel : lobby de sélection de difficulté, compte à rebours individuel, génération procédurale de donjons à un seul niveau et téléportation.
 
 Les règles de travail du projet sont consignées dans [`AGENT_RULES.md`](AGENT_RULES.md).
 
@@ -40,14 +40,13 @@ Tous les textes visibles par les joueurs sont en anglais.
 
 ## Génération actuelle du donjon
 
-- Après le compte à rebours, les sols et escaliers sont construits en **Stone Bricks**. Chaque bloc mural choisit individuellement un matériau parmi **Stone**, **Messy Stone**, **Smooth Stone**, **Stone Bricks**, **Cracked Stone Bricks** et **Mossy Stone Bricks**. La première opération pose un sol 5×5 sous la position d'arrivée; le joueur n'est téléporté qu'après la construction complète. Tous les blocs sont posés avec `api.setBlock(x, y, z, blockName)`, à raison de 120 blocs maximum par tick.
-- La taille évolue de 4×4 salles en Very Easy à 11×11 en Hell. Les difficultés prévoient respectivement 2 niveaux (Very Easy/Easy), 3 (Medium/Normal/Hard), 4 (Insane/Ultra Insane) ou 5 (Hell), avec des labyrinthes distincts à chaque niveau.
-- Les salles de 5×5 blocs varient : espaces ouverts, piliers simples ou doubles, et alcôves. Dans chaque niveau, les passages sont parfois étroits (3 blocs), parfois ouverts sur toute la largeur.
-- Une cage d'escalier en spirale, faite de blocs pleins Stone Bricks, relie les étages à travers un puits de 3×3 blocs. L'entrée se trouve au niveau inférieur, la sortie au niveau supérieur, et de petites plateformes Stone Bricks prolongent ces ouvertures.
-- Après la sortie supérieure, des salles modulaires 7×7 ou 9×9 sont ajoutées par lots à mesure que le joueur avance. La position est vérifiée toutes les 10 ticks et la prochaine salle commence à se construire lorsque le joueur approche à 18 blocs de la limite générée.
-- Chaque donjon reçoit un emplacement horizontal aléatoire dans les bornes `-50000..50000` en X et Z ; le premier sol est à `Y = -1000`, avec 8 blocs d'écart vertical entre niveaux. La génération continue jusqu'à la limite de coordonnées configurée, le monde n'étant pas mathématiquement infini.
+- Le donjon reste sur **un seul niveau**. Au déclenchement, un bloc **Stone Bricks** est posé immédiatement sous la future position de téléportation; le reste du sol continu est ensuite construit, puis les murs et les décors des salles. La téléportation ne se produit qu'une fois toute cette construction terminée.
+- La difficulté règle la grille de 4×4 salles en Very Easy à 11×11 en Hell. Les salles sont des modules de plusieurs formes — ouvertes, piliers, alcôves et variantes — qui s'assemblent comme des pièces de puzzle. Leurs portes centrées de 3 blocs s'alignent pour connecter le labyrinthe; chaque connexion reste traversable.
+- Chaque bloc mural choisit individuellement un matériau parmi **Stone**, **Messy Stone**, **Smooth Stone**, **Stone Bricks**, **Cracked Stone Bricks** et **Mossy Stone Bricks**. Tous les blocs sont posés avec `api.setBlock(x, y, z, blockName)`, à raison de 120 blocs maximum par tick.
+- Après la sortie, des salles modulaires 7×7 ou 9×9 sont ajoutées par lots à mesure que le joueur avance, toujours sur le même niveau. La position est vérifiée toutes les 10 ticks et la prochaine salle commence à se construire lorsque le joueur approche à 18 blocs de la limite générée.
+- Chaque donjon reçoit un emplacement horizontal aléatoire dans les bornes `-50000..50000` en X et Z; le sol est à `Y = -1000`. La génération continue jusqu'à la limite de coordonnées configurée, le monde n'étant pas mathématiquement infini.
 
-C'est volontairement une première version : pas encore de mobs, butin, nettoyage après une partie ni contrôle d'accès au donjon. Le délai est configurable via `countdownSeconds` dans `src/worldCode.js`; dimensions, niveaux et matériaux sont configurés dans `src/dungeon/generator.js`.
+C'est volontairement une première version : pas encore de mobs, butin, nettoyage après une partie ni contrôle d'accès au donjon. Le délai est configurable via `countdownSeconds` dans `src/worldCode.js`; dimensions des salles, modules et matériaux sont configurés dans `src/dungeon/generator.js`.
 
 ## Documentation Bloxd utilisée
 
