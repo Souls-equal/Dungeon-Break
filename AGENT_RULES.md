@@ -62,3 +62,4 @@ Ce document rassemble les préférences de travail demandées par le propriétai
 - Comprendre les interactions avant de modifier les systèmes existants et privilégier les fonctions utilitaires déjà présentes.
 - Ne jamais remplacer une API indisponible par une fonction fictive.
 - En cas de doute sur une mécanique du jeu qui ne peut pas être levé par la documentation, demander au propriétaire avant de l'implémenter.
+- Dans ce dépôt, modifier `src/`, jamais le bundle généré `world-code/`. Régénérer avec `npm run build` (ou laisser `npm run watch` actif) et vérifier avec `npm run check` et `npm test`.

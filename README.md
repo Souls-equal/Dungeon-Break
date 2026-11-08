@@ -8,10 +8,20 @@ Les règles de travail du projet sont consignées dans [`AGENT_RULES.md`](AGENT_
 
 1. Dans ton monde Bloxd, construis les pads de difficulté avec les blocs **Concrete** listés ci-dessous. Le joueur doit pouvoir marcher directement sur leur surface.
 2. Ouvre le **World Code** (touche `F8` par défaut).
-3. Copie-colle le contenu complet de [`src/worldCode.js`](src/worldCode.js) dans le World Code, puis sauvegarde.
+3. Copie-colle le contenu de [`world-code/worldCode.js`](world-code/worldCode.js) dans le World Code, puis sauvegarde. Ce fichier est le bundle compacté, prêt à coller.
 4. Entre dans le monde et marche sur un pad pour tester. Quitter le pad annule le compte à rebours.
 
-Le script est autonome : il ne nécessite ni module, ni compilation. Le dossier `src/` contient le code à recopier dans Bloxd, avec les mêmes chemins que dans ce dépôt.
+## Sources et version compacte
+
+Le code lisible est dans `src/` : `src/worldCode.js` contient le lobby et `src/utils/scheduler.js` le scheduler piloté par les callbacks `tick` de Bloxd. Le script de build les assemble en un seul fichier compact, `world-code/worldCode.js`, sans imports ni timers JavaScript natifs.
+
+- `npm ci` installe le compilateur de build.
+- `npm run build` régénère le fichier compact après les changements.
+- `npm run watch` le régénère automatiquement à chaque sauvegarde dans `src/`.
+- `npm run check` vérifie que la version compacte est à jour et valide les syntaxes.
+- `npm test` lance les tests du scheduler.
+
+Le workflow GitHub vérifie la version générée sur les Pull Requests et resynchronise `world-code/` après les changements fusionnés dans `main`. Modifie toujours `src/`, jamais le fichier généré directement.
 
 ## Pads de difficulté
 
