@@ -7,7 +7,7 @@ test("maze plans stay within the configured horizontal world range", () => {
   const [spawnX, spawnY, spawnZ] = plan.spawnPosition;
 
   assert.equal(plan.cellCount, 7);
-  assert.equal(plan.width, 29);
+  assert.equal(plan.width, 43);
   assert.equal(plan.passageCount, plan.cellCount * plan.cellCount - 1);
   assert.ok(plan.originX >= -50000);
   assert.ok(plan.originZ >= -50000);
@@ -25,8 +25,11 @@ test("difficulty changes maze size and the seed changes the layout", () => {
   const hellB = createDungeonPlan(87654322, "Hell");
 
   assert.equal(easy.cellCount, 4);
+  assert.equal(easy.width, 25);
   assert.equal(hellA.cellCount, 11);
+  assert.equal(hellA.width, 67);
   assert.equal(hellA.passageCount, 11 * 11 - 1);
+  assert.ok(hellA.pillarCount > 0 && hellA.pillarCount < 11 * 11 - 2);
 
   const localWalls = (plan) => plan.walls.map((wall) => [
     wall.from[0] - plan.originX,
