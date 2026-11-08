@@ -4,6 +4,8 @@ Prototype actuel : lobby de sélection de difficulté, compte à rebours individ
 
 Les règles de travail du projet sont consignées dans [`AGENT_RULES.md`](AGENT_RULES.md).
 
+> **Chantier en cours.** Le moteur de donjon par ouvertures est conçu mais pas encore implémenté : l'architecture complète, les limites d'API vérifiées et le plan de tests sont dans [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Il attend la validation des décisions listées en §20 avant le début de la Phase 1.
+
 ## Installer le lobby dans Bloxd
 
 1. Dans ton monde Bloxd, construis les pads de difficulté avec les blocs **Concrete** listés ci-dessous. Le joueur doit pouvoir marcher directement sur leur surface.
