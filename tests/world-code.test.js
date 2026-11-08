@@ -9,23 +9,30 @@ function createWorld(onlinePlayerIds) {
   const messages = [];
   const blockRects = [];
   const positions = [];
+  const events = [];
   const context = {
     api: {
       sendMessage: (playerId, message) => messages.push({ playerId, message }),
       sendTopRightHelper: (playerId, icon, message) => messages.push({ playerId, icon, message }),
-      setBlockRect: (from, to, blockName) => blockRects.push({ from, to, blockName }),
-      setPosition: (playerId, position) => positions.push({ playerId, position }),
+      setBlockRect: (from, to, blockName) => {
+        blockRects.push({ from, to, blockName });
+        events.push("block");
+      },
+      setPosition: (playerId, position) => {
+        positions.push({ playerId, position });
+        events.push("position");
+      },
       getPlayerIds: () => onlinePlayerIds,
       now: () => 1710000000000,
       log: (message) => messages.push({ playerId: null, message }),
     },
   };
   vm.runInNewContext(worldCode, context);
-  return { context, messages, blockRects, positions };
+  return { context, messages, blockRects, positions, events };
 }
 
-test("the generated World Code builds the dungeon before teleporting the player", () => {
-  const { context, messages, blockRects, positions } = createWorld(["player-1"]);
+test("the generated World Code builds every floor in batches before teleporting the player", () => {
+  const { context, messages, blockRects, positions, events } = createWorld(["player-1"]);
 
   context.onBlockStandStart("player-1", 2, 10, 3, "Lime Concrete");
   assert.ok(messages.some(({ message }) => message.includes("Very Easy")));
@@ -35,15 +42,18 @@ test("the generated World Code builds the dungeon before teleporting the player"
   assert.equal(positions.length, 0);
 
   context.tick();
-  assert.equal(blockRects[0].blockName, "Stone Bricks", "the floor is laid when the countdown finishes");
-  assert.equal(positions.length, 0, "the player waits until all walls are built");
+  assert.equal(blockRects.length, 0, "generation is scheduled after the countdown callback");
+  assert.equal(positions.length, 0);
 
-  for (let tick = 0; tick < 20; tick += 1) context.tick();
-  assert.ok(blockRects.length > 10, "the maze walls are generated in batches");
+  for (let tick = 0; tick < 1000 && positions.length === 0; tick += 1) context.tick();
+  assert.ok(blockRects.length > 10, "the dungeon is generated in bounded batches");
+  assert.ok(blockRects.some(({ from, to }) => from[1] === -1000 && to[1] === -1000));
+  assert.ok(blockRects.some(({ from, to }) => from[1] === -992 && to[1] === -992), "an upper floor is built");
   assert.equal(positions.length, 1);
   assert.equal(positions[0].playerId, "player-1");
-  assert.ok(messages.some(({ message }) => message.includes("Very Easy maze ready")));
+  assert.ok(messages.some(({ message }) => message.includes("Very Easy dungeon ready: 2 floors")));
   assert.ok(blockRects.every(({ blockName }) => blockName === "Stone Bricks"));
+  assert.equal(events.at(-1), "position", "teleport happens after all block placement calls");
 });
 
 test("leaving the selected pad cancels its countdown", () => {
@@ -65,9 +75,9 @@ test("switching directly between pads keeps the new countdown active", () => {
   context.onBlockStandStart("player-3", 1, 0, 0, "Black Concrete");
   // Bloxd fires the new start before the old pad's stop callback.
   context.onBlockStandStop("player-3", 0, 0, 0, "Lime Concrete");
-  for (let tick = 0; tick < 250; tick += 1) context.tick();
+  for (let tick = 0; tick < 1500 && positions.length === 0; tick += 1) context.tick();
 
-  assert.ok(messages.some(({ message }) => message.includes("Hell maze ready")));
+  assert.ok(messages.some(({ message }) => message.includes("Hell dungeon ready: 5 floors")));
   assert.equal(positions.length, 1);
-  assert.equal(messages.some(({ message }) => message.includes("Very Easy maze ready")), false);
+  assert.equal(messages.some(({ message }) => message.includes("Very Easy dungeon ready")), false);
 });
