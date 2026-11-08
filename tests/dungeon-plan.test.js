@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createDungeonPlan } from "../src/dungeon/generator.js";
+import { createDungeonPlan, createEndlessRoomPlan } from "../src/dungeon/generator.js";
 
 function normalizeWalls(plan, floor) {
   return floor.walls.map((wall) => [
@@ -43,6 +43,8 @@ test("multi-floor plans stay in range and carve each stairwell out of the floor"
       assert.ok(rect.to[0] <= 50000 && rect.to[2] <= 50000);
     }
   }
+  assert.ok(plan.endlessFrontier.z > plan.originZ + plan.width - 1);
+
   assert.equal(spawnY, plan.floorY + 1);
   assert.ok(spawnX > plan.originX && spawnX < plan.originX + plan.width - 1);
   assert.ok(spawnZ > plan.originZ && spawnZ < plan.originZ + plan.width - 1);
@@ -121,4 +123,24 @@ test("levels include varied rooms and passages, and seeds change the generated l
   );
   assert.notDeepEqual(normalizeWalls(planA, planA.floors[0]), normalizeWalls(planB, planB.floors[0]));
   assert.notDeepEqual(normalizeWalls(planA, planA.floors[0]), normalizeWalls(planA, planA.floors[1]));
+});
+
+test("endless room modules join door-to-door and close cleanly at the boundary", () => {
+  const first = createEndlessRoomPlan(2468, 12, -984, 100, true);
+  const second = createEndlessRoomPlan(3579, 12, -984, first.endZ + 1, true);
+  const last = createEndlessRoomPlan(4680, 12, -984, second.endZ + 1, false);
+  const boundary = createEndlessRoomPlan(5791, 12, -984, 49994, false, 50000);
+
+  assert.ok([7, 9].includes(first.roomWidth));
+  assert.ok([7, 9].includes(first.roomDepth));
+  assert.equal(second.startZ, first.endZ + 1);
+  assert.equal(last.startZ, second.endZ + 1);
+  assert.equal(boundary.endZ, 50000);
+  assert.equal(boundary.roomDepth, 7, "room depth shrinks when needed to stay within world bounds");
+  assert.ok(first.operations.length >= 5);
+  assert.ok(last.operations.some((rect) => (
+    rect.from[1] === -983 && rect.to[1] === -981
+      && rect.from[2] === last.endZ && rect.to[2] === last.endZ
+      && rect.from[0] <= 12 && rect.to[0] >= 12
+  )), "the terminal room closes its south doorway instead of opening into the void");
 });
