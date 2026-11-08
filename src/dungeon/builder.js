@@ -25,16 +25,64 @@
  */
 
 import { DUNGEON_CONFIG } from "./engine/config.js";
+import { hashParts } from "./engine/random.js";
+
+/**
+ * The stone palette.
+ *
+ * Every structural block is drawn from this list, one block at a time: the shell
+ * must read as rough-cut stone, not as a flat grey box. The list is the whole
+ * vocabulary of the dungeon — a block that is not here is not a wall.
+ */
+export const STONE_PALETTE = [
+  "Stone",
+  "Messy Stone",
+  "Smooth Stone",
+  "Stone Bricks",
+  "Cracked Stone Bricks",
+  "Mossy Stone Bricks",
+];
 
 /** Block names used by the builder, in one place so tests can assert on them. */
 export const BLOCKS = {
+  // `FLOOR` and `WALL` name the *category*; the exact block comes from the
+  // palette below, cell by cell. `PALETTE` is the list a test can compare to.
   FLOOR: "Stone Bricks",
   WALL: "Stone",
   WALL_TRIM: "Stone Bricks",
   CEILING: "Stone",
   EMPTY: "Air",
   PAD: "Gold Block",
+  /** The full stone family, wall and ceiling included. */
+  PALETTE: STONE_PALETTE,
+  /** The blocks a floor cell may carry. */
+  FLOOR_POOL: ["Stone Bricks", "Cracked Stone Bricks"],
 };
+
+/**
+ * The block of one structural cell, chosen from the palette.
+ *
+ * The choice depends only on the room seed and the cell, never on the write
+ * order: an interrupted build that is resumed must produce the same wall as an
+ * uninterrupted one, and a room rebuilt from its seed must look identical. That
+ * is the whole reason this is a hash and not a call to a random generator.
+ *
+ * Floors stay in the brick family (they are the surface the player reads) and the
+ * ceiling stays Smooth Stone, so the variety is on the walls where it is seen.
+ */
+export function texturedBlock(room, localX, level, localZ, family) {
+  const pools = {
+    floor: BLOCKS.FLOOR_POOL,
+    ceiling: ["Smooth Stone"],
+    wall: STONE_PALETTE,
+  };
+  const pool = pools[family] || STONE_PALETTE;
+  const seed = typeof room.seed === "number" ? room.seed : 0;
+  // The level is part of the key: two cells stacked above each other must not
+  // repeat the same block, or a wall reads as vertical stripes.
+  const pick = hashParts("texture", seed, room.id, localX, level, localZ, family) % pool.length;
+  return pool[pick];
+}
 
 /** Construction phases, in the order they are written. */
 export const BUILD_PHASE = {
@@ -86,7 +134,7 @@ export function roomBlocks(room, world, options = {}) {
         x: world.x + localX,
         y: floorY,
         z: world.z + localY,
-        name: BLOCKS.FLOOR,
+        name: texturedBlock(room, localX, 0, localY, "floor"),
         phase: BUILD_PHASE.FLOOR,
       });
     }
@@ -109,7 +157,9 @@ export function roomBlocks(room, world, options = {}) {
           x: world.x + localX,
           y: floorY + level,
           z: world.z + localY,
-          name: level === wallHeight ? BLOCKS.WALL_TRIM : BLOCKS.WALL,
+          // Walls, lintel included, come from the full palette: one block at a
+          // time, chosen from the cell, never from the write order.
+          name: texturedBlock(room, localX, level, localY, "wall"),
           phase: BUILD_PHASE.WALL,
         });
       }
@@ -126,7 +176,7 @@ export function roomBlocks(room, world, options = {}) {
         x: world.x + localX,
         y: floorY + wallHeight + 1,
         z: world.z + localY,
-        name: BLOCKS.CEILING,
+        name: texturedBlock(room, localX, wallHeight + 1, localY, "ceiling"),
         phase: BUILD_PHASE.CEILING,
       });
     }

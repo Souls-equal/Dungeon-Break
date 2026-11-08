@@ -260,18 +260,33 @@ export function createWorldBuilder(options) {
   /**
    * Protects a room's shell so it cannot be broken.
    *
-   * `setCantChangeBlockRect` is used rather than the per-block call: the
+   * The rectangle variant is used rather than the per-block call: the
    * documentation warns that protecting thousands of blocks one by one lags the
-   * world, and the rectangle variant exists precisely for that case.
+   * world, and this variant exists precisely for that case.
+   *
+   * The call is made with **two position arrays and nothing else**, the shape
+   * `setBlockRect` takes. The documented signature of the `CantChange` variant
+   * also carries a leading `playerId`, which is not passed here: a protection
+   * that is global is the intent (a dungeon wall is unbreakable for everybody),
+   * and a mis-shaped call must not silently protect nothing — hence the return
+   * value, which the service checks and logs once.
    */
   function protectRoom(room) {
-    if (typeof world.setCantChangeBlockRect !== "function") return false;
-    const x1 = room.origin.x;
-    const z1 = room.origin.y;
-    const x2 = room.origin.x + room.mask.w - 1;
-    const z2 = room.origin.y + room.mask.h - 1;
-    world.setCantChangeBlockRect(x1, floorY, z1, x2, floorY + DUNGEON_CONFIG.wallHeight + 1, z2);
-    return true;
+    const protect = world.setCantChangeBlockRect;
+    if (typeof protect !== "function") return false;
+    const from = [room.origin.x, floorY, room.origin.y];
+    const to = [
+      room.origin.x + room.mask.w - 1,
+      floorY + DUNGEON_CONFIG.wallHeight + 1,
+      room.origin.y + room.mask.h - 1,
+    ];
+    try {
+      protect.call(world, from, to);
+      return true;
+    } catch (error) {
+      log(`could not protect room ${room.id}: ${error && error.message}`);
+      return false;
+    }
   }
 
   function forget(roomId) {

@@ -4,7 +4,11 @@ import assert from "node:assert/strict";
 import { DUNGEON_CONFIG } from "../../src/dungeon/engine/config.js";
 import { createDungeonManager } from "../../src/dungeon/engine/dungeonManager.js";
 import { OPENING_STATUS } from "../../src/dungeon/engine/openings.js";
-import { BLOCKS, roomBlocks } from "../../src/dungeon/builder.js";
+import { BLOCKS, STONE_PALETTE, roomBlocks } from "../../src/dungeon/builder.js";
+
+/** True when the name belongs to the stone family the builder is allowed to use. */
+const isStructural = (name) => STONE_PALETTE.includes(name);
+const isFloor = (name) => BLOCKS.FLOOR_POOL.includes(name);
 import { ROOM_BUILD_STATE, createWorldBuilder } from "../../src/dungeon/worldBuilder.js";
 
 function grow(seed, targetRooms) {
@@ -109,7 +113,8 @@ test("a finished room is built exactly once, even if the batch is called again",
   assert.equal(first.done, true);
   // The floor cell must be the floor block, not something a second pass wrote.
   const floor = roomBlocks(room, worldOf(room)).find((block) => block.phase === "floor");
-  assert.equal(api.cells.get(`${floor.x},${floor.y},${floor.z}`), BLOCKS.FLOOR);
+  assert.ok(isFloor(api.cells.get(`${floor.x},${floor.y},${floor.z}`)),
+    "the floor cell is not a floor block");
 
   const second = builder.buildBatch(room);
   assert.equal(second.done, true);
@@ -138,7 +143,10 @@ test("a lost block is detected and repaired once", () => {
   // built, but a cell is gone. The builder must notice on the next audit.
   api.cells.set(`${floor.x},${floor.y},${floor.z}`, "Air");
   const wrong = builder.verifyRoom(room, worldOf(room));
-  assert.ok(wrong.some((cell) => cell.x === floor.x), "a vanished floor block was not detected");
+  const entry = wrong.find((cell) => cell.x === floor.x);
+  assert.ok(entry, "a vanished floor block was not detected");
+  assert.equal(entry.actual, "Air");
+  assert.ok(isFloor(entry.expected), `the audit expected ${entry.expected}, which is not a floor block`);
 });
 
 test("a room that stays wrong is reported as failed, not as built", () => {
@@ -170,7 +178,7 @@ test("the landing pad is a floor, never a hole", () => {
   const builder = createWorldBuilder({ api });
   const written = builder.layLandingPad({ x: 0, z: 0 }, 2);
   assert.equal(written, 25);
-  assert.equal(api.cells.get("0,-1000,0"), BLOCKS.FLOOR);
+  assert.ok(isFloor(api.cells.get("0,-1000,0")), "the landing pad is not a floor block");
 });
 
 test("a protected room is protected as one rectangle, not block by block", () => {
@@ -180,12 +188,28 @@ test("a protected room is protected as one rectangle, not block by block", () =>
   const builder = createWorldBuilder({ api });
   assert.equal(builder.protectRoom(room), true);
   assert.equal(api.calls.setCantChangeBlockRect.length, 1);
-  const [x1, y1, z1, x2, , z2] = api.calls.setCantChangeBlockRect[0];
-  assert.equal(x1, room.origin.x);
-  assert.equal(z1, room.origin.y);
-  assert.equal(x2, room.origin.x + room.mask.w - 1);
-  assert.equal(z2, room.origin.y + room.mask.h - 1);
-  assert.equal(y1, DUNGEON_CONFIG.floorY);
+  const args = api.calls.setCantChangeBlockRect[0];
+  // Two positions and nothing else, the shape `setBlockRect` takes.
+  assert.equal(args.length, 2, `the protection was called with ${args.length} arguments`);
+  const [from, to] = args;
+  assert.deepEqual(from, [room.origin.x, DUNGEON_CONFIG.floorY, room.origin.y]);
+  assert.deepEqual(to, [
+    room.origin.x + room.mask.w - 1,
+    DUNGEON_CONFIG.floorY + DUNGEON_CONFIG.wallHeight + 1,
+    room.origin.y + room.mask.h - 1,
+  ]);
+});
+
+test("a protection that throws is reported, not swallowed", () => {
+  const manager = grow(777, 4);
+  const room = manager.allRooms()[0];
+  const api = fakeApi();
+  api.setCantChangeBlockRect = () => { throw new Error("wrong argument count"); };
+  const logs = [];
+  const builder = createWorldBuilder({ api, log: (message) => logs.push(message) });
+  assert.equal(builder.protectRoom(room), false);
+  assert.ok(logs.some((message) => message.includes("wrong argument count")),
+    "the failure was silent, so a room would stay breakable without anyone noticing");
 });
 
 test("the builder tells the controller both the cost and whether the room is finished", () => {
