@@ -1,6 +1,6 @@
 # Dungeon Break — Bloxd.io
 
-Prototype actuel : lobby de sélection de difficulté, compte à rebours individuel, génération d'un premier labyrinthe et téléportation.
+Prototype actuel : lobby de sélection de difficulté, compte à rebours individuel, génération procédurale de donjons multi-niveaux et téléportation.
 
 Les règles de travail du projet sont consignées dans [`AGENT_RULES.md`](AGENT_RULES.md).
 
@@ -40,12 +40,13 @@ Tous les textes visibles par les joueurs sont en anglais.
 
 ## Génération actuelle du donjon
 
-- Après le compte à rebours, un labyrinthe procédural est construit avec des sols et murs en **Stone Bricks**.
-- La taille évolue selon la difficulté : de 4×4 salles en Very Easy à 11×11 en Hell. Chaque salle fait 5×5 blocs ; un algorithme de parcours aléatoire choisit les passages, et plusieurs salles reçoivent un pilier de soutien en Stone Bricks.
-- Chaque donjon reçoit un emplacement horizontal aléatoire dans les bornes `-50000..50000` en X et Z ; son sol est à `Y = -1000`.
-- Les blocs sont posés par lots sur plusieurs ticks. Une fois la construction terminée, le joueur est téléporté dans la salle de départ ; une ouverture opposée sert de sortie.
+- Après le compte à rebours, le donjon est construit en **Stone Bricks**, par lots sur plusieurs ticks. Le joueur est téléporté dans la salle d'entrée une fois la construction terminée.
+- La taille évolue de 4×4 salles en Very Easy à 11×11 en Hell. Les difficultés prévoient respectivement 2 niveaux (Very Easy/Easy), 3 (Medium/Normal/Hard), 4 (Insane/Ultra Insane) ou 5 (Hell), avec des labyrinthes distincts à chaque niveau.
+- Les salles de 5×5 blocs varient : espaces ouverts, piliers simples ou doubles, et alcôves. Dans chaque niveau, les passages sont parfois étroits (3 blocs), parfois ouverts sur toute la largeur.
+- Une cage d'escalier en spirale, faite de blocs pleins Stone Bricks, relie les étages à travers un puits de 3×3 blocs. L'entrée se trouve au niveau inférieur, la sortie au niveau supérieur, et de petites plateformes Stone Bricks prolongent ces ouvertures.
+- Chaque donjon reçoit un emplacement horizontal aléatoire dans les bornes `-50000..50000` en X et Z ; le premier sol est à `Y = -1000`, avec 8 blocs d'écart vertical entre niveaux.
 
-C'est volontairement une première version : pas encore de mobs, butin, salles spéciales, nettoyage après une partie ni contrôle d'accès au donjon. Le délai est configurable via `countdownSeconds` dans `src/worldCode.js`; dimensions et matériau sont configurés dans `src/dungeon/generator.js`.
+C'est volontairement une première version : pas encore de mobs, butin, nettoyage après une partie ni contrôle d'accès au donjon. Le délai est configurable via `countdownSeconds` dans `src/worldCode.js`; dimensions, niveaux et matériau sont configurés dans `src/dungeon/generator.js`.
 
 ## Documentation Bloxd utilisée
 
