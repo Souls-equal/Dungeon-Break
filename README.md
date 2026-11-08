@@ -2,6 +2,8 @@
 
 Première étape du projet : un lobby de sélection de difficulté avec un compte à rebours individuel par joueur.
 
+Les règles de travail du projet sont consignées dans [`AGENT_RULES.md`](AGENT_RULES.md).
+
 ## Installer le lobby dans Bloxd
 
 1. Dans ton monde Bloxd, construis les pads de difficulté avec les blocs **Concrete** listés ci-dessous. Le joueur doit pouvoir marcher directement sur leur surface.
