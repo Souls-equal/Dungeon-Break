@@ -37,7 +37,7 @@ function grow(seed, targetRooms) {
  */
 function fakeApi(options = {}) {
   const cells = new Map();
-  const calls = { setBlock: [], setPosition: [], setCantChangeBlockRect: [], sendMessage: [] };
+  const calls = { setBlock: [], setPosition: [], setCanChangeType: [], sendMessage: [] };
   const loaded = options.loaded === undefined ? () => true : options.loaded;
   const dropped = [];
   return {
@@ -59,7 +59,7 @@ function fakeApi(options = {}) {
     },
     setPosition(playerId, position) { calls.setPosition.push({ playerId, position }); },
     getPosition() { return null; },
-    setCantChangeBlockRect(...args) { calls.setCantChangeBlockRect.push(args); },
+    setCanChangeType(blockType, allowed) { calls.setCanChangeType.push({ blockType, allowed }); },
     sendMessage(playerId, message) { calls.sendMessage.push({ playerId, message }); },
     log() {},
   };
@@ -181,35 +181,37 @@ test("the landing pad is a floor, never a hole", () => {
   assert.ok(isFloor(api.cells.get("0,-1000,0")), "the landing pad is not a floor block");
 });
 
-test("a protected room is protected as one rectangle, not block by block", () => {
-  const manager = grow(777, 4);
-  const room = manager.allRooms()[0];
+test("nothing is locked: the game mode already keeps the shell unbreakable", () => {
+  // `survivalAdventure` forbids breaking a block, so protecting the dungeon
+  // would be a call that costs something and buys nothing.
   const api = fakeApi();
   const builder = createWorldBuilder({ api });
-  assert.equal(builder.protectRoom(room), true);
-  assert.equal(api.calls.setCantChangeBlockRect.length, 1);
-  const args = api.calls.setCantChangeBlockRect[0];
-  // Two positions and nothing else, the shape `setBlockRect` takes.
-  assert.equal(args.length, 2, `the protection was called with ${args.length} arguments`);
-  const [from, to] = args;
-  assert.deepEqual(from, [room.origin.x, DUNGEON_CONFIG.floorY, room.origin.y]);
-  assert.deepEqual(to, [
-    room.origin.x + room.mask.w - 1,
-    DUNGEON_CONFIG.floorY + DUNGEON_CONFIG.wallHeight + 1,
-    room.origin.y + room.mask.h - 1,
+  const result = builder.allowMining([]);
+  assert.equal(result.allowed, 0);
+  assert.equal(api.calls.setCanChangeType.length, 0, "a permission was requested for nothing");
+  assert.equal(builder.protectRoom, undefined, "the per-block protection is gone for good");
+});
+
+test("mining is opened one block type at a time, never by rectangle", () => {
+  const api = fakeApi();
+  const builder = createWorldBuilder({ api });
+  const result = builder.allowMining(["Iron Ore", "Gold Ore"]);
+  assert.equal(result.allowed, 2);
+  assert.deepEqual(api.calls.setCanChangeType, [
+    { blockType: "Iron Ore", allowed: true },
+    { blockType: "Gold Ore", allowed: true },
   ]);
 });
 
-test("a protection that throws is reported, not swallowed", () => {
-  const manager = grow(777, 4);
-  const room = manager.allRooms()[0];
+test("a type that cannot be opened is reported, not swallowed", () => {
   const api = fakeApi();
-  api.setCantChangeBlockRect = () => { throw new Error("wrong argument count"); };
+  api.setCanChangeType = () => { throw new Error("unknown block type"); };
   const logs = [];
   const builder = createWorldBuilder({ api, log: (message) => logs.push(message) });
-  assert.equal(builder.protectRoom(room), false);
-  assert.ok(logs.some((message) => message.includes("wrong argument count")),
-    "the failure was silent, so a room would stay breakable without anyone noticing");
+  const result = builder.allowMining(["Iron Ore"]);
+  assert.equal(result.allowed, 0);
+  assert.ok(logs.some((message) => message.includes("unknown block type")),
+    "the failure was silent, so an ore would be visible and unmineable with no trace");
 });
 
 test("the builder tells the controller both the cost and whether the room is finished", () => {

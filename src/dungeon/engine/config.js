@@ -126,6 +126,14 @@ export const DUNGEON_CONFIG = {
   // freezing one.
   blocksPerBatch: 80,
 
+  // ------------------------------------------------------------- permissions --
+  // The world runs in `survivalAdventure`, so a player cannot break a block at
+  // all: no lock is needed for the shell. The only permission ever granted is
+  // the list of block types a player *may* mine, one type at a time
+  // (`setCanChangeType`). Empty until ores exist — an empty list means "seal the
+  // dungeon", which is exactly the intent today.
+  breakableBlocks: [],
+
   // ----------------------------------------------------------- chunk safety --
   chunkWarmupTicks: 3,
   chunkSize: 32,

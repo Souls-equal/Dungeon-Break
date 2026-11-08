@@ -258,35 +258,38 @@ export function createWorldBuilder(options) {
   }
 
   /**
-   * Protects a room's shell so it cannot be broken.
+   * Opens a room to the players' pickaxes, block type by block type.
    *
-   * The rectangle variant is used rather than the per-block call: the
-   * documentation warns that protecting thousands of blocks one by one lags the
-   * world, and this variant exists precisely for that case.
+   * Nothing is locked: the world runs in `survivalAdventure`, where a player
+   * cannot break a block at all, so the shell is already safe and there is
+   * nothing to protect. Locking blocks would only be needed the other way round
+   * — to *allow* mining — and the API expresses that as one type at a time
+   * (`setCanChangeType`), never as a rectangle.
    *
-   * The call is made with **two position arrays and nothing else**, the shape
-   * `setBlockRect` takes. The documented signature of the `CantChange` variant
-   * also carries a leading `playerId`, which is not passed here: a protection
-   * that is global is the intent (a dungeon wall is unbreakable for everybody),
-   * and a mis-shaped call must not silently protect nothing — hence the return
-   * value, which the service checks and logs once.
+   * This is therefore the only permission this file will ever ask for, and it
+   * asks for none by default: the ore list is empty until ores exist, so the
+   * dungeon stays fully sealed and no call is made. When ores land (Phase 5+),
+   * listing their block types here is the whole change.
    */
-  function protectRoom(room) {
-    const protect = world.setCantChangeBlockRect;
-    if (typeof protect !== "function") return false;
-    const from = [room.origin.x, floorY, room.origin.y];
-    const to = [
-      room.origin.x + room.mask.w - 1,
-      floorY + DUNGEON_CONFIG.wallHeight + 1,
-      room.origin.y + room.mask.h - 1,
-    ];
-    try {
-      protect.call(world, from, to);
-      return true;
-    } catch (error) {
-      log(`could not protect room ${room.id}: ${error && error.message}`);
-      return false;
+  function allowMining(blockTypes) {
+    const allowed = Array.isArray(blockTypes) ? blockTypes : [];
+    if (allowed.length === 0) return { allowed: 0, callable: typeof world.setCanChangeType === "function" };
+    if (typeof world.setCanChangeType !== "function") {
+      log("setCanChangeType is not available: mining stays disabled");
+      return { allowed: 0, callable: false };
     }
+    let applied = 0;
+    for (const blockType of allowed) {
+      try {
+        // Per type, never by rectangle: an ore is breakable, the stone around it
+        // is not, and the two sit in the same cell column.
+        world.setCanChangeType(blockType, true);
+        applied += 1;
+      } catch (error) {
+        log(`could not allow mining of ${blockType}: ${error && error.message}`);
+      }
+    }
+    return { allowed: applied, callable: true };
   }
 
   function forget(roomId) {
@@ -300,7 +303,7 @@ export function createWorldBuilder(options) {
     chunksOf,
     prepareLanding,
     layLandingPad,
-    protectRoom,
+    allowMining,
     forget,
     stateOf,
     readBlock,

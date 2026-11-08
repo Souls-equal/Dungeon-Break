@@ -110,7 +110,8 @@ La documentation est également publiée en Markdown (`/docs/<page>.md`), ce qui
 | callback `onWorldChangeBlock` | `(x, y, z, fromBlock, toBlock, initiatorDbId, extraInfo, dropsPrevented)` | Filet de sécurité pour les changements de bloc non initiés par un joueur (`extraInfo.cause`). `initiatorDbId` vaut `null` pour du code de jeu. |
 | callback `onPlayerJoin` / `onPlayerLeave` | voir doc | Chargement/déchargement des données de joueur, allocation d'origine, réapplication des protections. |
 | callback `onPlayerRequestChunk` | `(playerId, chunkX, chunkY, chunkZ, chunkId)` | Connaissance des chunks demandés par un joueur. |
-| `api.setCantChangeBlockRect` | `(playerId, pos1, pos2)` | Protection de la coque du donjon. La doc avertit que `setCantChangeBlock` sur des milliers de blocs provoque du lag et conseille les variantes `Rect`/`Type`. **À vérifier en jeu** : la signature réellement acceptée (le premier argument `playerId` est documenté, mais n'a pas encore été exercé). |
+| `api.setCanChangeType` | `(blockType, allowed)` | **Seul mécanisme de permission utilisé.** Après l'entrée, le service autorise les types listés dans `DUNGEON_CONFIG.breakableBlocks` — vide aujourd'hui, donc aucun appel : la casse reste interdite, ce qui est l'intention. |
+| `api.setCantChangeBlockRect` / `setCantChangeBlockType` | voir doc | **Non utilisés, décision assumée.** Le monde est en `survivalAdventure` : rien n'est cassable, donc verrouiller la coque ne protège rien de plus. Le sens utile de l'API est d'**ouvrir** la casse, et il se fait par type. |
 | `api.setCallbackValueFallback` | `(cbName, value)` | Valeur de repli par défaut si un callback lève une erreur. |
 | `api.log` | voir « Getting started » | Journalisation d'erreur, jamais dans une boucle chaude. |
 | `@plugins/helpers` | `setTimeout`, `setInterval`, `clearTimeout`, `clearInterval`, `forceLoadChunk`, `randomInt`, `shuffleArray`, `getRandomItem` | Non utilisés : le projet a déjà son scheduler piloté par `tick` (`src/utils/scheduler.js`), plus testable hors Bloxd et sans dépendance. `forceLoadChunk` est noté comme piste si le chargement de chunk devient un goulot. |
@@ -879,11 +880,13 @@ Supprimer ce module retire quatre sources de bugs d'un coup :
 
 | Garantie | Moyen | Phase |
 | --- | --- | --- |
-| Le joueur ne peut pas casser un mur | `setCantChangeBlockType` / `setCantChangeBlockRect` sur la coque, `onPlayerChangeBlock` en filet qui renvoie `"preventChange"` | 4 |
-| Les minerais sont cassables mais non structurels | ils sont posés dans les cellules de sol, jamais dans un mur, et leur disparition ne change aucune cellule de passage | 4 |
+| Le joueur ne peut pas casser un mur | **rien à faire** : le monde tourne en `survivalAdventure`, où aucune casse n'est possible | ✅ acquis |
+| Les minerais sont cassables mais non structurels | on **autorise** les seuls types de minerai, un par un (`setCanChangeType`) ; ils sont posés dans des cellules de sol et leur disparition ne change aucune cellule de passage | 5 |
 | Une salle reconstruite est identique à l'originale | elle est régénérée depuis sa seed, et la construction est reprise par curseur (§13.3) | 4-6 |
 
-La protection par type de bloc est préférée à une protection bloc par bloc : la documentation signale explicitement que `setCantChangeBlock` sur des milliers de blocs provoque des ralentissements, et fournit `setCantChangeBlockType` / `setCantChangeBlockRect` pour ce cas.
+**Décision (Phase 4, corrigée en cours de route)** : aucune protection de bloc n'est posée. Le mode de jeu `survivalAdventure` interdit déjà toute casse, donc verrouiller la coque serait un appel qui coûte et n'achète rien. Le seul sens utile de l'API est l'inverse — **ouvrir** la casse — et il s'exprime **par type de bloc** (`setCanChangeType`), jamais par rectangle : un minerai est cassable, la pierre autour ne l'est pas, et les deux occupent la même colonne.
+
+Conséquence sur le code : `worldBuilder.allowMining(blockTypes)` remplace `protectRoom`, ne fait **aucun appel** tant que la liste est vide (`DUNGEON_CONFIG.breakableBlocks = []`), et les tests refusent explicitement tout appel `setCantChangeBlockRect` — une régression qui réintroduirait un verrou échoue au lieu de passer inaperçue.
 
 ### 15.3 Conséquence sur la persistance
 
@@ -1006,7 +1009,7 @@ Le code du lobby et du compte à rebours (`src/worldCode.js`) est resté intact 
 | 7 | ~~Une modification non passée par un callback serait perdue.~~ | — | Sans suivi de modifications (§15), le risque n'existe plus : un mur ne peut pas être cassé. | **Supprimé** |
 | 8 | Coût d'un tick trop élevé fige le monde pour tous les joueurs. | Jeu injouable pendant un pic. | Plafond d'opérations, budgets séparés, mesure dans le harnais. | Surveillé |
 | 9 | Une boucle de connexions mal détectée pourrait produire un mur partagé par deux salles. | Incohérence géométrique. | Collisions en cellules réelles + test d'index contre référence O(n²). | Couvert par test |
-| 10 | La portée des `setCantChangeBlockRect` par joueur doit être réappliquée à chaque connexion. | Protection perdue après reconnexion. | Réapplication dans `onPlayerJoin`. | À implémenter |
+| 10 | ~~La portée des `setCantChangeBlockRect` par joueur doit être réappliquée à chaque connexion.~~ | — | **Sans objet** : aucune protection posée, le mode `survivalAdventure` couvre tout le monde en permanence. | Résolu |
 
 ---
 
@@ -1018,7 +1021,7 @@ Ces points changent l'architecture ; ils ne relèvent pas d'un choix technique �
 2. **Mode de persistance.** Donjon partagé (A), individuel (B), ou l'hybride recommandé en §14.4 : graphe partagé, modifications par joueur ? Ce choix définit le jeu, pas seulement le stockage.
 3. **Un seul niveau ou plusieurs ?** Le cahier des charges mentionne une hauteur min/max. Le moteur est conçu pour plusieurs niveaux (`floorLevel`), mais les escaliers et les connexions verticales sont un travail distinct que je propose de traiter après la Phase 4.
 4. **Placement du donjon dans le monde.** Le donjon reçoit une origine allouée (anneau de 4096 blocs), le lobby reste où il est. Cela implique une téléportation, donc le cycle « téléporter → attendre les chunks → construire » déjà en place. Confirmes-tu ce placement, ou le donjon doit-il entourer le lobby ?
-5. **Le donjon doit-il être cassable ?** « Dungeon Break » suggère que oui. Si oui, la coque n'est pas protégée et chaque modification coûte des deltas. Si seul un type de bloc est cassable, le volume de deltas diminue beaucoup et la protection par `setCantChangeBlockType` suffit.
+5. **Le donjon doit-il être cassable ?** « Dungeon Break » suggère que oui. **Réponse reçue en Phase 4** : le monde est en `survivalAdventure`, donc rien n'est cassable par défaut ; on **ouvrira** la casse type de bloc par type de bloc via `setCanChangeType`, et seulement pour les minerais. La coque n'est donc ni protégée ni cassable, et aucune modification de joueur n'est à suivre (§15).
 6. **Rétention.** Acceptes-tu que les salles lointaines, entièrement construites, voient leur géométrie retirée du stockage et soient régénérées à l'identique depuis leur seed ? C'est la condition pour qu'un donjon infini tienne dans une base finie. Depuis que les murs sont indestructibles (§15), aucune salle ne peut plus diverger de sa seed : la rétention est donc sans risque de perte.
 
 ---

@@ -36,6 +36,7 @@ function createWorld(onlinePlayerIds, options = {}) {
   const topRightHelpers = [];
   const playerLocations = options.positions ? { ...options.positions } : {};
   const violations = [];
+  const permissions = [];
 
   const nearPlayer = (x, z) => {
     for (const playerId of onlinePlayerIds) {
@@ -62,10 +63,14 @@ function createWorld(onlinePlayerIds, options = {}) {
         }
         blocks.push({ x, y, z, blockName });
       },
-      // Two positions, like setBlockRect. A fake that accepts anything would let
-      // a mis-shaped call pass every test in this file.
-      setCantChangeBlockRect: (...args) => {
-        if (args.length !== 2) throw new Error(`setCantChangeBlockRect got ${args.length} arguments`);
+      // The only permission the dungeon may ask for, one block type at a time.
+      // No lock should ever be requested: `survivalAdventure` already forbids
+      // breaking a block, so any `CantChange` call here would be a bug.
+      setCanChangeType: (blockType, allowed) => {
+        permissions.push({ blockType, allowed });
+      },
+      setCantChangeBlockRect: () => {
+        throw new Error("the dungeon must not lock blocks: the game mode already does");
       },
       setPosition: (playerId, position) => {
         positions.push({ playerId, position: Array.from(position) });
@@ -97,6 +102,7 @@ function createWorld(onlinePlayerIds, options = {}) {
     clientOptions,
     topRightHelpers,
     violations,
+    permissions,
     movePlayer: (playerId, position) => { playerLocations[playerId] = position; },
   };
 }
@@ -320,6 +326,17 @@ test("the world around the player stays walkable as the dungeon grows", () => {
       assert.ok(FLOOR_FAMILY.has(finalName(x, floorY, z)), `the floor at ${x},${z} is not solid`);
     }
   }
+});
+
+test("the dungeon never locks a block, and asks for no permission", () => {
+  // The world is `survivalAdventure`: a player cannot break a block, so a lock
+  // is a cost with no benefit — and the ore list is empty until ores exist, so
+  // no per-type permission is requested either.
+  const { context, permissions, blocks } = createWorld(["player-nolock"]);
+  startDungeon(context, "player-nolock");
+  tickUntil(context, () => blocks.length > 0, 400);
+  assert.ok(blocks.length > 0, "nothing was built, so the test proves nothing");
+  assert.deepEqual(permissions, [], "a block permission was requested but nothing is breakable");
 });
 
 test("leaving the world puts the player back in the lobby", () => {

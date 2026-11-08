@@ -18,7 +18,7 @@ import {
  */
 function fakeApi() {
   const cells = new Map();
-  const calls = { setBlock: [], setPosition: [], sendMessage: [], setCantChangeBlockRect: [] };
+  const calls = { setBlock: [], setPosition: [], sendMessage: [], setCanChangeType: [] };
   const positions = new Map();
   const loadedRects = [];
   const near = (x, z) => loadedRects.some((rect) => x >= rect.x1 && x <= rect.x2 && z >= rect.z1 && z <= rect.z2);
@@ -48,9 +48,7 @@ function fakeApi() {
       const position = positions.get(playerId);
       return position || null;
     },
-    // Recorded with its arity: a protection called with the wrong number of
-    // arguments protects nothing and throws nothing, which is the worst case.
-    setCantChangeBlockRect(...args) { calls.setCantChangeBlockRect.push(args); },
+    setCanChangeType(blockType, allowed) { calls.setCanChangeType.push({ blockType, allowed }); },
     sendMessage(playerId, message) { calls.sendMessage.push({ playerId, message }); },
     log() {},
   };
@@ -112,9 +110,9 @@ test("a player enters: the floor exists before anything is announced", () => {
   const cell = ready.spawn.cell;
   assert.ok(FLOOR_BLOCKS.includes(api.cells.get(`${cell.x},${DUNGEON_CONFIG.floorY},${cell.z}`)),
     "the player was told the dungeon was ready while standing over a hole");
-  assert.equal(api.calls.setCantChangeBlockRect.length, 1, "the entrance was never protected");
-  assert.equal(api.calls.setCantChangeBlockRect[0].length, 2,
-    "the protection must take two positions, like setBlockRect");
+  // No lock is requested: `survivalAdventure` already keeps the shell intact.
+  assert.equal(api.calls.setCanChangeType.length, 0,
+    "a permission was requested, but nothing is breakable by default");
 });
 
 test("two players of the same difficulty share one dungeon", () => {

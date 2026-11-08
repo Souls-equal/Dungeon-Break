@@ -49,13 +49,13 @@ Rien n'est écrit avant que la zone soit chargée. Le pont sonde `getBlock` sur 
 2. setPosition au milieu de la cellule (x.5/z.5), y = floorY + 2
 3. chunkWarmupTicks (3) ticks                    (le client charge)
 4. layLandingPad : 5×5 de Stone Bricks
-5. buildEntrance par lots de 80 blocs, puis setCantChangeBlockRect
+5. buildEntrance par lots de 80 blocs
 6. onReady — et seulement là, le joueur entre dans le donjon
 ```
 
 Mesuré sur un faux serveur : entrée prête au tick 9, 457 blocs, 25/25 cellules du pad posées, **0 écriture perdue**, jamais plus de 80 blocs dans un tick. Le sol de la cellule d'atterrissage est relu en `Stone Bricks` au moment exact de `onReady` : rien n'est annoncé avant que le sol existe.
 
-Le pad **protège par rectangle** (`setCantChangeBlockRect`) et non bloc par bloc : la documentation Bloxd signale explicitement que protéger des milliers de blocs un par un ralentit le monde.
+**Aucune protection de bloc n'est posée.** Le monde tourne en `survivalAdventure` : un joueur ne peut rien casser, donc verrouiller la coque serait un appel qui coûte et n'achète rien. Le seul sens utile de l'API est l'inverse — autoriser la casse — et il s'écrit **par type de bloc** (`setCanChangeType`), jamais par rectangle : un minerai est cassable, la pierre autour ne l'est pas, et les deux partagent la même colonne. `worldBuilder.allowMining()` existe déjà et ne fait aucun appel tant que `DUNGEON_CONFIG.breakableBlocks` est vide — c'est-à-dire aujourd'hui.
 
 ## Un donjon par difficulté
 
@@ -91,6 +91,6 @@ Le coût par tick reste dominé par la génération, comme en Phase 3 ; la const
 ## Ce qui n'est pas fait
 
 - **la persistance** : rien n'est encore écrit en base. Un redémarrage reconstruit depuis la graine, ce qui est correct mais ne conserve ni les salles déjà construites ni la position des joueurs (Phase 5) ;
-- **les minerais** et la protection par type de bloc au-delà de la coque de l'entrée ;
+- **les minerais** : l'emplacement de l'appel est prêt (`allowMining`, liste vide), il reste à décider où les poser ;
 - **le pad posé dans les salles autres que l'entrée** : le constructeur sait le faire (`roomBlocks(..., { pad })`), le service ne choisit pas encore quelle salle le porte ;
 - **les tests en jeu** : tout ce qui précède est vérifié contre des faux. Les questions ouvertes de `docs/ARCHITECTURE.md` §19 (portée réelle de la DB de lobby, comportement de `setCantChangeBlockRect` sur un volume) demandent une session Bloxd réelle.
