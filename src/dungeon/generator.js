@@ -12,14 +12,28 @@ const DUNGEON_CONFIG = {
   roomGap: 1,
   wallHeight: 3,
   doorWidth: 3,
-  blocksPerTick: 120,
+  // Staying under the engine budget keeps a floor pass and its audit in
+  // separate ticks, so a tick never writes a whole room at once.
+  blocksPerTick: 80,
   progressCheckTicks: 10,
-  // The spawn pad is laid first and checked again after the teleport, because
-  // writes into a chunk the server has not loaded yet can be lost.
+  // A chunk is 32 blocks wide and the player only loads the chunks around
+  // them. The spawn pad is laid first and checked again after the teleport,
+  // because writes into a chunk the server has not loaded yet can be lost.
   spawnPadRadius: 1,
+  // A wider patch is floored before the teleport, so the player can walk to the
+  // box walls without stepping over a hole that is not built yet.
+  landingPadRadius: 2,
   spawnCheckTicks: 5,
   spawnCheckAttempts: 6,
   entranceLandingDepth: 2,
+  // Nothing is generated further than this from the player, so every write
+  // lands in a chunk their client has already loaded.
+  generationRadius: 60,
+  // The player is boxed in while the first room is built, so they cannot walk
+  // out of the loaded chunks before the floor exists. The walls are cleared
+  // once the level is walkable, and the depth matches the 3-wide doors.
+  boxWallOffset: 2,
+  boxWallHeight: 3,
   // Streamed rooms stay at least this many blocks ahead of the player.
   streamBufferDistance: 36,
   streamingRunway: 50000,
@@ -81,6 +95,8 @@ const RANDOM_MODULUS = 2147483647;
 // Two consecutive rooms are always separated by one corridor cell, so the next
 // streamed room starts two cells after the previous one ends.
 const ROOM_CONNECTION_GAP = 1;
+// Bloxd chunks are 32 blocks wide.
+const CHUNK_SIZE = 32;
 // Step height of each band of a staircase room, measured from the room floor.
 // Both ends stay at floor level so the doors line up with their corridors, and
 // every step is exactly one block high, which the player can walk both ways.
@@ -248,6 +264,22 @@ function gridNeighbourIndexes(cellCount, index) {
  * with a bias for extending the last added room, so dungeons get corridors and
  * lobes instead of a perfect square.
  */
+/**
+ * The entrance sits at the middle of the footprint, so the whole level fits in
+ * the chunks the player loads around their landing: nothing is ever written
+ * more than `generationRadius` blocks away.
+ */
+function middleCellIndex(cellCount, random) {
+  const middle = Math.floor(cellCount / 2);
+  const candidates = [
+    middle * cellCount + middle,
+    middle * cellCount + middle - 1,
+    (middle - 1) * cellCount + middle,
+    (middle - 1) * cellCount + middle - 1,
+  ].filter((index) => index >= 0 && index < cellCount * cellCount);
+  return randomInteger(random, 0, 1) === 0 ? candidates[0] : (candidates[1] ?? candidates[0]);
+}
+
 function pickRoomCells(cellCount, targetCount, originIndex, random) {
   const chosen = new Set([originIndex]);
   const frontier = gridNeighbourIndexes(cellCount, originIndex).slice();
@@ -325,6 +357,8 @@ function stairRunsAlongZ(room) {
 
 /** A staircase keeps both doors at floor level on the axis of its two doors. */
 function canHostStairs(room) {
+  // The entrance room hosts the spawn box, so it must stay flat under the player.
+  if (room.isEntrance) return false;
   const sides = openSides(room.ports);
   if (sides.length !== 2 || !isStraightPair(sides)) return false;
   return room.width === STAIR_PROFILE.length && room.depth === STAIR_PROFILE.length;
@@ -412,7 +446,8 @@ function makeDungeonLevel(seed, difficulty) {
     maxOriginZ,
   );
   const floorY = DUNGEON_CONFIG.floorY;
-  const chosen = pickRoomCells(cellCount, targetRooms, 0, random);
+  const entranceIndex = middleCellIndex(cellCount, random);
+  const chosen = pickRoomCells(cellCount, targetRooms, entranceIndex, random);
   const cellList = Array.from(chosen).sort((a, b) => a - b);
   const connections = makeConnections(cellCount, cellList, chosen, random);
   const rooms = [];
@@ -440,6 +475,38 @@ function makeDungeonLevel(seed, difficulty) {
 
   const bestExitRoom = chooseExitPort(rooms, byIndex, cellCount);
 
+  // The spawn room must never be a dead end: its north side is the landing and
+  // its south side is the way out of the first chamber. Doors are only added,
+  // never removed, so a neighbour already connected here keeps its own door.
+  const entranceRoom = byIndex[entranceIndex];
+  entranceRoom.isEntrance = true;
+  entranceRoom.ports.north = true;
+  entranceRoom.ports.south = true;
+  entranceRoom.type = moduleTypeForSides(openSides(entranceRoom.ports));
+  entranceRoom.label = entranceRoom.type.label;
+  entranceRoom.floorRects = roomFloorRects(entranceRoom);
+  // The landing in front of the north door is walked on, so it is floored too,
+  // but only where that cell is not already owned by another room's corridor:
+  // a tile is floored exactly once.
+  const ownedTiles = new Set();
+  for (const room of rooms) {
+    for (const rect of room.floorRects) {
+      for (let x = rect.from[0]; x <= rect.to[0]; x += 1) {
+        for (let z = rect.from[2]; z <= rect.to[2]; z += 1) ownedTiles.add(`${x},${z}`);
+      }
+    }
+  }
+  const landingHalf = doorHalfWidth();
+  const landingCenterX = roomCenterX(entranceRoom);
+  for (let x = landingCenterX - landingHalf; x <= landingCenterX + landingHalf; x += 1) {
+    for (let z = entranceRoom.z - DUNGEON_CONFIG.entranceLandingDepth; z < entranceRoom.z; z += 1) {
+      if (ownedTiles.has(`${x},${z}`)) continue;
+      ownedTiles.add(`${x},${z}`);
+      addRect(entranceRoom.floorRects, x, floorY, z, x, floorY, z);
+    }
+  }
+  byIndex[entranceIndex] = entranceRoom;
+
   const openCells = new Set();
   for (const room of rooms) {
     for (let x = room.x; x < room.x + room.width; x += 1) {
@@ -457,6 +524,8 @@ function makeDungeonLevel(seed, difficulty) {
     originZ,
     width,
     cellCount,
+    entranceIndex,
+    entranceRoom: byIndex[entranceIndex],
     floorY,
     rooms,
     rockCells: new Set(),
@@ -491,15 +560,22 @@ function makeDungeonLevel(seed, difficulty) {
     }
   }
   // The landing in front of the entrance stays open.
-  const startRoom = byIndex[0];
-  for (let z = originZ + 1 - DUNGEON_CONFIG.entranceLandingDepth; z < originZ + 1; z += 1) {
+  const startRoom = byIndex[entranceIndex];
+  for (let z = startRoom.z - DUNGEON_CONFIG.entranceLandingDepth; z < startRoom.z; z += 1) {
     for (let x = roomCenterX(startRoom) - doorHalfWidth(); x <= roomCenterX(startRoom) + doorHalfWidth(); x += 1) {
       level.rockCells.delete(`${x},${z}`);
     }
   }
+  // Rock hugs the rooms that were kept, so it must never reach the row just
+  // after the deepest room: that row is the exit corridor, and the streamed
+  // rooms continue right behind it.
+  const deepestRow = Math.max(...rooms.map((room) => room.z + room.depth - 1));
+  for (let x = minX - 1; x <= maxX + 1; x += 1) {
+    for (let z = deepestRow + 1; z <= maxZ + 1; z += 1) level.rockCells.delete(`${x},${z}`);
+  }
 
   level.spawnPosition = [roomCenterX(startRoom) + 0.5, floorY + 1, roomCenterZ(startRoom) + 0.5];
-  level.entrance = { centerX: roomCenterX(startRoom), floorY, z: originZ + 1 };
+  level.entrance = { centerX: roomCenterX(startRoom), floorY, z: startRoom.z };
   level.exit = {
     room: bestExitRoom,
     side: "south",
@@ -642,6 +718,96 @@ export function* endlessRoomBlockIterator(roomPlan, textureSeed = roomPlan.seed)
   yield* moduleBlocksWithRandom(roomPlan.room, random);
 }
 
+/** Index of the chunk a world coordinate falls into, for a 32-block chunk. */
+function chunkIndexOf(coordinate) {
+  return Math.floor(coordinate / CHUNK_SIZE);
+}
+
+/** Every chunk a level block touches, so a build can wait for them. */
+export function* levelChunkIterator(plan) {
+  const seen = new Set();
+  const level = plan.level;
+
+  function* forRoom(room) {
+    for (const rect of room.floorRects) {
+      const [minX, , minZ] = rect.from;
+      const [maxX, , maxZ] = rect.to;
+      for (let x = minX; x <= maxX; x += 1) {
+        for (let z = minZ; z <= maxZ; z += 1) {
+          const chunkX = chunkIndexOf(x);
+          const chunkZ = chunkIndexOf(z);
+          const key = `${chunkX},${chunkZ}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          yield { chunkX, chunkZ };
+        }
+      }
+    }
+  }
+
+  for (const room of level.rooms) yield* forRoom(room);
+  for (const key of level.rockCells) {
+    const [x, z] = key.split(",").map(Number);
+    const chunkX = chunkIndexOf(x);
+    const chunkZ = chunkIndexOf(z);
+    const chunkKey = `${chunkX},${chunkZ}`;
+    if (seen.has(chunkKey)) continue;
+    seen.add(chunkKey);
+    yield { chunkX, chunkZ };
+  }
+}
+
+/** Cells the level itself writes: the box must never erase a block of the room. */
+function levelBlockKeys(plan) {
+  const random = makeRandom(plan.seed);
+  const keys = new Set();
+  for (const room of plan.level.rooms) {
+    for (const rect of room.floorRects) {
+      for (const block of floorRectBlocks(rect)) keys.add(blockKey(block.x, block.y, block.z));
+    }
+    for (const block of moduleBlocksWithRandom(room, random)) keys.add(blockKey(block.x, block.y, block.z));
+  }
+  for (const key of plan.level.rockCells) {
+    for (let y = plan.level.floorY; y <= plan.level.floorY + DUNGEON_CONFIG.wallHeight; y += 1) {
+      keys.add(`${key.split(",")[0]},${y},${key.split(",")[1]}`);
+    }
+  }
+  return keys;
+}
+
+/** Blocks of the closed box the player waits in, around the spawn cell. */
+export function boxWallBlocks(plan, options = {}) {
+  const level = plan.level;
+  const [spawnX, , spawnZ] = level.spawnPosition;
+  const distance = options.distance || DUNGEON_CONFIG.generationRadius;
+  const half = Math.floor((DUNGEON_CONFIG.boxWallOffset + DUNGEON_CONFIG.doorWidth) / 2);
+  const centerX = spawnX - 0.5;
+  const centerZ = spawnZ - 0.5;
+  const minX = Math.round(centerX) - half;
+  const maxX = Math.round(centerX) + half;
+  const minZ = Math.round(centerZ) - half;
+  const maxZ = Math.round(centerZ) + half;
+  const bottomY = level.floorY + 1;
+  const topY = level.floorY + DUNGEON_CONFIG.boxWallHeight;
+  const blockName = options.blockName || DUNGEON_CONFIG.wallBlockNames[0];
+  const blocks = [];
+  const roomKeys = levelBlockKeys(plan);
+
+  for (let x = minX; x <= maxX; x += 1) {
+    for (let z = minZ; z <= maxZ; z += 1) {
+      const onEdge = x === minX || x === maxX || z === minZ || z === maxZ;
+      if (!onEdge) continue;
+      // Never overwrite a wall, a stair or a decoration of the entrance module.
+      if (roomKeys.has(`${x},${bottomY},${z}`)) continue;
+      // The box must sit inside the loaded chunks, otherwise its own writes
+      // would be the ones that get lost.
+      if (Math.abs(x - centerX) > distance || Math.abs(z - centerZ) > distance) continue;
+      for (let y = bottomY; y <= topY; y += 1) blocks.push({ x, y, z, blockName });
+    }
+  }
+  return blocks;
+}
+
 // ------------------------------------------------------------ block stream --
 
 export function blockKey(x, y, z) {
@@ -678,12 +844,30 @@ export function* dungeonBlockIterator(plan, options = {}) {
   const random = makeRandom(options.textureSeed === undefined ? plan.seed : options.textureSeed);
   const skipFloorKeys = options.skipFloorKeys;
   const level = plan.level;
+  // Cells already floored before the player moved are listed once, so a tile
+  // is never written twice even though it belongs to a room and its corridor.
+  const floorTiles = options.floorTiles || [];
+  const listed = new Set();
 
-  for (const room of level.rooms) {
-    for (const rect of room.floorRects) {
-      for (const block of floorRectBlocks(rect)) {
-        if (skipFloorKeys && skipFloorKeys.has(blockKey(block.x, block.y, block.z))) continue;
-        yield block;
+  if (floorTiles.length > 0) {
+    for (const tile of floorTiles) {
+      const key = `${tile.x},${tile.z}`;
+      if (listed.has(key)) continue;
+      listed.add(key);
+      const block = { x: tile.x, y: level.floorY, z: tile.z, blockName: DUNGEON_CONFIG.blockName };
+      if (skipFloorKeys && skipFloorKeys.has(blockKey(block.x, block.y, block.z))) continue;
+      yield block;
+    }
+  } else {
+    for (const room of level.rooms) {
+      for (const rect of room.floorRects) {
+        for (const block of floorRectBlocks(rect)) {
+          const key = `${block.x},${block.z}`;
+          if (listed.has(key)) continue;
+          listed.add(key);
+          if (skipFloorKeys && skipFloorKeys.has(blockKey(block.x, block.y, block.z))) continue;
+          yield block;
+        }
       }
     }
   }
@@ -858,13 +1042,6 @@ function readBlockName(x, y, z) {
   }
 }
 
-// A block can only be written into a chunk that already exists server side.
-// Poking the target cell makes the engine create the chunk before the real
-// write, which is what used to swallow the spawn floor.
-function primeChunk(plan) {
-  readBlockName(plan.level.spawnPosition[0] - 0.5, plan.level.floorY, plan.level.spawnPosition[2] - 0.5);
-}
-
 /**
  * Tiles of the pad that are not the expected floor block. Returns null when the
  * engine cannot read blocks, so callers rewrite the pad instead of trusting it.
@@ -886,60 +1063,116 @@ function placeSpawnPad(plan) {
   return new Set(tiles.map(({ x, z }) => blockKey(x, plan.level.floorY, z)));
 }
 
-function startBlockBuild(session, iterator, onComplete, onTick) {
-  let done = false;
-  let failure = null;
-  let placedThisTick = 0;
+/** Tiles of the whole landing patch, the 3x3 pad included. */
+function landingPadTiles(plan) {
+  const radius = DUNGEON_CONFIG.landingPadRadius;
+  const padX = plan.level.spawnPosition[0] - 0.5;
+  const padZ = plan.level.spawnPosition[2] - 0.5;
+  const tiles = [];
 
-  const timer = scheduleInterval(() => {
-    try {
-      placedThisTick = 0;
-      for (; placedThisTick < DUNGEON_CONFIG.blocksPerTick && !done; placedThisTick += 1) {
-        const step = iterator.next();
-        if (step.done) {
-          done = true;
-          break;
-        }
-        api.setBlock(step.value.x, step.value.y, step.value.z, step.value.blockName);
-      }
-      if (onTick) onTick();
-    } catch (error) {
-      failure = error;
-      done = true;
-    }
-
-    if (!done) return;
-
-    timer.stop();
-    if (session.buildTimer === timer) session.buildTimer = null;
-    if (failure) {
-      reportGenerationFailure(session.playerId, failure);
-      return;
-    }
-    if (!session.active || !isPlayerOnline(session.playerId)) {
-      stopDungeonForPlayer(session.playerId);
-      return;
-    }
-
-    try {
-      onComplete();
-    } catch (error) {
-      reportGenerationFailure(session.playerId, error);
-    }
-  }, 1);
-  session.buildTimer = timer;
+  for (let dx = -radius; dx <= radius; dx += 1) {
+    for (let dz = -radius; dz <= radius; dz += 1) tiles.push({ x: padX + dx, z: padZ + dz });
+  }
+  return tiles;
 }
 
 /**
- * Last line of defence: once the player stands on the spawn cell, read the pad
- * back and rewrite whatever the world did not keep.
+ * Reads back a room floor and rewrites the tiles the world did not keep.
+ * Bloxd silently drops writes aimed at a chunk it has not loaded, so the floor
+ * is audited instead of assumed. Returns how many tiles had to be repaired.
  */
-function startSpawnGuard(session, plan) {
+function repairFloorTiles(tiles, floorY) {
+  let repaired = 0;
+  let readable = true;
+  const broken = [];
+
+  for (const tile of tiles) {
+    const current = readBlockName(tile.x, floorY, tile.z);
+    if (current === null) {
+      readable = false;
+      break;
+    }
+    if (current !== DUNGEON_CONFIG.blockName) broken.push(tile);
+  }
+  const targets = readable ? broken : tiles;
+  for (const { x, z } of targets) {
+    api.setBlock(x, floorY, z, DUNGEON_CONFIG.blockName);
+    repaired += 1;
+  }
+  return repaired;
+}
+
+/** Every floor tile a room owns, its connection corridors included. */
+function roomFloorTiles(room) {
+  const tiles = [];
+  for (const rect of room.floorRects) {
+    const [minX, , minZ] = rect.from;
+    const [maxX, , maxZ] = rect.to;
+    for (let x = minX; x <= maxX; x += 1) {
+      for (let z = minZ; z <= maxZ; z += 1) tiles.push({ x, z });
+    }
+  }
+  return tiles;
+}
+
+/**
+ * Teleports the player in and boxes them up *before* anything else is written.
+ *
+ * Bloxd only keeps the chunks the player loads, so writing the dungeon while
+ * the player is still in the lobby silently drops the blocks: that is what left
+ * holes in the floor. Moving the player first makes their client load the
+ * chunks, and the box keeps them from walking out of them.
+ */
+function teleportAndBox(playerId, plan) {
+  const spawn = plan.level.spawnPosition;
+  // x.5 / z.5 puts the player in the middle of the spawn cell.
+  const position = [Math.floor(spawn[0]) + 0.5, spawn[1], Math.floor(spawn[2]) + 0.5];
+  // 1. Read the landing cell: this forces the engine to create the chunk.
+  readBlockName(position[0] - 0.5, plan.level.floorY, position[2] - 0.5);
+  // 2. Floor the landing patch, so the player never lands in the void and can
+  //    reach the box walls without walking over an unbuilt tile.
+  const padKeys = new Set();
+  for (const { x, z } of landingPadTiles(plan)) {
+    api.setBlock(x, plan.level.floorY, z, DUNGEON_CONFIG.blockName);
+    padKeys.add(blockKey(x, plan.level.floorY, z));
+  }
+  // 3. Move the player in: their client now loads the chunks around them.
+  api.setPosition(playerId, position);
+  // 4. Close the box, so they cannot walk out of the loaded chunks.
+  for (const block of boxWallBlocks(plan)) {
+    api.setBlock(block.x, block.y, block.z, block.blockName);
+  }
+  return { position, padKeys };
+}
+
+/** Opens the box again once the floor around the player is walkable. */
+function removeBox(playerId, plan) {
+  try {
+    for (const block of boxWallBlocks(plan)) {
+      api.setBlock(block.x, block.y, block.z, "Air");
+    }
+  } catch (error) {
+    logFailure("Box removal failed", error);
+  }
+}
+
+/**
+ * Last line of defence: while the player stands in the box, read the pad back
+ * and rewrite whatever the world did not keep.
+ */
+function startSpawnGuard(session, plan, onFirstPass) {
   let attempts = 0;
 
   session.spawnGuardTimer = scheduleInterval(() => {
     if (!session.active) return;
     attempts += 1;
+    // The player has been moved and their chunk is live: start the real build
+    // now, then keep sweeping to repair anything the world swallows.
+    if (onFirstPass) {
+      const start = onFirstPass;
+      onFirstPass = null;
+      start();
+    }
 
     let missing = missingSpawnPadTiles(plan);
     // Rewrite the whole pad on the first sweep: an unreadable block still gets
@@ -971,6 +1204,59 @@ function startSpawnGuard(session, plan) {
   }, DUNGEON_CONFIG.spawnCheckTicks);
 }
 
+function startBlockBuild(session, iterator, onComplete, onTick) {
+  let done = false;
+  let failure = null;
+  let placedThisTick = 0;
+  let auditPassed = !onTick;
+  let idleTicks = 0;
+
+  const timer = scheduleInterval(() => {
+    try {
+      placedThisTick = 0;
+      for (; placedThisTick < DUNGEON_CONFIG.blocksPerTick && !done; placedThisTick += 1) {
+        const step = iterator.next();
+        if (step.done) {
+          done = true;
+          break;
+        }
+        api.setBlock(step.value.x, step.value.y, step.value.z, step.value.blockName);
+      }
+      // The audit runs on its own quiet tick, never on top of a block batch,
+      // so a single tick never writes more than the configured budget.
+      if (done && !auditPassed) {
+        auditPassed = true;
+        onTick();
+      }
+      // One idle tick lets the audit writes settle before moving on.
+      if (done) idleTicks += 1;
+    } catch (error) {
+      failure = error;
+      done = true;
+    }
+
+    if (!done || idleTicks < 2) return;
+
+    timer.stop();
+    if (session.buildTimer === timer) session.buildTimer = null;
+    if (failure) {
+      reportGenerationFailure(session.playerId, failure);
+      return;
+    }
+    if (!session.active || !isPlayerOnline(session.playerId)) {
+      stopDungeonForPlayer(session.playerId);
+      return;
+    }
+
+    try {
+      onComplete();
+    } catch (error) {
+      reportGenerationFailure(session.playerId, error);
+    }
+  }, 1);
+  session.buildTimer = timer;
+}
+
 function playerPositionZ(session) {
   const position = api.getPosition(session.playerId);
   return position && position.length >= 3 ? position[2] : null;
@@ -986,12 +1272,19 @@ function finishStreaming(session, message) {
   }
 }
 
+/**
+ * A streamed room is only built when it fits entirely inside the generation
+ * radius around the player: chunk writes further away may never land.
+ */
 function buildNextStreamRoom(session, playerZ) {
   const startZ = session.nextRoomZ;
   if (startZ + DUNGEON_CONFIG.roomSize - 1 > DUNGEON_CONFIG.maxCoordinate) {
     finishStreaming(session, "The dungeon reached the world boundary.");
     return;
   }
+  const currentZ = playerPositionZ(session);
+  const anchorZ = currentZ === null ? playerZ : currentZ;
+  if (startZ + DUNGEON_CONFIG.roomSize - 1 - anchorZ > DUNGEON_CONFIG.generationRadius) return;
 
   const roomSeed = (session.seed + (session.streamRoomIndex + 1) * 130363) % RANDOM_MODULUS || 1;
   const preview = createEndlessRoomPlan(
@@ -1022,6 +1315,13 @@ function buildNextStreamRoom(session, playerZ) {
 
   session.isBuilding = true;
   startBlockBuild(session, endlessRoomBlockIterator(roomPlan, roomSeed), () => {
+    // Same audit as the entrance room: a room whose floor was partly swallowed
+    // must never become the new frontier.
+    try {
+      repairFloorTiles(roomFloorTiles(roomPlan.room), roomPlan.floorY);
+    } catch (error) {
+      logFailure("Streamed floor repair failed", error);
+    }
     session.streamRoomIndex += 1;
     session.frontierZ = roomPlan.hasFollowingRoom
       ? roomPlan.endZ + ROOM_CONNECTION_GAP
@@ -1039,7 +1339,7 @@ function buildNextStreamRoom(session, playerZ) {
 }
 
 function continueStreaming(session, knownPlayerZ) {
-  if (!session.active || session.isBuilding || session.finished) return;
+  if (!session.active || session.isBuilding || session.finished || !session.buildStarted) return;
 
   let playerZ = knownPlayerZ;
   if (playerZ === undefined) {
@@ -1078,16 +1378,25 @@ function moduleSummary(level) {
   return counts;
 }
 
+/** Every floor tile of a level, each one listed exactly once. */
+function levelFloorTiles(level) {
+  const tiles = [];
+  const seen = new Set();
+  for (const room of level.rooms) {
+    for (const tile of roomFloorTiles(room)) {
+      const key = `${tile.x},${tile.z}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      tiles.push(tile);
+    }
+  }
+  return tiles;
+}
+
 export function generateDungeon(playerId, difficulty) {
   stopDungeonForPlayer(playerId);
   const seed = nextDungeonSeed();
   const plan = createDungeonPlan(seed, difficulty);
-  // Forces the engine to create the spawn chunk before the real writes land.
-  try {
-    primeChunk(plan);
-  } catch (error) {
-    logFailure("Chunk priming failed", error);
-  }
 
   const session = {
     playerId,
@@ -1098,6 +1407,7 @@ export function generateDungeon(playerId, difficulty) {
     nextRoomZ: plan.frontier.nextRoomZ,
     streamRoomIndex: 0,
     isBuilding: false,
+    buildStarted: false,
     finished: false,
     active: true,
     buildTimer: null,
@@ -1106,9 +1416,11 @@ export function generateDungeon(playerId, difficulty) {
   };
   dungeonSessions[playerId] = session;
 
-  let padKeys;
+  // 1. Read the landing cell, floor the landing patch, move the player onto it
+  //    (middle of the cell) and box them in. Only then does the world load.
+  let landing;
   try {
-    padKeys = placeSpawnPad(plan);
+    landing = teleportAndBox(playerId, plan);
   } catch (error) {
     reportGenerationFailure(playerId, error);
     return;
@@ -1119,29 +1431,42 @@ export function generateDungeon(playerId, difficulty) {
   }
 
   const summary = moduleSummary(plan.level);
-  startBlockBuild(
-    session,
-    dungeonBlockIterator(plan, { skipFloorKeys: padKeys, textureSeed: seed }),
-    () => {
-      try {
-        for (const { x, z } of spawnPadTiles(plan)) {
-          api.setBlock(x, plan.level.floorY, z, DUNGEON_CONFIG.blockName);
-        }
-      } catch (error) {
-        logFailure("Spawn pad refresh failed", error);
-      }
+  const floorTiles = levelFloorTiles(plan.level);
 
-      api.setPosition(playerId, plan.level.spawnPosition);
-      api.sendMessage(
-        playerId,
-        `${difficulty} dungeon ready: ${plan.level.roomCount} rooms `
-          + `(${summary.crossroads} four-way, ${summary.tJunction} three-way, ${summary.turn} turns, `
-          + `${summary.corridor} corridors, ${summary.end} dead ends, ${summary.stairs} stairs). `
-          + "Keep advancing to generate more rooms!",
-      );
-      startSpawnGuard(session, plan);
-      startDungeonProgress(session);
-    },
-    () => primeChunk(plan),
-  );
+  startSpawnGuard(session, plan, () => {
+    if (session.buildStarted) return;
+    session.buildStarted = true;
+
+    startBlockBuild(
+      session,
+      dungeonBlockIterator(plan, {
+        skipFloorKeys: landing.padKeys,
+        floorTiles,
+        textureSeed: seed,
+      }),
+      () => {
+        // Nothing says the world kept every write, so the floor is read back
+        // and repaired before the exit lane is trusted.
+        try {
+          repairFloorTiles(floorTiles, plan.level.floorY);
+          for (const { x, z } of spawnPadTiles(plan)) {
+            api.setBlock(x, plan.level.floorY, z, DUNGEON_CONFIG.blockName);
+          }
+        } catch (error) {
+          logFailure("Floor audit failed", error);
+        }
+
+        removeBox(playerId, plan);
+        api.sendMessage(
+          playerId,
+          `${difficulty} dungeon ready: ${plan.level.roomCount} rooms `
+            + `(${summary.crossroads} four-way, ${summary.tJunction} three-way, ${summary.turn} turns, `
+            + `${summary.corridor} corridors, ${summary.end} dead ends, ${summary.stairs} stairs). `
+            + "Keep advancing to generate more rooms!",
+        );
+        startDungeonProgress(session);
+        continueStreaming(session, landing.position[2]);
+      },
+    );
+  });
 }

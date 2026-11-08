@@ -203,6 +203,45 @@ test("every room is reachable on foot from the spawn, stairs included", () => {
   }
 });
 
+test("the entrance is always a through room with an open way out", () => {
+  for (const difficulty of ["Very Easy", "Normal", "Hell"]) {
+    for (let seed = 1; seed <= 6; seed += 1) {
+      const plan = createDungeonPlan(seed * 7919 + 3, difficulty);
+      const level = plan.level;
+      const startRoom = level.entranceRoom;
+      const y = level.floorY;
+
+      assert.ok(startRoom.ports.north, "the north side is the landing");
+      assert.ok(startRoom.ports.south, "the south side is the way out of the first chamber");
+      assert.ok(
+        ["end", "corridor", "turn", "tJunction", "crossroads"].includes(startRoom.type.id),
+        `the entrance is a real module, not a sealed box (${startRoom.type.id})`,
+      );
+      assert.ok(level.exit.room, "the level has an exit room");
+      assert.equal(
+        plan.frontier.centerX,
+        level.exit.centerX,
+        "streaming continues on the exit door axis",
+      );
+
+      const blocks = collect(dungeonBlockIterator(plan));
+      const floorKeys = new Set(blocks.filter((b) => b.y === y).map((b) => `${b.x},${b.z}`));
+      const wallKeys = new Set(blocks.filter((b) => b.y > y).map((b) => `${b.x},${b.z}`));
+      const centerX = startRoom.x + 3;
+      for (let offset = -1; offset <= 1; offset += 1) {
+        assert.ok(
+          floorKeys.has(`${centerX + offset},${startRoom.z + startRoom.depth}`),
+          `the exit corridor is floored at offset ${offset}`,
+        );
+        assert.ok(
+          !wallKeys.has(`${centerX + offset},${startRoom.z + startRoom.depth - 1}`),
+          `the south door is open at offset ${offset}`,
+        );
+      }
+    }
+  }
+});
+
 test("a staircase keeps both doors at floor level and steps one block at a time", () => {
   let checked = 0;
   for (let seed = 1; seed <= 40 && checked < 4; seed += 1) {
@@ -298,7 +337,7 @@ test("the spawn pad is a supported 3x3 area inside the entrance room", () => {
     const plan = createDungeonPlan(13579, difficulty);
     const world = buildWorld(collect(dungeonBlockIterator(plan)), plan.level);
     const [spawnX, spawnY, spawnZ] = plan.level.spawnPosition;
-    const startRoom = plan.level.rooms[0];
+    const startRoom = plan.level.entranceRoom;
 
     assert.equal(spawnY, plan.level.floorY + 1);
     for (let dx = -1; dx <= 1; dx += 1) {
