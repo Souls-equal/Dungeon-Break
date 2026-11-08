@@ -11,6 +11,13 @@ const worldCode = fs.readFileSync(new URL("../world-code/worldCode.js", import.m
  * because players spawn at that altitude and a silent change drops them.
  */
 const FLOOR_Y = -1000;
+/**
+ * Budgets, mirrored from `DUNGEON_CONFIG` on purpose: if the configuration
+ * changes, this test must be updated by hand rather than silently follow along,
+ * because the number is what keeps a tick short.
+ */
+const FLOOR_BUDGET = 800;
+const FLOOR_BATCH = 80;
 const LOBBY_POSITION = [10, 21, 10];
 /**
  * The stones the builder is allowed to use. The floor is textured, so "the floor
@@ -246,10 +253,15 @@ test("the player is placed on a floor cell, and nothing is announced before it e
   }
 });
 
-test("a room is built in batches, never in a single tick", () => {
+test("the blocks written in one tick stay inside the configured budget", () => {
   const { context, blocks } = createWorld(["player-batch"]);
   startDungeon(context, "player-batch");
 
+  // The budget is `maxBlocksPerTick` plus one batch, because a batch is never
+  // interrupted: a half-written room is worse than a slightly long tick. The
+  // passages count against the same budget — they used to be served outside it,
+  // and a cycle that queued every threshold at once wrote nine hundred blocks.
+  const ceiling = FLOOR_BUDGET + FLOOR_BATCH;
   let biggestBatch = 0;
   let previous = blocks.length;
   for (let tick = 0; tick < 600; tick += 1) {
@@ -258,7 +270,8 @@ test("a room is built in batches, never in a single tick", () => {
     previous = blocks.length;
   }
   assert.ok(blocks.length > 0, "the entrance was never built");
-  assert.ok(biggestBatch <= 400, `one tick wrote ${biggestBatch} blocks, which freezes the world`);
+  assert.ok(biggestBatch <= ceiling,
+    `one tick wrote ${biggestBatch} blocks, which is more than the ${ceiling} the configuration allows`);
 });
 
 test("no block is written into a chunk the player has not loaded", () => {

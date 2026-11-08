@@ -38,10 +38,14 @@ function fakeApi() {
     setPosition(playerId, position) {
       calls.setPosition.push({ playerId, position });
       positions.set(playerId, position);
-      // Teleporting is what loads the chunks around the player, as in the game.
+      // Teleporting is what loads the chunks around the player, as in the game:
+      // a few chunks. This radius is wider than 32 blocks on purpose, because
+      // the distance between two rooms can exceed one chunk, but it is not
+      // unlimited — a fake that accepts every write cannot catch a builder that
+      // writes into the void. `worldBuilder.test` covers that case directly.
       loadedRects.push({
-        x1: Math.floor(position[0]) - 16, x2: Math.floor(position[0]) + 16,
-        z1: Math.floor(position[2]) - 16, z2: Math.floor(position[2]) + 16,
+        x1: Math.floor(position[0]) - 48, x2: Math.floor(position[0]) + 48,
+        z1: Math.floor(position[2]) - 48, z2: Math.floor(position[2]) + 48,
       });
     },
     getPosition(playerId) {
@@ -256,4 +260,72 @@ test("a service built for one lobby does not reuse another lobby's dungeons", ()
     dungeonSeedFor("easy", "beta"),
     "two lobbies would build the identical dungeon",
   );
+});
+
+// ------------------------------------------------------- the dungeon on foot --
+
+test("every room of a finished dungeon can be reached on foot from the entrance", () => {
+  // The bug this locks in: the rooms were built, the thresholds between them
+  // were not, and every doorway opened onto three cells of void. Nothing failed
+  // — there was simply no way through. This test walks the dungeon.
+  const api = fakeApi();
+  const service = createDungeonService({ api, lobbyName: "onfoot" });
+  let ready = false;
+  service.enterDifficulty("p1", "Easy", () => { ready = true; });
+  runUntil(() => ready, "the entrance to be built");
+
+  const dungeon = service.dungeonOf("p1");
+  for (let tick = 0; tick < 1500; tick += 1) {
+    stepScheduler();
+    service.tick();
+  }
+
+  const rooms = dungeon.manager.allRooms();
+  const connections = dungeon.manager.allConnections();
+  assert.ok(rooms.length > 3, `only ${rooms.length} room(s) were generated, so the test proves nothing`);
+  assert.equal(dungeon.controller.stats.passages, connections.length,
+    `${connections.length} connections but ${dungeon.controller.stats.passages} passage(s) built`);
+
+  const floor = new Set();
+  const solid = new Set();
+  for (const [key, name] of api.cells) {
+    const [x, y, z] = key.split(",").map(Number);
+    if (name === "Air") continue;
+    if (y === DUNGEON_CONFIG.floorY) floor.add(`${x},${z}`);
+    else solid.add(key);
+  }
+  const walkable = (key) => {
+    const [x, z] = key.split(",").map(Number);
+    return floor.has(key)
+      && !solid.has(`${x},${DUNGEON_CONFIG.floorY + 1},${z}`)
+      && !solid.has(`${x},${DUNGEON_CONFIG.floorY + 2},${z}`);
+  };
+
+  const entrance = dungeon.manager.getRoom(dungeon.entranceRoomId);
+  const start = `${entrance.origin.x + 1},${entrance.origin.y + 1}`;
+  assert.ok(walkable(start), "the entrance itself is not walkable");
+  const seen = new Set([start]);
+  const queue = [start];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    const [x, z] = current.split(",").map(Number);
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const next = `${x + dx},${z + dz}`;
+      if (seen.has(next) || !walkable(next)) continue;
+      seen.add(next);
+      queue.push(next);
+    }
+  }
+
+  const unreachable = rooms.filter((room) => {
+    for (let localZ = 0; localZ < room.mask.h; localZ += 1) {
+      for (let localX = 0; localX < room.mask.w; localX += 1) {
+        if (!room.mask.cells[localZ][localX]) continue;
+        if (seen.has(`${room.origin.x + localX},${room.origin.y + localZ}`)) return false;
+      }
+    }
+    return true;
+  });
+  assert.deepEqual(unreachable.map((room) => room.id), [],
+    "rooms were built that nobody can walk into");
 });

@@ -232,8 +232,12 @@ test("a player standing in the middle of a cell is located in that cell", () => 
   }
 });
 
-test("discovery cost does not grow with the size of the dungeon", () => {
-  const measure = (rooms) => {
+test("a scan reads a bounded neighbourhood, whatever the size of the dungeon", () => {
+  // This used to compare two wall-clock measurements, which is a coin flip on a
+  // loaded machine: it failed once in twenty runs for reasons that had nothing
+  // to do with the code. The property is the same one, measured honestly — how
+  // many rooms and openings a scan actually looks at.
+  const reach = (rooms) => {
     const manager = grow(8888, rooms);
     const entrance = manager.getRoom(manager.entranceRoomId);
     const players = [{
@@ -241,18 +245,34 @@ test("discovery cost does not grow with the size of the dungeon", () => {
       roomId: entrance.id,
       position: { x: entrance.origin.x + 1, y: entrance.origin.y + 1 },
     }];
-    // Warm up, so the first call does not pay for the index.
-    discoverOpenings({ manager, players });
-    const started = process.hrtime.bigint();
-    for (let pass = 0; pass < 20; pass += 1) discoverOpenings({ manager, players });
-    const elapsed = Number(process.hrtime.bigint() - started) / 1e6;
-    return { perScan: elapsed / 20, rooms: manager.roomCount };
+    // Breadth-first with a `seen` set, exactly as `discoverOpenings` walks it.
+    const seen = new Set([entrance.id]);
+    let visited = 0;
+    const frontier = [{ room: entrance, depth: 0 }];
+    while (frontier.length > 0) {
+      const entry = frontier.shift();
+      visited += 1;
+      if (entry.depth >= DUNGEON_CONFIG.anticipationDepth) continue;
+      for (const connectionId of entry.room.connections) {
+        const connection = manager.getConnection(connectionId);
+        if (!connection) continue;
+        const otherId = connection.a.roomId === entry.room.id ? connection.b.roomId : connection.a.roomId;
+        if (seen.has(otherId)) continue;
+        const other = manager.getRoom(otherId);
+        if (!other) continue;
+        seen.add(otherId);
+        frontier.push({ room: other, depth: entry.depth + 1 });
+      }
+    }
+    const found = discoverOpenings({ manager, players });
+    return { rooms: manager.roomCount, visited, offered: found.length };
   };
-  const small = measure(50);
-  const large = measure(400);
+  const small = reach(50);
+  const large = reach(400);
   assert.ok(large.rooms > small.rooms * 4);
-  assert.ok(
-    large.perScan < small.perScan * 4,
-    `a scan costs ${small.perScan.toFixed(3)} ms on ${small.rooms} rooms and ${large.perScan.toFixed(3)} ms on ${large.rooms}`,
-  );
+  // The neighbourhood is the same size in both dungeons: the scan is bounded by
+  // `anticipationDepth`, not by the dungeon.
+  assert.ok(large.visited <= small.visited * 2,
+    `a scan visits ${small.visited} rooms in a ${small.rooms}-room dungeon and ${large.visited} in a ${large.rooms}-room one`);
+  assert.ok(small.offered <= DUNGEON_CONFIG.maxDiscoveryPerCycle * 2);
 });

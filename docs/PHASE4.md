@@ -23,6 +23,50 @@ Cette séparation n'est pas décorative : `builder.js` est testé dans Node cont
 | 4 | plafond, cellules de passage sautées | ferme le volume sans bloquer |
 | 5 | pad de difficulté, sur une cellule de sol connue | dernier, pour ne jamais retarder une salle marchable |
 
+## Les passages — ce qui manquait
+
+Le constructeur ne posait que les cellules des salles. Les connexions du graphe stockaient bien leurs cellules (`joint` pour le joint minimal, `bridge` pour un couloir plus long), mais **personne ne les construisait** : chaque porte s'ouvrait sur trois cellules de vide, et le donjon n'avait aucun passage. Mesuré sur un donjon de 24 connexions : 72 cellules de joint, **0 écrite**.
+
+Un passage est maintenant un couloir, pas un trou :
+
+| Couche | Ce qui est écrit |
+| --- | --- |
+| sol | la cellule du passage, pour avoir où marcher |
+| flancs | les cellules voisines qui n'appartiennent à aucun autre passage, sur toute la hauteur des murs |
+| plafond | au-dessus du passage **et** des flancs, pour que ce soit un tunnel et pas une tranchée |
+| zéro | les niveaux 1 à `passageHeight` de la cellule marchable : écrire là mure la porte |
+
+Trois règles font que cela tient :
+
+1. **aucune cellule d'une salle n'est touchée** — la salle construit son propre sol et ses propres murs ;
+2. **le volume marchable est activement nettoyé** avant d'être bâti, parce que deux tunnels peuvent se croiser et que le premier murait la cellule que le second revendique ;
+3. **chaque porte connectée est rouverte** après la fin de la salle et après la construction du passage. Un plan de salle est figé au premier lot : si la porte était encore `pending` à ce moment, elle est murée dans ce plan, et rien d'autre n'enlèverait ce mur.
+
+## Le vrai coupable en amont : une porte qui donne sur un mur
+
+Le générateur autorisait une ouverture dont la « cellule d'approche » était un **pilier**. Le constructeur mure toute cellule qui touche un vide sur un axe ; une cellule d'approche encadrée par deux vides est donc un mur avec un trou dedans — on traverse la porte et on tape dans la brique. `planOpenings` compte maintenant ces vides et refuse l'ouverture (au plus **1** vide latéral, la valeur d'un angle). Effet secondaire vérifié : aucune forme générée ne perd ses ouvertures (0/200 contre 21/200 avec un critère naïf de dégagement).
+
+## La file de construction
+
+Deux défauts de la file expliquaient des passages manquants :
+
+- une entrée de passage dont le chunk n'était pas chargé était **jetée** ; elle est désormais réenfilée ;
+- le cycle s'arrêtait à la première salle inachevée, donc **une seule salle avançait par cycle** et tout ce qui était derrière attendait indéfiniment. Les entrées inachevées retournent à la fin de la file et le cycle continue.
+
+Les passages comptent aussi dans le budget de blocs du tick : sans cela, un cycle qui servait tous les seuils d'un coup écrivait 879 blocs.
+
+## Mesure de sortie
+
+Trois donjons complets, faux serveur, joueur immobile dans l'entrée :
+
+| Donjon | Salles | Connexions | Passages construits | Salles atteignables à pied | Écritures perdues |
+| --- | --- | --- | --- | --- | --- |
+| alpha | 20 | 20 | 20 | **20 / 20** | 0 |
+| beta | 30 | 33 | 33 | **30 / 30** | 0 |
+| gamma | 38 | 37 | 37 | **38 / 38** | 0 |
+
+Le test d'intégration `tests/engine/service.test.js` fait exactement cela : il part de l'entrée, marche de cellule en cellule au niveau du sol, et échoue si une salle construite n'est pas atteignable.
+
 **Texture.** Chaque bloc structurel est tiré **un par un** dans `"Stone"`, `"Messy Stone"`, `"Smooth Stone"`, `"Stone Bricks"`, `"Cracked Stone Bricks"`, `"Mossy Stone Bricks"`. Sol : famille des briques ; plafond : `Smooth Stone` ; murs et linteaux : la palette entière. Le tirage est un hachage de `(graine de salle, cellule, niveau)`, donc :
 - une salle interrompue puis reprise a les mêmes pierres qu'une salle construite d'un trait ;
 - une salle reconstruite depuis sa graine est identique ;
@@ -92,5 +136,7 @@ Le coût par tick reste dominé par la génération, comme en Phase 3 ; la const
 
 - **la persistance** : rien n'est encore écrit en base. Un redémarrage reconstruit depuis la graine, ce qui est correct mais ne conserve ni les salles déjà construites ni la position des joueurs (Phase 5) ;
 - **les minerais** : l'emplacement de l'appel est prêt (`allowMining`, liste vide), il reste à décider où les poser ;
+- **le pad de progression** n'est posé que si une salle le demande ; le service ne choisit pas encore laquelle ;
+- **les ponts** (`bridge`) partagent le code des passages mais restent rares : 0 sur les trois donjons mesurés ;
 - **le pad posé dans les salles autres que l'entrée** : le constructeur sait le faire (`roomBlocks(..., { pad })`), le service ne choisit pas encore quelle salle le porte ;
 - **les tests en jeu** : tout ce qui précède est vérifié contre des faux. Les questions ouvertes de `docs/ARCHITECTURE.md` §19 (portée réelle de la DB de lobby, comportement de `setCantChangeBlockRect` sur un volume) demandent une session Bloxd réelle.

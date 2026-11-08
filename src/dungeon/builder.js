@@ -53,6 +53,8 @@ export const BLOCKS = {
   CEILING: "Stone",
   EMPTY: "Air",
   PAD: "Gold Block",
+  /** The threshold between two rooms: a floor that is not inside either room. */
+  PASSAGE: "Stone Bricks",
   /** The full stone family, wall and ceiling included. */
   PALETTE: STONE_PALETTE,
   /** The blocks a floor cell may carry. */
@@ -88,6 +90,8 @@ export function texturedBlock(room, localX, level, localZ, family) {
 export const BUILD_PHASE = {
   CLEAR: "clear",
   FLOOR: "floor",
+  /** Ground of a passage: written with the floor, before any wall. */
+  PASSAGE: "passage",
   WALL: "wall",
   CEILING: "ceiling",
   PAD: "pad",
@@ -95,6 +99,165 @@ export const BUILD_PHASE = {
 };
 
 /**
+ * The cells of a passage, in world coordinates.
+ *
+ * A connection already stores the cells it pierces — `joint` for the minimum
+ * masonry between two touching rooms, `bridge` for the explicit corridor of a
+ * longer connection. This is the only reader of those two fields on the build
+ * side, and it deduplicates them because a connection may legitimately list the
+ * same cell twice.
+ */
+export function passageCellsFor(connection) {
+  const seen = new Set();
+  const cells = [];
+  const lists = [connection.joint, connection.bridge];
+  for (let list = 0; list < lists.length; list += 1) {
+    const entries = lists[list];
+    if (!entries) continue;
+    for (let index = 0; index < entries.length; index += 1) {
+      const cell = entries[index];
+      const key = `${cell.x},${cell.y}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      cells.push({ x: cell.x, z: cell.y });
+    }
+  }
+  return cells;
+}
+
+/**
+ * Who owns which cell, once, for the whole dungeon.
+ *
+ * The builder needs two answers it cannot guess: which cells a room already
+ * writes (they must never be written again), and which cells are already a
+ * passage (two connections sharing a threshold must not fight over it). Both
+ * are computed once per dungeon and passed down, never re-derived per room.
+ */
+export function dungeonCellIndex(rooms, connections = []) {
+  const owned = new Set();
+  for (let index = 0; index < rooms.length; index += 1) {
+    const room = rooms[index];
+    for (let localZ = 0; localZ < room.mask.h; localZ += 1) {
+      for (let localX = 0; localX < room.mask.w; localX += 1) {
+        if (!room.mask.cells[localZ][localX]) continue;
+        owned.add(`${room.origin.x + localX},${room.origin.y + localZ}`);
+      }
+    }
+  }
+  const passages = new Set();
+  const perConnection = new Map();
+  for (let index = 0; index < connections.length; index += 1) {
+    const cells = passageCellsFor(connections[index]);
+    perConnection.set(connections[index].id, cells);
+    for (let at = 0; at < cells.length; at += 1) passages.add(`${cells[at].x},${cells[at].z}`);
+  }
+  return { owned, passages, perConnection };
+}
+
+const NEIGHBOURS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+
+/**
+ * Every block of the *passage* a connection carves, in writing order.
+ *
+ * This is what was missing until this phase: the rooms were built and the
+ * thresholds between them were not, so every doorway opened onto three cells of
+ * void and the dungeon had no way through.
+ *
+ * A passage is a corridor, not a hole:
+ *
+ *   floor    the passage cell, so there is something to walk on
+ *   sides    the neighbouring void cells, so it is a corridor and not a trench
+ *   roof     above the passage, so it is a tunnel and not a canyon
+ *
+ * The walkable cells themselves are left open at `1..passageHeight`: writing
+ * anything there would wall the doorway shut.
+ *
+ * Nothing is ever written on a cell a room owns, nor on a cell that belongs to
+ * another connection: that is what keeps the "a cell is written once" rule true
+ * across the whole dungeon, and not only inside one room.
+ */
+export function passageBlocks(connection, world, index, options = {}) {
+  const floorY = options.floorY === undefined ? world.y : options.floorY;
+  const wallHeight = DUNGEON_CONFIG.wallHeight;
+  const own = index && index.perConnection
+    ? index.perConnection.get(connection.id) || passageCellsFor(connection)
+    : passageCellsFor(connection);
+  const owned = (index && index.owned) || new Set();
+  const allPassages = (index && index.passages) || new Set(own.map((cell) => `${cell.x},${cell.z}`));
+
+  const free = own.filter((cell) => !owned.has(`${cell.x},${cell.z}`));
+  if (free.length === 0) return [];
+
+  // The tunnel is one doorway wide and runs along the axis of the connection.
+  // A cell is "along" when a free cell continues on that axis.
+  const freeSet = new Set(free.map((cell) => `${cell.x},${cell.z}`));
+  const isFree = (x, z) => freeSet.has(`${x},${z}`);
+  const isMine = (x, z) => owned.has(`${x},${z}`) || allPassages.has(`${x},${z}`) && !isFree(x, z);
+
+  const fake = { id: connection.id, seed: hashParts("passage", connection.id) };
+  const blocks = [];
+  const wallCell = new Set();
+
+  for (let index_ = 0; index_ < free.length; index_ += 1) {
+    const cell = free[index_];
+    // Clear the walkable column first. Two tunnels can cross, and one of them
+    // may have walled this cell before the other claimed it: without this pass
+    // the second tunnel is dug, floored, and sealed by the first one's masonry.
+    for (let level = 1; level <= wallHeight; level += 1) {
+      blocks.push({
+        x: cell.x, y: floorY + level, z: cell.z,
+        name: BLOCKS.EMPTY,
+        phase: BUILD_PHASE.PASSAGE,
+      });
+    }
+    // Floor of the walkable cell.
+    blocks.push({
+      x: cell.x, y: floorY, z: cell.z,
+      name: texturedBlock(fake, cell.x, 0, cell.z, "floor"),
+      phase: BUILD_PHASE.PASSAGE,
+    });
+
+    // Flanks: every neighbour that is neither a room nor another passage. A
+    // neighbour along the tunnel is skipped — it is the way through.
+    for (let side = 0; side < NEIGHBOURS.length; side += 1) {
+      const nx = cell.x + NEIGHBOURS[side][0];
+      const nz = cell.z + NEIGHBOURS[side][1];
+      if (isFree(nx, nz) || isMine(nx, nz)) continue;
+      const key = `${nx},${nz}`;
+      if (wallCell.has(key)) continue;
+      wallCell.add(key);
+      blocks.push({
+        x: nx, y: floorY, z: nz,
+        name: texturedBlock(fake, nx, 0, nz, "floor"),
+        phase: BUILD_PHASE.PASSAGE,
+      });
+      for (let level = 1; level <= wallHeight; level += 1) {
+        blocks.push({
+          x: nx, y: floorY + level, z: nz,
+          name: texturedBlock(fake, nx, level, nz, "wall"),
+          phase: BUILD_PHASE.WALL,
+        });
+      }
+      blocks.push({
+        x: nx, y: floorY + wallHeight + 1, z: nz,
+        name: texturedBlock(fake, nx, wallHeight + 1, nz, "ceiling"),
+        phase: BUILD_PHASE.CEILING,
+      });
+    }
+
+    // Roof of the walkable cell: the tunnel is covered.
+    blocks.push({
+      x: cell.x, y: floorY + wallHeight + 1, z: cell.z,
+      name: texturedBlock(fake, cell.x, wallHeight + 1, cell.z, "ceiling"),
+      phase: BUILD_PHASE.CEILING,
+    });
+  }
+
+  return blocks;
+}
+
+/**
+ * Every block of a room, in writing order, as `{ x, y, z, name, phase }`./**
  * Every block of a room, in writing order, as `{ x, y, z, name, phase }`.
  *
  * `world` is the room's world origin: `{ x, y, z }` of its logical cell (0, 0)

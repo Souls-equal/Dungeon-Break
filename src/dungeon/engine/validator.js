@@ -78,10 +78,11 @@ function openingsReachable(mask, openings, clearances) {
     const anchor = anchors[index];
     if (clearances[anchor.y] === undefined) return false;
     if (!cellAt(mask, anchor.x, anchor.y)) return false;
-    if (clearances[anchor.y][anchor.x] < 1) return false;
+    // Clearance 1 is a cell the builder walls, so it is not a place to stand.
+    if (clearances[anchor.y][anchor.x] <= DUNGEON_CONFIG.minApproachDepth) return false;
   }
   for (let index = 1; index < anchors.length; index += 1) {
-    const path = walkablePath(mask, anchors[0], anchors[index], 1);
+    const path = walkablePath(mask, anchors[0], anchors[index], DUNGEON_CONFIG.minApproachDepth + 1);
     if (!path) return false;
   }
   return true;

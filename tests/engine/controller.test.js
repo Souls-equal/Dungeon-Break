@@ -391,3 +391,67 @@ test("a builder that reports only a block count still works", () => {
   assert.ok(controller.stats.built >= 1);
   assert.equal(controller.stats.resumed, 0);
 });
+
+test("a passage is queued for every connection, loops included", () => {
+  // A connection that closes a loop pierces two walls that are already built,
+  // so it needs a passage just as much as a new room does — and nobody else was
+  // going to ask for it.
+  // A fresh dungeon with only its entrance: every other room, and therefore
+  // every connection, is created *by the controller*. Using `grow()` here would
+  // pre-create connections the controller never had a chance to queue.
+  const manager = createDungeonManager({ seed: 12345, radius: 512 });
+  assert.ok(manager.createEntrance());
+  const asked = [];
+  const controller = createDungeonController({
+    manager,
+    builder: {
+      buildRoom: () => ({ blocks: 10, done: true }),
+      buildPassage: (connection) => {
+        asked.push(connection.id);
+        return { blocks: 5, done: true };
+      },
+    },
+  });
+  const entrance = manager.getRoom(manager.entranceRoomId);
+  const standing = { x: entrance.origin.x + 1, z: entrance.origin.y + 1 };
+  for (let pass = 0; pass < 40; pass += 1) {
+    controller.upsertPlayer({ id: "p1", position: standing });
+    controller.cycle();
+  }
+  const connections = manager.allConnections();
+  const missed = connections.filter((connection) => !asked.includes(connection.id));
+  assert.deepEqual(missed.map((connection) => connection.id), [],
+    "a connection was never given a passage");
+  assert.ok(asked.length >= connections.length);
+});
+
+test("an unfinished room does not starve the rest of the build queue", () => {
+  // Building is served in queue order, and a room that needs several passes goes
+  // back to the end. Stopping the cycle at the first unfinished room meant one
+  // room advanced per cycle and every threshold behind it waited for ever.
+  const manager = grow(777, 8);
+  let passes = 0;
+  const built = [];
+  const passages = [];
+  const controller = createDungeonController({
+    manager,
+    builder: {
+      buildRoom: (room) => {
+        passes += 1;
+        const done = passes > 3;
+        if (done) built.push(room.id);
+        return { blocks: 10, done };
+      },
+      buildPassage: (connection) => { passages.push(connection.id); return { blocks: 5, done: true }; },
+    },
+  });
+  const entrance = manager.getRoom(manager.entranceRoomId);
+  const standing = { x: entrance.origin.x + 1, z: entrance.origin.y + 1 };
+  controller.upsertPlayer({ id: "p1", position: standing });
+  controller.cycle();
+  controller.upsertPlayer({ id: "p1", position: standing });
+  controller.cycle();
+  assert.ok(passages.length > 0,
+    "the passages queued behind an unfinished room were never served");
+  assert.ok(built.length > 0, "no room finished at all");
+});

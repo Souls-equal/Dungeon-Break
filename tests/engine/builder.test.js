@@ -10,7 +10,10 @@ import {
   BLOCKS,
   createRoomWriter,
   doorwaySet,
+  dungeonCellIndex,
   padCell,
+  passageBlocks,
+  passageCellsFor,
   roomBlocks,
   STONE_PALETTE,
 } from "../../src/dungeon/builder.js";
@@ -313,4 +316,85 @@ test("two rooms do not get the same texture", () => {
     .map((block) => block.name[0]).join("");
   const signatures = manager.allRooms().map(signature);
   assert.ok(new Set(signatures).size > 1, "every room has exactly the same wall texture");
+});
+
+// ------------------------------------------------------------ the passages --
+
+test("a passage is a corridor: floored, walled on the flanks, roofed, and open", () => {
+  const manager = grow(12345, 10);
+  const connections = manager.allConnections();
+  assert.ok(connections.length > 0, "no connection to build a passage for");
+  const index = dungeonCellIndex(manager.allRooms(), connections);
+  let checked = 0;
+  for (const connection of connections) {
+    const world = { x: 0, y: -1000, z: 0 };
+    const blocks = passageBlocks(connection, world, index);
+    const cells = passageCellsFor(connection);
+    if (cells.length === 0) continue;
+    const byCell = new Map();
+    for (const block of blocks) {
+      const key = `${block.x},${block.z}`;
+      if (!byCell.has(key)) byCell.set(key, []);
+      byCell.get(key).push(block);
+    }
+    for (const cell of cells) {
+      const column = byCell.get(`${cell.x},${cell.z}`);
+      if (!column) continue; // owned by a room, which builds it itself
+      assert.ok(column.some((block) => block.y === -1000),
+        `${connection.id}: the passage cell ${cell.x},${cell.z} has no floor`);
+      // The walkable height must stay empty: writing there walls the doorway.
+      // The walkable height must stay *clear*, not *unwritten*: the builder
+      // actively clears the column, so that a tunnel which arrives second is not
+      // sealed by the first one's masonry.
+      const solidInside = column.filter((block) => block.y > -1000
+        && block.y < -1000 + DUNGEON_CONFIG.passageHeight
+        && block.name !== BLOCKS.EMPTY);
+      assert.deepEqual(solidInside, [],
+        `${connection.id}: the passage cell ${cell.x},${cell.z} is blocked at walking height`);
+      checked += 1;
+    }
+    // A passage that is not covered is a trench open to the sky.
+    assert.ok(blocks.some((block) => block.phase === BUILD_PHASE.CEILING),
+      `${connection.id}: the passage has no roof`);
+  }
+  assert.ok(checked > 0, "no passage cell was inspected");
+});
+
+test("a passage never writes on a cell a room owns", () => {
+  const manager = grow(4242, 15);
+  const rooms = manager.allRooms();
+  const connections = manager.allConnections();
+  const index = dungeonCellIndex(rooms, connections);
+  for (const connection of connections) {
+    for (const block of passageBlocks(connection, { x: 0, y: -1000, z: 0 }, index)) {
+      assert.equal(index.owned.has(`${block.x},${block.z}`), false,
+        `${connection.id} wrote on ${block.x},${block.z}, which belongs to a room`);
+    }
+  }
+});
+
+test("no cell is written twice once the passages are built too", () => {
+  // The rule that used to hold only inside one room now has to hold for the
+  // whole dungeon: a room and the tunnel that leads to it share a doorway.
+  const manager = grow(6060, 12);
+  const rooms = manager.allRooms();
+  const connections = manager.allConnections();
+  const index = dungeonCellIndex(rooms, connections);
+  const world = { x: 0, y: -1000, z: 0 };
+  const seen = new Map();
+  const record = (block, owner) => {
+    const key = `${block.x},${block.y},${block.z}`;
+    const previous = seen.get(key);
+    if (previous && previous.name !== block.name) {
+      throw new Error(`${key} written as ${previous.name} by ${previous.owner} then ${block.name} by ${owner}`);
+    }
+    seen.set(key, { name: block.name, owner });
+  };
+  for (const room of rooms) {
+    for (const block of roomBlocks(room, { x: room.origin.x, y: -1000, z: room.origin.y })) record(block, room.id);
+  }
+  for (const connection of connections) {
+    for (const block of passageBlocks(connection, world, index)) record(block, connection.id);
+  }
+  assert.ok(seen.size > 0);
 });
