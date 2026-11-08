@@ -1,0 +1,16 @@
+{
+  "name": "dungeon-break",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Procedural Bloxd.io dungeon game source and World Code build tools",
+  "scripts": {
+    "build": "node tools/build-world-code.mjs",
+    "watch": "node tools/build-world-code.mjs --watch",
+    "check": "node tools/build-world-code.mjs --check && node --check src/worldCode.js && node --check src/utils/scheduler.js && node --check world-code/worldCode.js",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}

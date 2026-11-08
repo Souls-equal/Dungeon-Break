@@ -1,11 +1,17 @@
 /*
  * Dungeon Break — lobby difficulty picker
- * Paste this entire file into Bloxd World Code (F8).
+ * Source entry point. Build the copyable, compact script with `npm run build`.
  * Player-facing messages are intentionally in English.
  */
 
+import {
+  setInterval as scheduleInterval,
+  step as stepScheduler,
+} from "./utils/scheduler.js";
+
 const LOBBY_CONFIG = {
   countdownSeconds: 10,
+  ticksPerSecond: 20,
   // Block names are compared exactly with Bloxd's onBlockStandStart callback.
   // Keep each pad's top surface made from one of these Concrete blocks.
   difficultyByBlock: {
@@ -22,9 +28,8 @@ const LOBBY_CONFIG = {
 };
 
 // Active countdowns are per-player, so players can pick independently.
-// Each entry is { difficulty, padKey, deadline, lastDisplayedSecond }.
+// Each entry is { difficulty, padKey, secondsLeft, timer }.
 const lobbyCountdowns = {};
-const chosenDifficulties = {};
 
 function lobbyPadKey(x, y, z) {
   return `${x},${y},${z}`;
@@ -46,11 +51,19 @@ function showCountdown(playerId, difficulty, secondsLeft) {
   );
 }
 
-function cancelLobbyCountdown(playerId) {
-  if (!lobbyCountdowns[playerId]) return;
+function stopLobbyCountdown(playerId) {
+  const countdown = lobbyCountdowns[playerId];
+  if (!countdown) return false;
 
+  countdown.timer.stop();
   delete lobbyCountdowns[playerId];
-  api.sendMessage(playerId, "Countdown cancelled. Step on a difficulty pad to try again.");
+  return true;
+}
+
+function cancelLobbyCountdown(playerId) {
+  if (stopLobbyCountdown(playerId)) {
+    api.sendMessage(playerId, "Countdown cancelled. Step on a difficulty pad to try again.");
+  }
 }
 
 function startLobbyCountdown(playerId, x, y, z, blockName) {
@@ -62,20 +75,38 @@ function startLobbyCountdown(playerId, x, y, z, blockName) {
 
   // Avoid restarting the countdown if the callback fires again on the same pad.
   if (current && current.padKey === padKey) return;
+  if (current) stopLobbyCountdown(playerId);
 
-  chosenDifficulties[playerId] = difficulty;
-  lobbyCountdowns[playerId] = {
+  const countdown = {
     difficulty,
     padKey,
-    deadline: api.now() + LOBBY_CONFIG.countdownSeconds * 1000,
-    lastDisplayedSecond: LOBBY_CONFIG.countdownSeconds,
+    secondsLeft: LOBBY_CONFIG.countdownSeconds,
+    timer: null,
   };
+  lobbyCountdowns[playerId] = countdown;
 
   api.sendMessage(
     playerId,
     `${difficulty} selected. Starting in ${LOBBY_CONFIG.countdownSeconds} seconds — step off the pad to cancel.`,
   );
-  showCountdown(playerId, difficulty, LOBBY_CONFIG.countdownSeconds);
+  showCountdown(playerId, difficulty, countdown.secondsLeft);
+
+  countdown.timer = scheduleInterval(() => {
+    // Ignore a stale callback if this player has since selected another pad.
+    if (lobbyCountdowns[playerId] !== countdown) {
+      countdown.timer.stop();
+      return;
+    }
+
+    countdown.secondsLeft -= 1;
+    if (countdown.secondsLeft <= 0) {
+      stopLobbyCountdown(playerId);
+      onLobbyCountdownComplete(playerId, difficulty);
+      return;
+    }
+
+    showCountdown(playerId, difficulty, countdown.secondsLeft);
+  }, LOBBY_CONFIG.ticksPerSecond);
 }
 
 function onLobbyCountdownComplete(playerId, difficulty) {
@@ -103,29 +134,12 @@ onBlockStandStop = (playerId, x, y, z, blockName) => {
   }
 };
 
-tick = (ms) => {
-  const now = api.now();
-
-  for (const playerId of Object.keys(lobbyCountdowns)) {
-    const countdown = lobbyCountdowns[playerId];
-    const secondsLeft = Math.ceil((countdown.deadline - now) / 1000);
-
-    if (secondsLeft <= 0) {
-      delete lobbyCountdowns[playerId];
-      onLobbyCountdownComplete(playerId, countdown.difficulty);
-      continue;
-    }
-
-    if (secondsLeft !== countdown.lastDisplayedSecond) {
-      countdown.lastDisplayedSecond = secondsLeft;
-      showCountdown(playerId, countdown.difficulty, secondsLeft);
-    }
-  }
+tick = () => {
+  stepScheduler();
 };
 
 onPlayerLeave = (playerId) => {
-  delete lobbyCountdowns[playerId];
-  delete chosenDifficulties[playerId];
+  stopLobbyCountdown(playerId);
 };
 
 onPlayerJoin = (playerId) => {
