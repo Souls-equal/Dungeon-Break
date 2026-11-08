@@ -706,7 +706,15 @@ export function generateDungeon(playerId, difficulty) {
   const seed = nextDungeonSeed();
   const plan = createDungeonPlan(seed, difficulty);
   const operations = [];
+  const spawnFloorCenterX = plan.spawnPosition[0] - 0.5;
+  const spawnFloorCenterZ = plan.spawnPosition[2] - 0.5;
 
+  // Place the complete starting room floor first, so the teleport target is
+  // already supported before any walls or the player are sent into the dungeon.
+  operations.push({
+    from: [spawnFloorCenterX - 2, plan.floorY, spawnFloorCenterZ - 2],
+    to: [spawnFloorCenterX + 2, plan.floorY, spawnFloorCenterZ + 2],
+  });
   for (const floor of plan.floors) operations.push(...floor.floorRects);
   for (const floor of plan.floors) operations.push(...floor.walls);
   operations.push(...plan.stairBlocks);
