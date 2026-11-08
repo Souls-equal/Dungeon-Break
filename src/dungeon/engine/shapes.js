@@ -12,6 +12,21 @@
  */
 
 import { DUNGEON_CONFIG } from "./config.js";
+import { planOpenings } from "./openings.js";
+
+/**
+ * One cell of the ×1 design, in cells of the current scale.
+ *
+ * The families below are written in *proportions of the room* wherever they
+ * can be (a notch is 35 % of the side, a bar is a third of the width), but a few
+ * thicknesses are inherently absolute: a wing one cell thick, a bite two cells
+ * deep. Those were correct at 1× and are wrong at 3×: a one-cell wing on a
+ * 33-cell room is a hair, and no three-cell doorway fits in it — the doorway
+ * needs cells whose clearance is at least 2, and a one-cell sliver has none.
+ * Everything absolute in this file is therefore written in `UNIT`s, so the
+ * shapes keep the proportions they were designed with whatever the scale.
+ */
+const UNIT = DUNGEON_CONFIG.scale;
 import { createRandomSource, hashParts } from "./random.js";
 import {
   bounds,
@@ -65,7 +80,7 @@ const SHAPE_FAMILIES = {
   /** One cell-wide wings on opposite sides: an L or a T, depending on the ends. */
   wings(mask, random) {
     const horizontal = random.chance(0.5);
-    const thickness = random.int(1, Math.max(1, Math.floor(Math.min(mask.w, mask.h) / 2) - 1));
+    const thickness = random.int(UNIT, Math.max(UNIT, Math.floor(Math.min(mask.w, mask.h) / 2) - 1));
     if (horizontal) {
       const y1 = random.int(0, mask.h - 1 - thickness);
       fillRect(mask, 0, y1, mask.w - 1, y1 + thickness);
@@ -81,8 +96,8 @@ const SHAPE_FAMILIES = {
 
   /** A cross: a horizontal bar and a vertical bar whose arms may be asymmetric. */
   cross(mask, random) {
-    const barHeight = random.int(1, Math.max(1, Math.floor(mask.h / 3)));
-    const barWidth = random.int(1, Math.max(1, Math.floor(mask.w / 3)));
+    const barHeight = random.int(UNIT, Math.max(UNIT, Math.floor(mask.h / 3)));
+    const barWidth = random.int(UNIT, Math.max(UNIT, Math.floor(mask.w / 3)));
     const y1 = random.int(0, mask.h - 1 - barHeight);
     const x1 = random.int(0, mask.w - 1 - barWidth);
     fillRect(mask, 0, y1, mask.w - 1, y1 + barHeight);
@@ -95,7 +110,7 @@ const SHAPE_FAMILIES = {
     const count = random.int(1, 2);
     for (let index = 0; index < count; index += 1) {
       const side = random.int(0, 3);
-      const span = random.int(1, Math.max(1, Math.floor((side % 2 === 0 ? mask.w : mask.h) / 2)));
+      const span = random.int(UNIT, Math.max(UNIT, Math.floor((side % 2 === 0 ? mask.w : mask.h) / 2)));
       if (side === 0) {
         const x1 = random.int(0, mask.w - 1 - span);
         fillRect(mask, x1, 0, x1 + span, Math.max(1, Math.floor(mask.h / 3)), 1);
@@ -121,41 +136,46 @@ const SHAPE_FAMILIES = {
   irregular(mask, random) {
     fillRect(mask, 0, 0, mask.w - 1, mask.h - 1);
     const bites = random.int(2, 5);
+    // A bite is a shallow scar, in units: two units deep at most, and never on a
+    // corner. Deeper, and it would split the room in two instead of roughing up
+    // its wall.
+    const maxDepth = Math.max(UNIT, Math.min(2 * UNIT, Math.floor(Math.min(mask.w, mask.h) / 4)));
     for (let index = 0; index < bites; index += 1) {
       const side = random.int(0, 3);
-      const span = random.int(1, 2);
-      const depth = random.int(1, 2);
+      const span = random.int(UNIT, 2 * UNIT);
+      const depth = random.int(UNIT, maxDepth);
       if (side === 0) {
-        const x1 = random.int(1, Math.max(1, mask.w - 1 - span));
+        const x1 = random.int(UNIT, Math.max(UNIT, mask.w - 1 - span));
         fillRect(mask, x1, 0, x1 + span - 1, depth - 1, 0);
       } else if (side === 2) {
-        const x1 = random.int(1, Math.max(1, mask.w - 1 - span));
+        const x1 = random.int(UNIT, Math.max(UNIT, mask.w - 1 - span));
         fillRect(mask, x1, mask.h - depth, x1 + span - 1, mask.h - 1, 0);
       } else if (side === 1) {
-        const y1 = random.int(1, Math.max(1, mask.h - 1 - span));
+        const y1 = random.int(UNIT, Math.max(UNIT, mask.h - 1 - span));
         fillRect(mask, mask.w - depth, y1, mask.w - 1, y1 + span - 1, 0);
       } else {
-        const y1 = random.int(1, Math.max(1, mask.h - 1 - span));
+        const y1 = random.int(UNIT, Math.max(UNIT, mask.h - 1 - span));
         fillRect(mask, 0, y1, depth - 1, y1 + span - 1, 0);
       }
     }
-    // Two cells deep at most, and never on a corner: the result stays a room
-    // with uneven walls rather than a maze.
   },
 
   /** A wide room narrowed in its middle: two chambers joined by a neck. */
   narrow(mask, random) {
     fillRect(mask, 0, 0, mask.w - 1, mask.h - 1);
     const horizontal = random.chance(0.5);
+    // The neck is `UNIT` cells wide at least: at 1× it was two, which is what a
+    // player needs; at 3× it is six, which is what the same player needs in a
+    // room nine times larger.
     if (horizontal) {
-      const from = Math.max(1, Math.floor(mask.w / 2) - 1);
+      const from = Math.max(1, Math.floor(mask.w / 2) - UNIT);
       const to = Math.min(mask.w - 2, Math.floor(mask.w / 2));
       const top = random.int(1, Math.max(1, Math.floor(mask.h / 3)));
       const bottom = mask.h - 1 - random.int(1, Math.max(1, Math.floor(mask.h / 3)));
       fillRect(mask, from - 1, 0, to + 1, top, 0);
       fillRect(mask, from - 1, bottom, to + 1, mask.h - 1, 0);
     } else {
-      const from = Math.max(1, Math.floor(mask.h / 2) - 1);
+      const from = Math.max(1, Math.floor(mask.h / 2) - UNIT);
       const to = Math.min(mask.h - 2, Math.floor(mask.h / 2));
       const left = random.int(1, Math.max(1, Math.floor(mask.w / 3)));
       const right = mask.w - 1 - random.int(1, Math.max(1, Math.floor(mask.w / 3)));
@@ -227,6 +247,19 @@ export function generateShape(seed, attempt = 0, options = {}) {
     const key = shapeKey(mask);
     if (options.exclude && options.exclude.has(key)) {
       used.add("DUPLICATE");
+      continue;
+    }
+    // A shape that cannot host the minimum number of doorways is not a room: it
+    // is a piece of rock with four walls. The check is here, and not left to the
+    // caller's retry loop, because the caller's retry loop is what turns a bad
+    // draw into a repeatedly generated and repeatedly refused room — and because
+    // the property "every returned shape can be a room" is what the geometry
+    // tests assert. Since the doorway rule is `width + 2 × corner clearance` of
+    // continuous walkable face, the families with thin members (a cross with
+    // 3-cell arms) fail it, and redrawing is the honest answer: the next draw
+    // picks another family and another size.
+    if (planOpenings("shape", mask, subSeed).openings.length < DUNGEON_CONFIG.minOpenings) {
+      used.add("NO_OPENING");
       continue;
     }
 

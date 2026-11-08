@@ -187,9 +187,14 @@ test("the builder is asked for exactly the rooms that were created", () => {
 });
 
 test("construction stops at its block budget and keeps the rest for later", () => {
-  const manager = grow(3030, 4);
-  // Eight rooms' worth of blocks per cycle: the budget must stop the fourth.
-  const builder = fakeBuilder(300);
+  // Three builds' worth of blocks per step against a queue of a dozen: the
+  // budget must stop the step in the middle and leave the rest queued. The cost
+  // per room is derived from the budget rather than hard-coded, so this test
+  // says what it means whatever the scale of the dungeon.
+  const perRoom = Math.floor(DUNGEON_CONFIG.maxBlocksPerTick / 4);
+  const roomsWanted = 20;
+  const manager = grow(3030, roomsWanted);
+  const builder = fakeBuilder(perRoom);
   const controller = createDungeonController({ manager, builder });
   const entrance = manager.getRoom(manager.entranceRoomId);
   controller.upsertPlayer({
@@ -202,14 +207,14 @@ test("construction stops at its block budget and keeps the rest for later", () =
   controller.buildStep();
   // Overrunning by at most one room is the price of never splitting a room
   // mid-build; what matters is that the budget bounds the step.
-  assert.ok(controller.stats.blocksWritten <= DUNGEON_CONFIG.maxBlocksPerTick + 300,
+  assert.ok(controller.stats.blocksWritten <= DUNGEON_CONFIG.maxBlocksPerTick + perRoom,
     `${controller.stats.blocksWritten} blocks written in one build step`);
-  assert.ok(controller.stats.built < 8, "the budget did not stop the step at all");
+  assert.ok(controller.stats.built < roomsWanted, "the budget did not stop the step at all");
   const pendingAfterFirst = controller.queues.size("build");
   // The rooms that were not built are still queued: nothing was dropped.
   assert.ok(pendingAfterFirst >= 0);
   const builtSoFar = builder.built.length;
-  builder.buildRoom = (room) => { builder.built.push(room.id); return 300; };
+  builder.buildRoom = (room) => { builder.built.push(room.id); return perRoom; };
   buildSteps(controller, 3);
   assert.ok(builder.built.length > builtSoFar, "a later build step built nothing");
 });

@@ -385,7 +385,15 @@ export function createWorldBuilder(options) {
   }
 
   /** Writes the landing pad once the player is standing in the right chunk. */
-  function layLandingPad(cell, radius = 2) {
+  /**
+   * Lays the small pad the player lands on.
+   *
+   * The default radius follows the dungeon's scale: 5×5 cells was what a
+   * one-cell-wide dungeon needed to give the player a solid spot underfoot; at
+   * ×3 the same pad is 15×15, because a 5×5 island in the middle of a 20-cell
+   * hall reads as a tile the player was placed on by mistake.
+   */
+  function layLandingPad(cell, radius = DUNGEON_CONFIG.scale * 2) {
     let written = 0;
     for (let dx = -radius; dx <= radius; dx += 1) {
       for (let dz = -radius; dz <= radius; dz += 1) {

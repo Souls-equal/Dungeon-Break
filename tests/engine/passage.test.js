@@ -103,12 +103,16 @@ test("a doorway is walkable from one room to the next through the joint", () => 
 });
 
 test("the validator refuses a room that would sit on top of another", () => {
-  const mask = fromRows(["111", "111", "111"]);
-  const otherMask = fromRows(["111", "111", "111"]);
+  // A room large enough to host a legal doorway. The size is not decorative: a
+  // doorway is `minPassageWidth` cells wide with `minCornerClearance` on each
+  // side, so a face shorter than `width + 2 × clearance` cannot host one at all,
+  // and the validator would answer OPENING_IN_CORNER before ever looking at the
+  // collision this test is about.
+  const mask = solidMask(15, 15);
+  const otherMask = solidMask(15, 15);
   const openings = [
-    openingAt("candidate.o0", "south", 1, 1, {
-      faceLength: mask.w, width: DUNGEON_CONFIG.minPassageWidth,
-    }),
+    openingAt("candidate.o0", "south", 3, 5, { centerX: 4, centerY: 14, width: 3, faceLength: mask.w }),
+    openingAt("candidate.o1", "north", 3, 5, { centerX: 4, centerY: 0, width: 3, faceLength: mask.w }),
   ];
   const verdict = validateRoom({
     candidate: { mask, origin: { x: 0, y: 0 }, openings },
@@ -157,11 +161,23 @@ test("the validator refuses a room beyond the allocated radius", () => {
 });
 
 test("a room whose openings cannot reach each other is refused", () => {
-  // Two blobs in one bounding box, joined by nothing.
-  const mask = fromRows(["111000", "110000", "000111", "000111"]);
+  // Two blobs in one bounding box, joined by nothing. Each blob is large enough
+  // to host a legal doorway on two facing walls, so the only thing wrong with
+  // the candidate is what this test is about: no walk between the two doors.
+  const rows = [];
+  for (let y = 0; y < 15; y += 1) {
+    let row = "";
+    for (let x = 0; x < 15; x += 1) {
+      const inTop = y <= 6 && x <= 6;
+      const inBottom = y >= 8 && x >= 8;
+      row += inTop || inBottom ? "1" : "0";
+    }
+    rows.push(row);
+  }
+  const mask = fromRows(rows);
   const openings = [
-    openingAt("candidate.o0", "north", 1, 1, { centerY: 0, faceLength: mask.w }),
-    openingAt("candidate.o1", "south", 4, 4, { centerX: 4, centerY: 3, faceLength: mask.w }),
+    openingAt("candidate.o0", "north", 3, 5, { centerX: 4, centerY: 0, width: 3, faceLength: mask.w }),
+    openingAt("candidate.o1", "south", 9, 11, { centerX: 10, centerY: 14, width: 3, faceLength: mask.w }),
   ];
   const verdict = validateRoom({
     candidate: { mask, origin: { x: 0, y: 0 }, openings },
@@ -185,15 +201,28 @@ test("a passage is carved, not assumed: the cells between two doorways exist", (
     const openingB = roomB.openings.find((entry) => entry.id === connection.b.openingId);
     const cells = passageCells(openingA, roomA.origin, openingB, roomB.origin);
     // The doorway cells themselves are on the room walls: the passage spans
-    // from one to the other with no gap in between.
-    assert.equal(cells.length, DUNGEON_CONFIG.wallGap + 2,
-      `a joint of ${DUNGEON_CONFIG.wallGap} must span ${DUNGEON_CONFIG.wallGap + 2} cells including both doorways`);
-    // Consecutive cells are neighbours: no teleport.
-    for (let index = 1; index < cells.length; index += 1) {
-      const distance = Math.abs(cells[index].x - cells[index - 1].x)
-        + Math.abs(cells[index].y - cells[index - 1].y);
-      assert.equal(distance, 1, "the passage has a hole in it");
+    // from one to the other with no gap in between, and it is as wide as the
+    // doorway. Hence (joint + both doorways) × width cells, and not one cell per
+    // row: a three-cell-wide corridor is three cells per row.
+    assert.equal(cells.length, (DUNGEON_CONFIG.wallGap + 2) * openingA.width,
+      `a joint of ${DUNGEON_CONFIG.wallGap} must span ${DUNGEON_CONFIG.wallGap + 2} rows of ${openingA.width} cells`);
+    // The passage is one connected corridor: no cell of it is cut off. Walked
+    // with four-way steps, because a corridor two cells wide listed row by row
+    // does not have consecutive-adjacent entries — its second row starts three
+    // columns away from where the first one ended.
+    const set = new Set(cells.map((cell) => `${cell.x},${cell.y}`));
+    const seen = new Set([`${cells[0].x},${cells[0].y}`]);
+    const queue = [cells[0]];
+    while (queue.length > 0) {
+      const cell = queue.pop();
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const key = `${cell.x + dx},${cell.y + dy}`;
+        if (!set.has(key) || seen.has(key)) continue;
+        seen.add(key);
+        queue.push({ x: cell.x + dx, y: cell.y + dy });
+      }
     }
+    assert.equal(seen.size, cells.length, "the passage has a hole in it");
   }
 });
 
@@ -206,6 +235,12 @@ test("a mask with a one-cell hole is never walkable through it", () => {
     assert.notDeepEqual(cell, { x: 1, y: 1 }, "the walk went through the hole");
   }
 });
+
+function solidMask(width, height) {
+  const rows = [];
+  for (let y = 0; y < height; y += 1) rows.push("1".repeat(width));
+  return fromRows(rows);
+}
 
 function openingAt(id, side, offsetStart, offsetEnd, extra = {}) {
   const vectors = { north: [0, -1], south: [0, 1], east: [1, 0], west: [-1, 0] };
