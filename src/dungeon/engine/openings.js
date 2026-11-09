@@ -235,15 +235,88 @@ function buildOpening(roomId, mask, candidate, index) {
   };
 }
 
+/**
+ * The two world cells that describe an opening: the first cell of its span, and
+ * the cell of the wall it pierces.
+ *
+ * Two coordinates, two meanings, and they must never be swapped:
+ *
+ *   - `x`/`y` : **first cell of the span**, in world coordinates. This is where a
+ *     corridor starts, because the corridor is as wide as the doorway.
+ *   - `across` : the coordinate **across the wall** (y for a north or south face,
+ *     x for a west or east one). It is constant along the corridor, and it is the
+ *     only coordinate the two openings of a bridge must share.
+ *
+ * `alongX` says which axis the span runs on, so callers do not have to re-derive
+ * the rule from `side`.
+ */
+export function doorwayStart(room, opening) {
+  const span = openingSpan(opening);
+  if (span.alongX) {
+    return {
+      x: room.origin.x + span.from,
+      y: room.origin.y + span.across,
+      across: room.origin.y + span.across,
+      alongX: true,
+    };
+  }
+  return {
+    x: room.origin.x + span.across,
+    y: room.origin.y + span.from,
+    across: room.origin.x + span.across,
+    alongX: false,
+  };
+}
+
+/**
+ * Where an opening's span sits, in room-local coordinates.
+ *
+ * An opening is described by two things that look redundant and are not:
+ *
+ *   - `offsetStart`/`offsetEnd`, the span **along the wall** (x on a north or
+ *     south face, y on a west or east one);
+ *   - `centerX`/`centerY`, the centre of that span — so on the axis of the span
+ *     this is its **middle cell**, and on the axis across the wall it is the
+ *     wall itself.
+ *
+ * Reading "the span" out of `centerX`/`centerY` is therefore right on one axis
+ * and wrong on the other, and the same mistake in the other direction is just as
+ * easy. This helper returns both axes explicitly, so no caller has to decide
+ * which number means what:
+ *
+ *   across the wall (x for west/east faces) : `centerX` for a west/east face,
+ *                                              `offsetStart` is y there — so the
+ *                                              two are returned separately.
+ *
+ * `across` is the coordinate on the wall (the cell the doorway pierces);
+ * `from` is the first cell of the span, which is the one a corridor must start
+ * from, because the corridor is as wide as the doorway.
+ */
+export function openingSpan(opening) {
+  const alongX = opening.side === "north" || opening.side === "south";
+  return {
+    alongX,
+    from: opening.offsetStart,
+    to: opening.offsetEnd,
+    across: alongX ? opening.centerY : opening.centerX,
+  };
+}
+
 /** The passage cells between two aligned openings, both room-local. */
 export function passageCells(ownOpening, ownRoomOrigin, otherOpening, otherRoomOrigin) {
+  // Both ends are read on the two axes explicitly: the corridor keeps the
+  // doorway's width *along* the wall and runs *across* it. Reading both from the
+  // same field put the corridor one cell beside the door.
+  const vertical = ownOpening.side === "north" || ownOpening.side === "south";
+  const ownSpan = openingSpan(ownOpening);
+  const otherSpan = openingSpan(otherOpening);
   const own = {
-    x: ownOpening.centerX + ownRoomOrigin.x,
-    y: ownOpening.centerY + ownRoomOrigin.y,
+    x: ownRoomOrigin.x + (vertical ? ownSpan.from : ownSpan.across),
+    y: ownRoomOrigin.y + (vertical ? ownSpan.across : ownSpan.from),
   };
   const other = {
-    x: otherOpening.centerX + otherRoomOrigin.x,
-    y: otherOpening.centerY + otherRoomOrigin.y,
+    x: otherRoomOrigin.x + (vertical ? otherSpan.from : otherSpan.across),
+    y: otherRoomOrigin.y + (vertical ? otherSpan.across : otherSpan.from),
   };
   const cells = [];
   if (ownOpening.side === "north" || ownOpening.side === "south") {
@@ -278,6 +351,48 @@ export function jointWidth() {
 }
 
 /**
+ * The cells two facing doorway spans share, in world coordinates on the axis
+ * along the wall.
+ *
+ * Openings are described in their own room's frame, so two doorways that "face
+ * each other" are compared in world coordinates: this is the only shared frame
+ * they have. Returns `null` when they do not overlap at all.
+ */
+export function spanOverlap(roomA, openingA, roomB, openingB) {
+  const spanA = openingSpan(openingA);
+  const spanB = openingSpan(openingB);
+  const a0 = (spanA.alongX ? roomA.origin.x : roomA.origin.y) + spanA.from;
+  const a1 = (spanA.alongX ? roomA.origin.x : roomA.origin.y) + spanA.to;
+  const b0 = (spanB.alongX ? roomB.origin.x : roomB.origin.y) + spanB.from;
+  const b1 = (spanB.alongX ? roomB.origin.x : roomB.origin.y) + spanB.to;
+  const from = Math.max(a0, b0);
+  const to = Math.min(a1, b1);
+  if (to < from) return null;
+  return { from, to, length: to - from + 1, alongX: spanA.alongX };
+}
+
+/**
+ * Narrows an opening to a world span, in place.
+ *
+ * A doorway that meets another one on a few cells must become exactly those
+ * cells: otherwise the part of the doorway that is not in front of the corridor
+ * opens onto masonry, and the player sees a hole with a wall behind it. Narrowing
+ * keeps every derived value consistent — the centre moves with the span — so the
+ * builder, the passage and the view all agree again.
+ */
+export function narrowOpening(room, opening, worldFrom, worldTo) {
+  const span = openingSpan(opening);
+  const origin = span.alongX ? room.origin.x : room.origin.y;
+  opening.offsetStart = worldFrom - origin;
+  opening.offsetEnd = worldTo - origin;
+  opening.width = opening.offsetEnd - opening.offsetStart + 1;
+  const middle = opening.offsetStart + Math.floor((opening.width - 1) / 2);
+  if (span.alongX) opening.centerX = middle;
+  else opening.centerY = middle;
+  return opening;
+}
+
+/**
  * Can these two openings be connected directly?
  *
  * Direct means: opposite faces, same width, doorways on the same axis, and the
@@ -291,19 +406,24 @@ export function canConnectDirectly(ownOpening, ownRoomOrigin, ownMask, otherOpen
   const opposite = { north: "south", south: "north", east: "west", west: "east" }[ownOpening.side];
   if (opposite !== otherOpening.side) return false;
 
-  const own = { x: ownOpening.centerX + ownRoomOrigin.x, y: ownOpening.centerY + ownRoomOrigin.y };
-  const other = { x: otherOpening.centerX + otherRoomOrigin.x, y: otherOpening.centerY + otherRoomOrigin.y };
+  // The two doorways must share at least `minConnectionOverlap` cells. They do
+  // *not* have to be centred on each other: with five-cell doorways that is a
+  // coincidence, and requiring it is what silently stopped the network from
+  // closing any loop.
+  const overlap = spanOverlap(
+    { origin: ownRoomOrigin }, ownOpening,
+    { origin: otherRoomOrigin }, otherOpening,
+  );
+  if (!overlap || overlap.length < DUNGEON_CONFIG.minConnectionOverlap) return false;
 
+  // Distance between the two room edges, not between the openings' centres: that
+  // is what the joint is made of.
   const vertical = ownOpening.side === "north" || ownOpening.side === "south";
   if (vertical) {
-    if (own.x !== other.x) return false;
-    // Distance between the two room edges, not between the openings' centres:
-    // that is what the joint is made of.
     const ownEdge = ownRoomOrigin.y + (ownOpening.side === "north" ? 0 : ownMask.h - 1);
     const otherEdge = otherRoomOrigin.y + (otherOpening.side === "north" ? 0 : otherMask.h - 1);
     return Math.abs(otherEdge - ownEdge) - 1 === DUNGEON_CONFIG.wallGap;
   }
-  if (own.y !== other.y) return false;
   const ownEdge = ownRoomOrigin.x + (ownOpening.side === "west" ? 0 : ownMask.w - 1);
   const otherEdge = otherRoomOrigin.x + (otherOpening.side === "west" ? 0 : otherMask.w - 1);
   return Math.abs(otherEdge - ownEdge) - 1 === DUNGEON_CONFIG.wallGap;
@@ -360,14 +480,22 @@ export function placeRoomForOpening(parentRoom, parentOpening, childMask, childO
  */
 export function jointCells(parentRoom, parentOpening) {
   const cells = [];
-  const startX = parentRoom.origin.x + parentOpening.centerX;
-  const startY = parentRoom.origin.y + parentOpening.centerY;
+  // The joint starts at the **first cell of the doorway span**, not at its
+  // centre. A one-cell doorway makes no difference between the two, which is why
+  // the mistake went unnoticed until the doorways became three cells wide: the
+  // carved corridor then sat one cell to the side of the door it was supposed to
+  // continue, so a three-cell doorway had a one-cell tunnel in front of it —
+  // exactly "the corridors are one block wide".
+  const span = openingSpan(parentOpening);
+  const acrossX = parentRoom.origin.x + (span.alongX ? 0 : span.across);
+  const acrossY = parentRoom.origin.y + (span.alongX ? span.across : 0);
   for (let step = 1; step <= DUNGEON_CONFIG.wallGap; step += 1) {
     for (let offset = 0; offset < parentOpening.width; offset += 1) {
-      if (parentOpening.side === "north") cells.push({ x: startX + offset, y: startY - step });
-      else if (parentOpening.side === "south") cells.push({ x: startX + offset, y: startY + step });
-      else if (parentOpening.side === "west") cells.push({ x: startX - step, y: startY + offset });
-      else cells.push({ x: startX + step, y: startY + offset });
+      const reach = span.from + offset;
+      if (parentOpening.side === "north") cells.push({ x: parentRoom.origin.x + reach, y: acrossY - step });
+      else if (parentOpening.side === "south") cells.push({ x: parentRoom.origin.x + reach, y: acrossY + step });
+      else if (parentOpening.side === "west") cells.push({ x: acrossX - step, y: parentRoom.origin.y + reach });
+      else cells.push({ x: acrossX + step, y: parentRoom.origin.y + reach });
     }
   }
   return cells;
@@ -384,31 +512,34 @@ export function jointCells(parentRoom, parentOpening) {
  */
 export function bridgeCells(roomA, openingA, roomB, openingB) {
   if (openingA.side === openingB.side) return null;
-  if (openingA.width !== openingB.width) return null;
   const opposite = { north: "south", south: "north", east: "west", west: "east" }[openingA.side];
   if (opposite !== openingB.side) return null;
 
-  const a = { x: roomA.origin.x + openingA.centerX, y: roomA.origin.y + openingA.centerY };
-  const b = { x: roomB.origin.x + openingB.centerX, y: roomB.origin.y + openingB.centerY };
+  // Two doorways that face each other must share at least a few cells; they do
+  // not have to line up cell for cell. Requiring that was the same mistake as
+  // requiring identical centres, and it is what removed every bridge — and so
+  // every shortcut — once the doorways became wide.
+  const overlap = spanOverlap(roomA, openingA, roomB, openingB);
+  if (!overlap || overlap.length < DUNGEON_CONFIG.minConnectionOverlap) return null;
+  if (overlap.length !== Math.min(openingA.width, openingB.width) && overlap.length < DUNGEON_CONFIG.minConnectionOverlap) {
+    return null;
+  }
+
   const vertical = openingA.side === "north" || openingA.side === "south";
-
-  if (vertical ? a.x !== b.x : a.y !== b.y) return null;
-
-  const span = vertical ? Math.abs(b.y - a.y) : Math.abs(b.x - a.x);
+  const a = doorwayStart(roomA, openingA);
+  const b = doorwayStart(roomB, openingB);
+  const span = Math.abs(b.across - a.across);
   const minimum = DUNGEON_CONFIG.wallGap + 1;
   if (span < minimum) return null;
   if (span > minimum + DUNGEON_CONFIG.maxBridgeLength) return null;
 
   const cells = [];
-  const step = vertical ? Math.sign(b.y - a.y) : Math.sign(b.x - a.x);
+  const step = Math.sign(b.across - a.across);
   for (let distance = 1; distance < span; distance += 1) {
-    for (let offset = 0; offset < openingA.width; offset += 1) {
-      if (vertical) {
-        cells.push({ x: a.x + offset, y: a.y + step * distance });
-      } else {
-        cells.push({ x: a.x + step * distance, y: a.y + offset });
-      }
+    for (let along = overlap.from; along <= overlap.to; along += 1) {
+      if (vertical) cells.push({ x: along, y: a.across + step * distance });
+      else cells.push({ x: a.across + step * distance, y: along });
     }
   }
-  return { cells, length: span - 1 };
+  return { cells, length: span - 1, overlap };
 }

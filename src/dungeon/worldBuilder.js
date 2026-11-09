@@ -95,17 +95,41 @@ export function createWorldBuilder(options) {
    * solid, so it cannot be used here.
    */
   function areaLoaded(room) {
-    const probes = [];
+    // The probes are the room's **corners**, not four samples spread over its
+    // cells. A sample every N cells walks along the mask in reading order and can
+    // land four times inside the same corner of a large room; at ×5 a room is up
+    // to 55 cells across, and four middle probes said "loaded" while the far
+    // opposite corner was still in a chunk the server had not sent — the writes
+    // there are dropped without an error, which is the one bug this whole file
+    // exists to prevent.
+    const corners = [];
     for (let localZ = 0; localZ < room.mask.h; localZ += 1) {
       for (let localX = 0; localX < room.mask.w; localX += 1) {
         if (!room.mask.cells[localZ][localX]) continue;
-        probes.push({ x: room.origin.x + localX, z: room.origin.y + localZ });
+        const onEdgeX = localX === 0 || localX === room.mask.w - 1
+          || !room.mask.cells[localZ][localX - 1] || !room.mask.cells[localZ][localX + 1];
+        const onEdgeZ = localZ === 0 || localZ === room.mask.h - 1
+          || !room.mask.cells[localZ - 1]?.[localX] || !room.mask.cells[localZ + 1]?.[localX];
+        if (onEdgeX || onEdgeZ) corners.push({ x: room.origin.x + localX, z: room.origin.y + localZ });
       }
     }
-    // Four probes are enough to know the chunks are there, and cheap enough to
-    // run every tick.
-    const step = Math.max(1, Math.floor(probes.length / 4));
-    for (let index = 0; index < probes.length; index += step) {
+    // Four extreme contour cells: the four corners of the room's bounding box are
+    // what a chunk boundary cuts first, and they are cheap enough to read on
+    // every tick. When a shape has fewer than four contour cells (impossible for
+    // a real room, possible for a test), the few it has are used.
+    const box = {
+      x0: Math.min(...corners.map((cell) => cell.x)),
+      x1: Math.max(...corners.map((cell) => cell.x)),
+      z0: Math.min(...corners.map((cell) => cell.z)),
+      z1: Math.max(...corners.map((cell) => cell.z)),
+    };
+    const probes = [
+      { x: box.x0, z: box.z0 },
+      { x: box.x1, z: box.z0 },
+      { x: box.x0, z: box.z1 },
+      { x: box.x1, z: box.z1 },
+    ];
+    for (let index = 0; index < probes.length; index += 1) {
       if (readBlock(probes[index].x, floorY, probes[index].z) === null) return false;
     }
     return true;
@@ -218,23 +242,35 @@ export function createWorldBuilder(options) {
       state.state = ROOM_BUILD_STATE.WAITING_FOR_CHUNK;
       return { passageId: connection.id, state: state.state, done: false, written: 0 };
     }
-    const blocks = passageBlocks(connection, { x: 0, y: floorY, z: 0 }, cells.index);
-    let written = 0;
-    for (let index = 0; index < blocks.length; index += 1) {
-      writeBlock(blocks[index].x, blocks[index].y, blocks[index].z, blocks[index].name);
-      written += 1;
+    if (!state.writer) {
+      state.writer = createRoomWriter({ setBlock: writeBlock }, {
+        batchSize,
+        plan: (passage, world_) => passageBlocks(connection, world_, cells.index),
+      });
+      state.total = passageBlocks(connection, { x: 0, y: floorY, z: 0 }, cells.index).length;
+    }
+    // A passage is written in **batches**, like a room. At ×5 a joint is 15 cells
+    // long and 5 wide with a roof and two flanks: about four thousand blocks,
+    // which used to be written in a single tick with no budget and no resume. The
+    // cursor makes it interruptible like everything else.
+    const step = state.writer.writeRoom({ id: key }, { x: 0, y: floorY, z: 0 }, state.cursor);
+    state.cursor = step.cursor;
+    state.written += step.written;
+    if (!step.done) {
+      state.state = ROOM_BUILD_STATE.BUILDING;
+      return { passageId: connection.id, state: state.state, done: false, written: step.written, progress: state.written / state.total };
     }
     // The two doorways themselves. A room built while its opening was still
     // pending had that cell walled — a cul-de-sac has to be a wall — so the
     // moment the opening becomes a real connection, the wall has to come down.
     // Without this the tunnel is built and both ends of it stay sealed: the
-    // dungeon looks connected and cannot be walked.
-    written += openDoorway(connection.a, manager);
-    written += openDoorway(connection.b, manager);
+    // dungeon looks connected and cannot be walked. Done once, at the end, so a
+    // half-built passage does not open onto a hole.
+    let doors = openDoorway(connection.a, manager);
+    doors += openDoorway(connection.b, manager);
     state.state = ROOM_BUILD_STATE.BUILT;
-    state.written = written;
-    state.total = written;
-    return { passageId: connection.id, state: state.state, done: true, written };
+    state.written += doors;
+    return { passageId: connection.id, state: state.state, done: true, written: step.written + doors };
   }
 
   /**

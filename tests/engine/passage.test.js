@@ -108,11 +108,14 @@ test("the validator refuses a room that would sit on top of another", () => {
   // side, so a face shorter than `width + 2 × clearance` cannot host one at all,
   // and the validator would answer OPENING_IN_CORNER before ever looking at the
   // collision this test is about.
-  const mask = solidMask(15, 15);
-  const otherMask = solidMask(15, 15);
+  const width = DUNGEON_CONFIG.minPassageWidth;
+  const corner = DUNGEON_CONFIG.minCornerClearance;
+  const side = corner * 2 + width + 2;
+  const mask = solidMask(side, side);
+  const otherMask = solidMask(side, side);
   const openings = [
-    openingAt("candidate.o0", "south", 3, 5, { centerX: 4, centerY: 14, width: 3, faceLength: mask.w }),
-    openingAt("candidate.o1", "north", 3, 5, { centerX: 4, centerY: 0, width: 3, faceLength: mask.w }),
+    openingAt("candidate.o0", "south", corner, corner + width - 1, { centerX: corner, centerY: side - 1, width, faceLength: mask.w }),
+    openingAt("candidate.o1", "north", corner, corner + width - 1, { centerX: corner, centerY: 0, width, faceLength: mask.w }),
   ];
   const verdict = validateRoom({
     candidate: { mask, origin: { x: 0, y: 0 }, openings },
@@ -164,20 +167,25 @@ test("a room whose openings cannot reach each other is refused", () => {
   // Two blobs in one bounding box, joined by nothing. Each blob is large enough
   // to host a legal doorway on two facing walls, so the only thing wrong with
   // the candidate is what this test is about: no walk between the two doors.
+  const width = DUNGEON_CONFIG.minPassageWidth;
+  const corner = DUNGEON_CONFIG.minCornerClearance;
+  const blob = corner * 2 + width + 2;
+  const side = blob * 2 + 2;
   const rows = [];
-  for (let y = 0; y < 15; y += 1) {
+  for (let y = 0; y < side; y += 1) {
     let row = "";
-    for (let x = 0; x < 15; x += 1) {
-      const inTop = y <= 6 && x <= 6;
-      const inBottom = y >= 8 && x >= 8;
+    for (let x = 0; x < side; x += 1) {
+      const inTop = y < blob && x < blob;
+      const inBottom = y > blob && x > blob;
       row += inTop || inBottom ? "1" : "0";
     }
     rows.push(row);
   }
   const mask = fromRows(rows);
   const openings = [
-    openingAt("candidate.o0", "north", 3, 5, { centerX: 4, centerY: 0, width: 3, faceLength: mask.w }),
-    openingAt("candidate.o1", "south", 9, 11, { centerX: 10, centerY: 14, width: 3, faceLength: mask.w }),
+    openingAt("candidate.o0", "north", corner, corner + width - 1, { centerX: corner, centerY: 0, width, faceLength: mask.w }),
+    openingAt("candidate.o1", "south", side - blob + corner, side - blob + corner + width - 1,
+      { centerX: side - blob + corner, centerY: side - 1, width, faceLength: mask.w }),
   ];
   const verdict = validateRoom({
     candidate: { mask, origin: { x: 0, y: 0 }, openings },

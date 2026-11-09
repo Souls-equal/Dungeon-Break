@@ -33,16 +33,22 @@ export const DUNGEON_CONFIG = {
   // the openings are written in proportions where they can be, and in `scale`
   // units where they cannot (§ `shapes.js`): bump this and the dungeon is built
   // bigger, not different.
-  scale: 3,
+  //
+  // History: 1 → 3 → 5. The ×3 dungeon was reported as "still too small, and the
+  // corridors are one block wide"; the corridors were a bug (they were drawn one
+  // cell beside the door, see `openings.js`), the size was not. ×5 is 25 times
+  // the floor area of the original design.
+  scale: 5,
   // Room dimensions in cells, exterior walls included.
-  minWidth: 12,
-  maxWidth: 33,
-  minDepth: 12,
-  maxDepth: 33,
+  minWidth: 20,
+  maxWidth: 55,
+  minDepth: 20,
+  maxDepth: 55,
   // Interior height: floor is at floorLevel, walls occupy 1..wallHeight, and a
-  // ceiling sits on wallHeight + 1. 12 blocks of headroom: a 3-cell passage is a
-  // tunnel, not a letterbox.
-  wallHeight: 12,
+  // ceiling sits on wallHeight + 1. 16 blocks of headroom over halls 20 to 55
+  // cells wide, which keeps the doorway-to-wall proportion at 4/16 — the same one
+  // the 1-cell doorway had in a 4-block wall.
+  wallHeight: 16,
   // Mean cells per room, used to derive dimensions from the room's own seed so
   // that shapes vary in size as well as in outline.
   areaSpread: 0.28,
@@ -52,23 +58,32 @@ export const DUNGEON_CONFIG = {
   // other have their outer wall faces exactly `wallGap` cells apart, and the
   // shared joint is filled, never overwritten: a wall is never a single cell
   // that two rooms could claim.
-  wallGap: 9,
+  wallGap: 15,
 
   // ------------------------------------------------------------- openings ---
   // Passage width in cells. A uniform width is what lets any two openings meet:
   // a room with a 2-cell doorway could never connect to a room with a 1-cell
-  // one. Three cells: the ×1 dungeon's single-file corridor, at the new scale.
-  minPassageWidth: 3,
-  maxPassageWidth: 3,
+  // one. Five cells: wide enough that two players cross without touching, and
+  // well below the 10-cell spacing rule, so two doorways on one face stay apart.
+  minPassageWidth: 5,
+  maxPassageWidth: 5,
   // Passage height in cells, capped by wallHeight so a doorway never opens
-  // through the ceiling. Not tripled: it is 3 of the 12 blocks of wall height,
-  // which is the same doorway-to-wall proportion as 1 of 4 at ×1, and the
-  // builder's own lintel rule is written against this number.
-  passageHeight: 3,
+  // through the ceiling. 4 of the 16 blocks of wall height: the same
+  // doorway-to-wall proportion as 1 of 4 in the original design, and comfortably
+  // above a player's height.
+  passageHeight: 4,
   // Distance from a room corner to the nearest opening cell, at least.
-  minCornerClearance: 3,
+  minCornerClearance: 5,
   // Cells between two openings on the same face, at least.
-  minOpeningSpacing: 6,
+  minOpeningSpacing: 10,
+  // Two doorways that face each other connect when their spans **overlap** by at
+  // least this many cells; both doorways are then narrowed to the shared cells,
+  // so the corridor is exactly as wide as the hole on each side. Requiring the
+  // two centres to be identical instead — which is what the engine used to do —
+  // is a coincidence that a one-cell doorway satisfies by construction and a
+  // five-cell one almost never does: measured at ×5, it took the network from 3
+  // loops to none, because two rooms only line up exactly by luck.
+  minConnectionOverlap: 3,
   // Cells of walkable depth behind an opening, inside the room, at least. A
   // doorway that opens onto a wall would be useless.
   //
@@ -82,7 +97,7 @@ export const DUNGEON_CONFIG = {
   // doorway, so the door is not narrower than the wall it pierces at any scale.
   minApproachDepth: 1,
   // Openings per room, by perimeter: one opening per this many contour cells.
-  cellsPerOpening: 18,
+  cellsPerOpening: 30,
   // Counts, not distances: a room still has two to five doors whatever its
   // size. Tripling them would turn every room into a hub.
   minOpenings: 2,
@@ -97,7 +112,7 @@ export const DUNGEON_CONFIG = {
   structureMargin: 0,
   // Margin around the whole dungeon, so rooms never touch the allocated
   // region border.
-  worldMargin: 24,
+  worldMargin: 40,
 
   // ----------------------------------------------------------- generation ---
   // Attempts per opening before it is considered blocked.
@@ -105,18 +120,19 @@ export const DUNGEON_CONFIG = {
   // Hard radius, in cells, from the dungeon origin. Keeps the dungeon inside
   // the allocated region and inside the chunks a player can load.
   //
-  // 1536 = 512 × 3. This one is a hard constraint of the world, not a taste:
-  // rooms are nine times bigger, so the same number of rooms needs three times
-  // the radius in every direction. If Bloxd's build area is smaller than that,
-  // this is the number that has to win, and the room count that has to give.
-  maxDungeonRadius: 1536,
+  // 2560 = 512 × 5. This one is a hard constraint of the world, not a taste:
+  // rooms are twenty-five times bigger, so the same number of rooms needs five
+  // times the radius in every direction. Measured: a 48-room Hell fits inside a
+  // radius of ~450, so this ceiling is never the limit — it is the guard that
+  // keeps a runaway dungeon inside the allocated world.
+  maxDungeonRadius: 2560,
   // How many existing openings the connector considers before creating a new
   // room. Bounded so the cost never depends on the dungeon size.
   reuseCandidateLimit: 12,
   // Longest explicit bridge, in cells beyond the minimum joint. A bridge is a
   // short carved corridor recorded as a connection with its own cells: it is
   // how loops and shortcuts appear without inventing a room.
-  maxBridgeLength: 12,
+  maxBridgeLength: 20,
   // Share of new rooms allowed to braid back to an existing room, so a dungeon
   // keeps dead ends as well as shortcuts.
   braidChance: 0.5,
@@ -129,19 +145,19 @@ export const DUNGEON_CONFIG = {
   // the three depth/backlog counts: the depth weight is a *tie-break* between
   // rooms at equal distance, not a length.
   // Blocks between a player and an opening that start the discovery.
-  discoveryDistance: 90,
+  discoveryDistance: 150,
   // Blocks at which an opening is about to be crossed: highest priority.
-  crossingDistance: 18,
+  crossingDistance: 30,
   // Depth, in edges, of the graph prepared ahead of the player.
   anticipationDepth: 3,
   // Priority is distance + depth * weight; a lower value is served first.
   priorityDepthWeight: 40,
   // Rooms whose opening is closer than this to a player are never suspended.
-  activeRoomDistance: 144,
+  activeRoomDistance: 240,
   // Rooms further than this are suspended when the queues are backlogged.
-  suspendDistance: 288,
+  suspendDistance: 480,
   // Hard ceiling on how far ahead the graph may run, whatever the backlog.
-  maxAnticipationDistance: 288,
+  maxAnticipationDistance: 480,
   backlogThreshold: 60,
 
   // -------------------------------------------------------------- budgets ---
@@ -227,14 +243,14 @@ export const DUNGEON_CONFIG = {
 // length, and every one of them is ×3 with the rooms: at the new size a room is
 // nine times the area, so the same count needs the same factor in radius.
 export const DIFFICULTIES = [
-  { id: "veryEasy", label: "Very Easy", fromLobby: true, rooms: 10, maxRadius: 288 },
-  { id: "easy", label: "Easy", fromLobby: true, rooms: 14, maxRadius: 384 },
-  { id: "medium", label: "Medium", fromLobby: true, rooms: 18, maxRadius: 480 },
-  { id: "normal", label: "Normal", fromLobby: false, rooms: 24, maxRadius: 600 },
-  { id: "hard", label: "Hard", fromLobby: false, rooms: 30, maxRadius: 720 },
-  { id: "insane", label: "Insane", fromLobby: false, rooms: 36, maxRadius: 840 },
-  { id: "ultraInsane", label: "Ultra Insane", fromLobby: false, rooms: 42, maxRadius: 960 },
-  { id: "hell", label: "Hell", fromLobby: false, rooms: 48, maxRadius: 1152 },
+  { id: "veryEasy", label: "Very Easy", fromLobby: true, rooms: 10, maxRadius: 480 },
+  { id: "easy", label: "Easy", fromLobby: true, rooms: 14, maxRadius: 640 },
+  { id: "medium", label: "Medium", fromLobby: true, rooms: 18, maxRadius: 800 },
+  { id: "normal", label: "Normal", fromLobby: false, rooms: 24, maxRadius: 1000 },
+  { id: "hard", label: "Hard", fromLobby: false, rooms: 30, maxRadius: 1200 },
+  { id: "insane", label: "Insane", fromLobby: false, rooms: 36, maxRadius: 1400 },
+  { id: "ultraInsane", label: "Ultra Insane", fromLobby: false, rooms: 42, maxRadius: 1600 },
+  { id: "hell", label: "Hell", fromLobby: false, rooms: 48, maxRadius: 1920 },
 ];
 
 const DIFFICULTY_BY_LABEL = {};

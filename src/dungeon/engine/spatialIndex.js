@@ -15,10 +15,10 @@
 import { DUNGEON_CONFIG } from "./config.js";
 import { OPENING_STATUS } from "./openings.js";
 
-// 48 = 16 × 3, following the dungeon's scale: a room is at most 33 cells across,
+// 80 = 16 × 5, following the dungeon's scale: a room is at most 55 cells across,
 // and the grid must still be able to hold one room and its immediate
 // neighbourhood per cell rather than smearing a single room over nine regions.
-export const REGION_SIZE = 48;
+export const REGION_SIZE = 80;
 
 export function regionKey(x, y) {
   return `${Math.floor(x / REGION_SIZE)},${Math.floor(y / REGION_SIZE)}`;
@@ -135,25 +135,31 @@ export function createSpatialIndex() {
       const opposite = { north: "south", south: "north", east: "west", west: "east" }[opening.side];
       const normals = { north: { x: 0, y: -1 }, south: { x: 0, y: 1 }, east: { x: 1, y: 0 }, west: { x: -1, y: 0 } };
       const normal = normals[opening.side];
-      const center = {
-        x: room.origin.x + opening.centerX,
-        y: room.origin.y + opening.centerY,
-      };
-      // The partner opening is on the facing wall, one joint away.
-      // The opening centre sits on the room's own edge cell, on both sides, so
-      // two facing openings are wallGap + 1 apart: the wallGap cells of masonry
-      // between the two footprints, plus the neighbour's own edge.
+      // The partner opening is on the facing wall, one joint away. Every cell of
+      // the facing row is tried, not only the one exactly opposite the centre:
+      // two wide doorways meet whenever their spans *overlap*, and the partner's
+      // centre may sit anywhere along that row. The row is one joint away and as
+      // long as the doorway plus its own width, so the cost is bounded and does
+      // not depend on the size of the dungeon.
       const distance = DUNGEON_CONFIG.wallGap + 1;
-      const target = { x: center.x + normal.x * distance, y: center.y + normal.y * distance };
-      const bucket = openings.get(openingKey(opposite, target.x, target.y));
-      if (!bucket) return null;
-      for (let index = 0; index < bucket.length; index += 1) {
-        const record = bucket[index];
-        if (record.roomId === excludeRoomId) continue;
-        if (record.opening.side !== opposite) continue;
-        if (record.opening.status === OPENING_STATUS.CONNECTED) continue;
-        if (record.opening.status === OPENING_STATUS.BLOCKED) continue;
-        return record;
+      const across = {
+        x: room.origin.x + opening.centerX + normal.x * distance,
+        y: room.origin.y + opening.centerY + normal.y * distance,
+      };
+      const reach = opening.width + DUNGEON_CONFIG.minOpeningSpacing;
+      const cells = [];
+      for (let step = -reach; step <= reach; step += 1) {
+        const x = normal.x !== 0 ? across.x : across.x + step;
+        const y = normal.x !== 0 ? across.y + step : across.y;
+        cells.push(openingKey(opposite, x, y));
+      }
+      // The exact cell first, so the common case stays a single lookup.
+      const ordered = [openingKey(opposite, across.x, across.y)].concat(cells);
+      for (let at = 0; at < ordered.length; at += 1) {
+        const bucket = openings.get(ordered[at]);
+        if (!bucket) continue;
+        const found = pick(bucket, opposite, excludeRoomId);
+        if (found) return found;
       }
       return null;
     },
@@ -197,6 +203,19 @@ export function createSpatialIndex() {
       indexOpenings(room);
     },
   };
+
+  /** The first usable record of a bucket, or null. */
+  function pick(bucket, opposite, excludeRoomId) {
+    for (let index = 0; index < bucket.length; index += 1) {
+      const record = bucket[index];
+      if (record.roomId === excludeRoomId) continue;
+      if (record.opening.side !== opposite) continue;
+      if (record.opening.status === OPENING_STATUS.CONNECTED) continue;
+      if (record.opening.status === OPENING_STATUS.BLOCKED) continue;
+      return record;
+    }
+    return null;
+  }
 
   function indexOpenings(room) {
     const list = room.openings || [];

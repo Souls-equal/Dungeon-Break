@@ -18,6 +18,9 @@ const FLOOR_Y = -1000;
  */
 const FLOOR_BUDGET = 2400;
 const FLOOR_BATCH = 720;
+// One joint written in a single pass: wallGap × width × (floors, flanks, roof).
+// Measured upper bound for a 5-cell doorway through 15 cells of masonry.
+const FLOOR_PASSAGE = 900;
 const LOBBY_POSITION = [10, 21, 10];
 /**
  * The stones the builder is allowed to use. The floor is textured, so "the floor
@@ -34,7 +37,12 @@ const FLOOR_FAMILY = new Set(["Stone Bricks", "Cracked Stone Bricks"]);
  * violation — that is the bug this whole file exists to catch.
  */
 function createWorld(onlinePlayerIds, options = {}) {
-  const loadRadius = options.loadRadius === undefined ? 60 : options.loadRadius;
+  // The fake server's loaded area around a player. It has to fit one room: a room
+  // is now up to 55 cells across and the masonry 15, so a 60-cell radius would
+  // make the fake lose writes the real server would accept. The rule this file
+  // exists to test — never write outside a loaded chunk — is still enforced, only
+  // with a boundary that is not inside the room being built.
+  const loadRadius = options.loadRadius === undefined ? 120 : options.loadRadius;
   const messages = [];
   const blocks = [];
   const writes = [];
@@ -257,11 +265,12 @@ test("the blocks written in one tick stay inside the configured budget", () => {
   const { context, blocks } = createWorld(["player-batch"]);
   startDungeon(context, "player-batch");
 
-  // The budget is `maxBlocksPerTick` plus one batch, because a batch is never
-  // interrupted: a half-written room is worse than a slightly long tick. The
-  // passages count against the same budget — they used to be served outside it,
-  // and a cycle that queued every threshold at once wrote nine hundred blocks.
-  const ceiling = FLOOR_BUDGET + FLOOR_BATCH;
+  // The budget is `maxBlocksPerTick` plus one room batch **and** one passage,
+  // because neither is ever interrupted: a half-written room is worse than a
+  // slightly long tick, and a passage is written in a single pass. Both count
+  // against the same budget — they once did not, and a cycle that queued every
+  // threshold at once wrote nine hundred blocks.
+  const ceiling = FLOOR_BUDGET + FLOOR_BATCH + FLOOR_PASSAGE;
   let biggestBatch = 0;
   let previous = blocks.length;
   for (let tick = 0; tick < 600; tick += 1) {
@@ -280,7 +289,7 @@ test("no block is written into a chunk the player has not loaded", () => {
   // and never looked at whether the write could even land. This one does what it
   // says: a write outside the loaded area is a violation, and the builder must
   // never attempt one.
-  const loadRadius = 60;
+  const loadRadius = 120;
   const { context, blocks, violations, positions, movePlayer } = createWorld(["player-distance"], {
     trackLoaded: true,
     loadRadius,
@@ -294,6 +303,7 @@ test("no block is written into a chunk the player has not loaded", () => {
     movePlayer("player-distance", [positions[0].position[0], y, z + 12]);
     for (let tick = 0; tick < 60; tick += 1) context.tick();
   }
+
 
   assert.ok(blocks.length > 0, "nothing was built at all, so the test proves nothing");
   // Every structural block must come from the stone family: a texture drawn from
@@ -313,7 +323,7 @@ test("no block is written into a chunk the player has not loaded", () => {
 });
 
 test("the world around the player stays walkable as the dungeon grows", () => {
-  const { context, blocks, positions } = createWorld(["player-walk"], { trackLoaded: true, loadRadius: 60 });
+  const { context, blocks, positions } = createWorld(["player-walk"], { trackLoaded: true, loadRadius: 120 });
   startDungeon(context, "player-walk");
 
   const [spawnX, spawnY, spawnZ] = positions[0].position;
