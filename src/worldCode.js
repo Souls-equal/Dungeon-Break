@@ -169,6 +169,188 @@ function startLobbyCountdown(playerId, x, y, z, blockName) {
   }, LOBBY_CONFIG.ticksPerSecond);
 }
 
+// ---------------------------------------------------------------- debug --
+//
+// Everything below is for bug reports: a player types `/dbg` in chat and gets the
+// seed, the cell, the room or corridor they are standing in, and the doorways
+// around them — the numbers a screenshot cannot carry. Two rules it must keep:
+//
+//   - **nothing here touches the tick path.** Reports are built when asked for;
+//     a world that prints per tick is a world that stutters.
+//   - **no chat spam.** A full report is allowed in a dungeon, where a player is
+//     alone with their own build; in the lobby it is one line. The report itself
+//     never broadcasts: it goes to the player who asked, and to nobody else.
+const DEBUG_COMMANDS = {
+  // The full report: seed, cell, room, doorways, nearest corridor.
+  info: ["debug", "dbg", "info", "here", "where"],
+  // The whole dungeon in four lines: rooms, links, loops, build states, refusals.
+  dungeon: ["dungeon", "dgn"],
+  // Just the seed, in bold enough a line to read off a screenshot.
+  seed: ["seed"],
+  // Where the player is, in one line — the one to send when the report is long.
+  short: ["short", "line"],
+  // Toggles the one-line HUD at the top of the screen. On by default? No: a debug
+  // overlay a player did not ask for is a bug of its own.
+  hud: ["hud", "overlay"],
+  // The rooms around the player: distance, build state, free doorways.
+  nearby: ["near", "nearby", "around", "rooms"],
+};
+
+/**
+ * How often the HUD line is refreshed, in ticks.
+ *
+ * Twenty ticks is one second. The line is a *label* on a picture, not a tracker:
+ * a player walks two cells before noticing it, and rebuilding it every tick would
+ * put a full dungeon scan on the tick path for nobody's benefit. One second is
+ * also the fastest a human can read a coordinate.
+ */
+const DEBUG_HUD_REFRESH_TICKS = 20;
+
+/** Last line sent per player, so an unchanged HUD costs nothing. */
+const debugHudLines = {};
+const debugHudEnabled = {};
+let debugHudTicks = 0;
+
+/**
+ * Refreshes the HUD line of every player in a dungeon.
+ *
+ * Called from `tick`, but does work only every `DEBUG_HUD_REFRESH_TICKS`, and only
+ * for players who asked for it — the command is opt-in, so a normal game pays one
+ * counter increment per tick and nothing else.
+ */
+function refreshDebugHud(force = false) {
+  debugHudTicks += 1;
+  if (!force && debugHudTicks % DEBUG_HUD_REFRESH_TICKS !== 0) return;
+  for (const playerId of api.getPlayerIds()) {
+    if (!debugHudEnabled[playerId]) continue;
+    const line = service().hudLineOf(playerId);
+    if (!line) {
+      // Outside a dungeon the line is cleared once, then left alone.
+      if (debugHudLines[playerId] !== "") {
+        debugHudLines[playerId] = "";
+        debugSay(playerId, "middleTextTop", "");
+      }
+      continue;
+    }
+    if (debugHudLines[playerId] === line) continue;
+    debugHudLines[playerId] = line;
+    debugSay(playerId, "middleTextTop", line);
+  }
+}
+
+/** What `command` means, if anything: `{ verb, argument }`, or null. */
+function parseDebugCommand(raw) {
+  const text = String(raw === undefined || raw === null ? "" : raw).trim();
+  if (text.length === 0) return null;
+  const parts = text.split(/\s+/);
+  let head = parts[0].toLowerCase();
+  // Both forms: `/dbg` arrives as "dbg" or "/dbg" depending on the client, and
+  // a player who types the full word should not have to know which.
+  if (head.startsWith("/")) head = head.slice(1);
+  let verb = null;
+  for (const [candidate, aliases] of Object.entries(DEBUG_COMMANDS)) {
+    if (aliases.includes(head)) { verb = candidate; break; }
+  }
+  if (!verb) {
+    // `/debug dungeon medium` — the word `debug` is the namespace, the next word
+    // is the verb.
+    if (head !== "debug" && head !== "dbg") return null;
+    const next = (parts[1] || "info").toLowerCase();
+    for (const [candidate, aliases] of Object.entries(DEBUG_COMMANDS)) {
+      if (aliases.includes(next)) { verb = candidate; break; }
+    }
+    if (!verb) verb = "info";
+    return { verb, argument: parts.slice(2).join(" ") || null };
+  }
+  // `/dbg` on its own is the full report.
+  const rest = parts.slice(1).join(" ");
+  return { verb, argument: rest || null };
+}
+
+/**
+ * Sends one debug line, swallowing a sending failure.
+ *
+ * Two arguments means a client option: `debugSay(playerId, "middleTextTop", text)`
+ * writes the HUD. One helper for both keeps every debug output behind the same
+ * failure guard — a debug feature that throws in `tick` would be worse than none.
+ */
+function debugSay(playerId, messageOrOption, value) {
+  try {
+    if (value !== undefined) api.setClientOption(playerId, messageOrOption, value);
+    else api.sendMessage(playerId, messageOrOption);
+  } catch (_) {
+    // A debug command must never break the tick that carries it.
+  }
+}
+
+/** Sends every line in order, one message each. */
+function debugSayAll(playerId, lines) {
+  for (let index = 0; index < lines.length; index += 1) debugSay(playerId, lines[index]);
+}
+
+function runDebugCommand(playerId, verb, argument) {
+  if (verb === "seed") {
+    const report = service().debugReport(playerId);
+    debugSay(playerId, report
+      ? `[dbg] seed ${report.seed} · ${report.difficulty} · dungeon ${report.dungeonId}`
+      : "[dbg] you are not in a dungeon — step on a pad first");
+    return;
+  }
+  if (verb === "dungeon") {
+    const lines = service().debugDungeonLines(playerId, argument || null);
+    debugSayAll(playerId, lines.length > 0
+      ? lines
+      : ["[dbg] no dungeon by that name is built — /dbg dungeon easy|medium|hard|..."]);
+    return;
+  }
+  if (verb === "nearby") {
+    const limit = argument && /^\d+$/.test(argument.trim()) ? Number(argument.trim()) : undefined;
+    const lines = service().debugNearbyLines(playerId, limit === undefined ? {} : { limit });
+    debugSayAll(playerId, lines.length > 0
+      ? lines
+      : ["[dbg] you are not in a dungeon — step on a pad first"]);
+    return;
+  }
+  if (verb === "hud") {
+    const enabled = !debugHudEnabled[playerId];
+    debugHudEnabled[playerId] = enabled;
+    debugHudLines[playerId] = "";
+    debugSay(playerId, "middleTextTop", "");
+    debugSay(playerId, enabled
+      ? "[dbg] HUD on: the seed and the cell are now written at the top of the screen, so a screenshot carries them"
+      : "[dbg] HUD off");
+    // Forced: a player who turns the HUD on must see it immediately, not up to a
+    // second later on a line they just asked for.
+    if (enabled) refreshDebugHud(true);
+    return;
+  }
+  const lines = service().debugLines(playerId);
+  if (lines.length === 0) {
+    debugSay(playerId, "[dbg] you are not in a dungeon — step on a pad first");
+    return;
+  }
+  // `short` returns everything the full report says in one line; the full report
+  // is what gets screenshotted, so it is sent last and stays on screen.
+  if (verb === "short") debugSay(playerId, lines[1] || lines[0]);
+  else debugSayAll(playerId, lines);
+}
+
+// Commands arrive through `playerCommand`, which Bloxd calls for a message
+// starting with `/`. Returning `true` marks it handled: the game must not also
+// try to run `/dbg` as one of its own commands.
+playerCommand = (playerId, command) => {
+  const parsed = parseDebugCommand(command);
+  if (!parsed) return false;
+  try {
+    runDebugCommand(playerId, parsed.verb, parsed.argument);
+  } catch (error) {
+    // A debug command that throws must say so rather than die silently: the
+    // whole point is that the player can report what happened.
+    debugSay(playerId, `[dbg] report failed: ${error && error.message ? error.message : "unknown error"}`);
+  }
+  return true;
+};
+
 function onLobbyCountdownComplete(playerId, difficulty) {
   // The service reads the landing cell, teleports to the middle of it, waits for
   // the chunks, lays the pad and builds the entrance — in that order. Nothing is
@@ -198,6 +380,7 @@ onBlockStandStop = (playerId, x, y, z, blockName) => {
 
 tick = () => {
   stepScheduler();
+  refreshDebugHud();
   // One cycle for every dungeon, from the world's own callback: the engine never
   // keeps a timer of its own.
   service().tick();
@@ -205,6 +388,10 @@ tick = () => {
 
 onPlayerLeave = (playerId) => {
   stopLobbyCountdown(playerId);
+  // The HUD is per-player state: keeping it would leak one entry per player who
+  // ever played, and a rejoining player has not asked for it again.
+  delete debugHudEnabled[playerId];
+  delete debugHudLines[playerId];
   // The dungeon keeps existing — other players may be inside it — but this
   // player is no longer tracked in it, and every exit goes through the lobby.
   service().leave(playerId);

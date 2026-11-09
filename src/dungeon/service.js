@@ -24,6 +24,15 @@ import { DUNGEON_CONFIG, findDifficulty, nextDifficulty } from "./engine/config.
 import { createDungeonManager } from "./engine/dungeonManager.js";
 import { createDungeonController } from "./engine/controller.js";
 import { createWorldBuilder, ROOM_BUILD_STATE } from "./worldBuilder.js";
+import {
+  describeDungeon,
+  describeNearby,
+  describePosition,
+  dungeonLines,
+  hudLine,
+  nearbyLines,
+  reportLines,
+} from "./debug.js";
 
 /** Lobby position, used on every join and every exit. */
 export const LOBBY_POSITION = [10, 21, 10];
@@ -306,6 +315,135 @@ export function createDungeonService(options) {
 
   const dungeonOf = (playerId) => playerDungeons.get(playerId) || null;
 
+  /**
+   * What a player is standing in, as numbers.
+   *
+   * This is the report a bug report needs and a screenshot cannot carry: the two
+   * dungeons share a world, the seed is derived from the lobby name, and a room
+   * identifier means nothing without the dungeon it belongs to. It reads state
+   * and writes nothing.
+   *
+   * `cell` is read from the live position rather than from the controller's
+   * record, so the report is true even in the tick before the controller caught
+   * up — and it is *never* taken from the spawn, which would say "you are in the
+   * entrance" for a player standing in the last room.
+   */
+  function debugReport(playerId, options = {}) {
+    const dungeon = playerDungeons.get(playerId);
+    if (!dungeon) return null;
+    const position = options.position || api.getPosition(playerId);
+    if (!position) return null;
+    const point = { x: position[0], y: position[1], z: position[2] };
+    const report = describePosition({
+      manager: dungeon.manager,
+      point,
+      seed: dungeon.seed,
+      difficulty: dungeon.difficulty.label,
+      lobby: lobbyName,
+      // One read per reported cell, and only when a report is asked for: the
+      // world is never polled on the tick path.
+      blockAt: options.light ? null : (x, y, z) => api.getBlock(x, y, z),
+      // The build progress lives in the builder, which is the only object that
+      // knows how far a room got and why it stopped.
+      buildStateOf: (roomId) => dungeon.worldBuilder.stateOf(roomId),
+      light: options.light === true,
+    });
+    report.playerId = playerId;
+    report.dungeonId = keyOf(dungeon.difficulty);
+    report.entranceRoomId = dungeon.entranceRoomId;
+    report.spawnCell = dungeon.spawn ? dungeon.spawn.cell : null;
+    return report;
+  }
+
+  /**
+   * The HUD line of a player, or an empty string outside a dungeon.
+   *
+   * This is the report a screenshot carries for free: it is short enough for
+   * `middleTextTop`, cheap enough to refresh twice a second (no room scan, no
+   * block read), and it holds the seed — the one number without which a picture
+   * of a dungeon cannot be reproduced.
+   */
+  function hudLineOf(playerId) {
+    const report = debugReport(playerId, { light: true });
+    if (!report) return "";
+    return hudLine(report);
+  }
+
+  /** The chat lines of that report, for the host to send. */
+  function debugLines(playerId, options = {}) {
+    const report = debugReport(playerId, options);
+    if (!report) return [];
+    return reportLines(report);
+  }
+
+  /**
+   * The rooms around a player, with their build state and their free doorways.
+   *
+   * Same rule as every other report: it reads, it writes nothing, and it is only
+   * built when asked for — this one walks every room, so it must never be called
+   * from the tick.
+   */
+  function debugNearby(playerId, options = {}) {
+    const dungeon = playerDungeons.get(playerId);
+    if (!dungeon) return null;
+    const position = options.position || api.getPosition(playerId);
+    if (!position) return null;
+    const report = describeNearby(
+      dungeon.manager,
+      { x: position[0], y: position[1], z: position[2] },
+      {
+        limit: options.limit,
+        buildStateOf: (roomId) => dungeon.worldBuilder.stateOf(roomId),
+      },
+    );
+    report.dungeonId = keyOf(dungeon.difficulty);
+    report.difficulty = dungeon.difficulty.label;
+    report.seed = dungeon.seed;
+    return report;
+  }
+
+  /** The chat lines of that report. */
+  function debugNearbyLines(playerId, options = {}) {
+    const report = debugNearby(playerId, options);
+    if (!report) return [];
+    const lines = nearbyLines(report, options);
+    lines.push(`[dbg] dungeon ${report.difficulty} · seed ${report.seed}`);
+    return lines;
+  }
+
+  /**
+   * The whole dungeon — the one the player is in, or a named difficulty.
+   *
+   * The named form is what makes a screenshot useful after the fact: a player can
+   * send `!dbg dungeon medium` from the lobby without walking into it, and the
+   * report describes the dungeon the lobby would build.
+   */
+  function debugDungeon(playerId, difficultyRef = null) {
+    let dungeon = playerDungeons.get(playerId) || null;
+    if (difficultyRef) {
+      const difficulty = typeof difficultyRef === "string" ? findDifficulty(difficultyRef) : difficultyRef;
+      if (!difficulty) return null;
+      dungeon = dungeons.get(keyOf(difficulty)) || null;
+      if (!dungeon) return null;
+    }
+    if (!dungeon) return null;
+    return {
+      dungeonId: keyOf(dungeon.difficulty),
+      difficulty: dungeon.difficulty.label,
+      seed: dungeon.seed,
+      summary: describeDungeon(dungeon.manager, {
+        buildStateOf: (roomId) => dungeon.worldBuilder.stateOf(roomId),
+      }),
+    };
+  }
+
+  /** The chat lines of that summary. */
+  function debugDungeonLines(playerId, difficultyRef = null) {
+    const report = debugDungeon(playerId, difficultyRef);
+    if (!report) return [];
+    return dungeonLines(report.seed, report.difficulty, report.summary);
+  }
+
   function stats() {
     const list = [];
     for (const dungeon of dungeons.values()) {
@@ -329,6 +467,13 @@ export function createDungeonService(options) {
     enterDifficulty,
     usePad,
     leave,
+    debugReport,
+    debugLines,
+    hudLineOf,
+    debugDungeon,
+    debugDungeonLines,
+    debugNearby,
+    debugNearbyLines,
     leaveToLobby: leave,
     tick,
     dungeonOf,

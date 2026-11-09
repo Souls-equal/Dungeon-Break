@@ -370,3 +370,190 @@ test("leaving the world puts the player back in the lobby", () => {
   context.onPlayerLeave("player-leave-world");
   assert.deepEqual(positions.at(-1).position, LOBBY_POSITION);
 });
+
+// -------------------------------------------------------------------- debug --
+//
+// The debug commands are the only way a player can hand over a bug report that
+// is worth anything: the seed, the cell and the room together. These tests run
+// them through the world code itself, because the wiring (`playerCommand`, the
+// message format) is exactly what a unit test of the report cannot see.
+
+/** Every message sent to one player, in order. */
+const messagesFor = (messages, playerId) => messages
+  .filter((entry) => entry.playerId === playerId)
+  .map((entry) => entry.message);
+
+test("/dbg outside a dungeon says so instead of failing silently", () => {
+  const { context, messages } = createWorld(["player-dbg-lobby"]);
+
+  context.playerCommand("player-dbg-lobby", "dbg");
+
+  const said = messagesFor(messages, "player-dbg-lobby");
+  assert.equal(said.length, 1, "a debug command in the lobby must answer exactly once");
+  assert.match(said[0], /not in a dungeon/);
+});
+
+test("/dbg in a dungeon reports the seed, the cell, the room and the doorways", () => {
+  const { context, messages, positions } = createWorld(["player-dbg"]);
+  startDungeon(context, "player-dbg");
+  assert.equal(positions.length, 1, "the player never entered the dungeon");
+  // A few cycles, so the dungeon has grown past the entrance.
+  for (let tick = 0; tick < 120; tick += 1) context.tick();
+  const before = messages.length;
+
+  context.playerCommand("player-dbg", "dbg");
+
+  const lines = messages.slice(before).map((entry) => entry.message);
+  assert.ok(lines.length >= 5, `the report was cut short: ${lines.length} line(s)`);
+  for (const line of lines) assert.match(line, /^\[dbg\]/, `a line is not tagged: ${line}`);
+  const joined = lines.join("\n");
+  assert.match(joined, /seed \d+/);
+  assert.match(joined, /Very Easy/);
+  assert.match(joined, /cell -?\d+,-?\d+/);
+  assert.match(joined, /room r0/);
+  assert.match(joined, /doorways:|no room/);
+  assert.doesNotMatch(joined, /undefined|NaN/);
+
+  // The reported cell is the cell the player is actually standing in: a report
+  // that prints the spawn would be useless from the far end of the dungeon.
+  const [x, , z] = positions[0].position;
+  assert.match(joined, new RegExp(`cell ${Math.floor(x)},${Math.floor(z)}`));
+});
+
+test("/dbg seed is one line, and it is the seed of the dungeon the player is in", () => {
+  const { context, messages } = createWorld(["player-dbg-seed"]);
+  startDungeon(context, "player-dbg-seed");
+  for (let tick = 0; tick < 40; tick += 1) context.tick();
+  const before = messages.length;
+
+  context.playerCommand("player-dbg-seed", "seed");
+
+  const lines = messagesFor(messages, "player-dbg-seed").slice(-1);
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /^\[dbg\] seed \d+ · Very Easy/);
+
+  // The same command must print the same seed: it is derived from the lobby
+  // name and the difficulty, never from a clock.
+  context.playerCommand("player-dbg-seed", "seed");
+  assert.equal(messagesFor(messages, "player-dbg-seed").at(-1), lines[0]);
+});
+
+test("/dbg dungeon describes the whole build in four lines", () => {
+  const { context, messages } = createWorld(["player-dbg-dungeon"]);
+  startDungeon(context, "player-dbg-dungeon");
+  for (let tick = 0; tick < 80; tick += 1) context.tick();
+  const before = messages.length;
+
+  context.playerCommand("player-dbg-dungeon", "dungeon");
+
+  const lines = messages.slice(before).map((entry) => entry.message);
+  assert.ok(lines.length >= 4, `the summary was cut short: ${lines.length} line(s)`);
+  const joined = lines.join("\n");
+  assert.match(joined, /rooms · \d+ connections/);
+  assert.match(joined, /build:/);
+  assert.match(joined, /areas \d+\.\.\d+ cells/);
+  assert.match(joined, /refusals:/);
+  assert.doesNotMatch(joined, /undefined|NaN/);
+});
+
+test("a debug command the world does not know is left to the game", () => {
+  const { context, messages } = createWorld(["player-dbg-other"]);
+  const handled = context.playerCommand("player-dbg-other", "spawn");
+  assert.equal(handled, false, "the world swallowed a command that is not its own");
+  assert.equal(messages.length, 0, "an unknown command was answered anyway");
+});
+
+test("/dbg hud puts the seed and the cell on the screen, and only once", () => {
+  const { context, messages, clientOptions, positions, movePlayer } = createWorld(["player-hud"]);
+  startDungeon(context, "player-hud");
+  for (let tick = 0; tick < 60; tick += 1) context.tick();
+
+  context.playerCommand("player-hud", "hud");
+  assert.ok(messagesFor(messages, "player-hud").some((message) => /HUD on/.test(message)));
+
+  // Turning it on publishes the line at once, rather than up to a second later.
+  assert.ok(clientOptions.some((entry) => entry.option === "middleTextTop" && /^seed \d+/.test(entry.value)),
+    "the HUD line was not written when it was switched on");
+
+  // Then it refreshes once a second, and only when the line changed: a client
+  // option set every tick is a client option sent every tick. A player standing
+  // still therefore costs nothing at all.
+  const still = clientOptions.length;
+  for (let tick = 0; tick < 40; tick += 1) context.tick();
+  assert.equal(clientOptions.slice(still).filter((entry) => entry.option === "middleTextTop").length, 0,
+    "the HUD was rewritten while the player had not moved");
+
+  // Moving refreshes it, at most once a second.
+  movePlayer("player-hud", [positions[0].position[0] + 3, positions[0].position[1], positions[0].position[2]]);
+  const moving = clientOptions.length;
+  for (let tick = 0; tick < 40; tick += 1) context.tick();
+  const hudWrites = clientOptions.slice(moving).filter((entry) => entry.option === "middleTextTop");
+  assert.ok(hudWrites.length >= 1 && hudWrites.length <= 2,
+    `the HUD was written ${hudWrites.length} times in 40 ticks`);
+  assert.match(hudWrites[0].value, /^seed \d+ · -?\d+,-?\d+ · /);
+  assert.doesNotMatch(hudWrites[0].value, /undefined|NaN/);
+
+  // It is cleared on leaving the dungeon, and the toggle turns it off.
+  context.playerCommand("player-hud", "hud");
+  assert.equal(clientOptions.at(-1).value, "", "the HUD was not cleared when switched off");
+});
+
+test("the HUD costs nothing until a player asks for it", () => {
+  const { context, clientOptions } = createWorld(["player-hud-off"]);
+  startDungeon(context, "player-hud-off");
+  const before = clientOptions.length;
+  for (let tick = 0; tick < 80; tick += 1) context.tick();
+  assert.equal(clientOptions.slice(before).filter((entry) => entry.option === "middleTextTop").length, 0,
+    "the HUD wrote to a player who never enabled it");
+});
+
+test("every chat form of the debug command is understood", () => {
+  const { context, messages } = createWorld(["player-dbg-forms"]);
+  startDungeon(context, "player-dbg-forms");
+  for (let tick = 0; tick < 40; tick += 1) context.tick();
+
+  const forms = ["dbg", "/dbg", "debug", "/debug", "dbg info", "DEBUG"];
+  for (const form of forms) {
+    const before = messages.length;
+    const handled = context.playerCommand("player-dbg-forms", form);
+    assert.equal(handled, true, `"${form}" was not handled`);
+    assert.ok(messages.length > before, `"${form}" produced no report`);
+  }
+  // The namespace form with a verb: `/debug dungeon`.
+  const before = messages.length;
+  assert.equal(context.playerCommand("player-dbg-forms", "debug dungeon"), true);
+  assert.match(messages.slice(before).map((entry) => entry.message).join("\n"), /rooms · \d+ connections/);
+});
+
+test("/dbg near lists the rooms around the player, with their state", () => {
+  const { context, messages } = createWorld(["player-near"]);
+  startDungeon(context, "player-near");
+  for (let tick = 0; tick < 120; tick += 1) context.tick();
+  const before = messages.length;
+
+  context.playerCommand("player-near", "near");
+
+  const lines = messages.slice(before).map((entry) => entry.message);
+  assert.ok(lines.length >= 2, `the nearby report was cut short: ${lines.length} line(s)`);
+  const joined = lines.join("\n");
+  assert.match(joined, /room\(s\) near -?[\d.]+,-?[\d.]+/);
+  assert.match(joined, /· built ·|· building ·|· not_started ·/);
+  assert.match(joined, /free doorway\(s\)/);
+  assert.match(joined, /seed \d+/);
+  assert.doesNotMatch(joined, /undefined|NaN/);
+});
+
+test("the HUD state does not outlive the player", () => {
+  const { context, messages, clientOptions } = createWorld(["player-hud-leave"]);
+  startDungeon(context, "player-hud-leave");
+  context.playerCommand("player-hud-leave", "hud");
+  assert.ok(messagesFor(messages, "player-hud-leave").some((message) => /HUD on/.test(message)));
+
+  context.onPlayerLeave("player-hud-leave");
+  // A player who rejoins has not asked for the HUD again: nothing is written for
+  // them until they do, so a debug overlay cannot follow someone across sessions.
+  const before = clientOptions.length;
+  for (let tick = 0; tick < 40; tick += 1) context.tick();
+  assert.equal(clientOptions.slice(before).filter((entry) => entry.option === "middleTextTop").length, 0,
+    "the HUD kept writing for a player who left");
+});
