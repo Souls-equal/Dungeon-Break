@@ -7,18 +7,24 @@ import { passageIsWalkable, REFUSAL, validateRoom } from "../../src/dungeon/engi
 import { clearanceMap, createMask, fromRows, toRows, walkablePath } from "../../src/dungeon/engine/geometry.js";
 import { DUNGEON_CONFIG } from "../../src/dungeon/engine/config.js";
 
+
+/**
+ * Grows a dungeon one room at a time, from the manager's own frontier.
+ *
+ * The frontier is re-read on every step on purpose: the manager is the only place
+ * that knows which doorways are still pending. A mirrored queue holds the graph as
+ * it was when the room was created — before the room closed its loops and before
+ * an attempt blocked a doorway — so it keeps asking for doorways that no longer
+ * exist and starves the ones that do. That is how a dungeon ends up with a single
+ * trunk and no doors left to develop.
+ */
 function grow(seed, targetRooms) {
   const manager = createDungeonManager({ seed, radius: 512 });
   manager.createEntrance();
-  const queue = manager.pendingOpenings().map((entry) => ({ room: entry.room, opening: entry.opening }));
-  while (queue.length > 0 && manager.roomCount < targetRooms) {
-    const next = queue.shift();
-    const result = manager.expand(next.room.id, next.opening.id);
-    if (result.ok && result.kind === "created") {
-      for (const opening of result.room.openings) {
-        if (opening.status === OPENING_STATUS.PENDING) queue.push({ room: result.room, opening });
-      }
-    }
+  while (manager.roomCount < targetRooms) {
+    const pending = manager.pendingOpenings();
+    if (pending.length === 0) break;
+    manager.expand(pending[0].room.id, pending[0].opening.id);
   }
   return manager;
 }
@@ -271,3 +277,98 @@ function openingAt(id, side, offsetStart, offsetEnd, extra = {}) {
     failures: 0,
   };
 }
+
+// ------------------------------------------------- corridors are straight ---
+
+/**
+ * Every connection, checked on the cells it actually carves: one straight run
+ * across the gap, exactly as wide as the two doorways it joins, and nothing else.
+ *
+ * This is the regression test for "the corridors sometimes stick out and block
+ * part of the entrance". Three separate bugs produced that picture, and all three
+ * showed up as a corridor whose width differed from the doorway it left: the
+ * bridge was carved from a doorway span *before* the doorway was narrowed to the
+ * shared cells, so a four-cell door could have a five-cell corridor through it.
+ */
+test("every corridor is one straight run, exactly as wide as both its doorways", () => {
+  let checked = 0;
+  for (const seed of [12345, 777, 2024, 31337, 4242]) {
+    const manager = grow(seed, 30);
+    for (const connection of manager.allConnections()) {
+      const roomA = manager.getRoom(connection.a.roomId);
+      const roomB = manager.getRoom(connection.b.roomId);
+      const openingA = roomA.openings.find((entry) => entry.id === connection.a.openingId);
+      const openingB = roomB.openings.find((entry) => entry.id === connection.b.openingId);
+      const cells = [...connection.joint, ...connection.bridge];
+      if (cells.length === 0) continue;
+      checked += 1;
+
+      const vertical = openingA.side === "north" || openingA.side === "south";
+      const along = [...new Set(cells.map((cell) => (vertical ? cell.x : cell.y)))].sort((a, b) => a - b);
+      const across = [...new Set(cells.map((cell) => (vertical ? cell.y : cell.x)))].sort((a, b) => a - b);
+
+      // 1. Straight: one row of cells along the corridor's own axis.
+      assert.equal(cells.length % along.length, 0, `${connection.id}: the corridor is not a rectangle`);
+      assert.equal(cells.length / along.length, across.length, `${connection.id}: the corridor is ragged`);
+
+      // 2. As wide as the doorways, which are the holes the player walks through.
+      const doorA = openingA.offsetEnd - openingA.offsetStart + 1;
+      const doorB = openingB.offsetEnd - openingB.offsetStart + 1;
+      assert.equal(along.length, doorA, `${connection.id}: ${along.length}-cell corridor through a ${doorA}-cell door`);
+      assert.equal(along.length, doorB, `${connection.id}: ${along.length}-cell corridor out of a ${doorB}-cell door`);
+      assert.equal(connection.width, doorA, `${connection.id}: the connection claims ${connection.width}, the door is ${doorA}`);
+
+      // 3. Contiguous: no gap in the run. A missing cell is a wall in a corridor.
+      for (let index = 1; index < along.length; index += 1) {
+        assert.equal(along[index], along[index - 1] + 1, `${connection.id}: the corridor has a gap`);
+      }
+      // 4. And it reaches exactly from one room's wall to the other's.
+      const edgeA = vertical
+        ? roomA.origin.y + (openingA.side === "north" ? 0 : roomA.mask.h - 1)
+        : roomA.origin.x + (openingA.side === "west" ? 0 : roomA.mask.w - 1);
+      const edgeB = vertical
+        ? roomB.origin.y + (openingB.side === "north" ? 0 : roomB.mask.h - 1)
+        : roomB.origin.x + (openingB.side === "west" ? 0 : roomB.mask.w - 1);
+      assert.equal(across[0], Math.min(edgeA, edgeB) + 1, `${connection.id}: the corridor starts away from the wall`);
+      assert.equal(across[across.length - 1], Math.max(edgeA, edgeB) - 1,
+        `${connection.id}: the corridor stops short of the wall, or runs past it`);
+    }
+  }
+  assert.ok(checked >= 100, `only ${checked} corridors were inspected, so the test proves nothing`);
+});
+
+test("no corridor is ever built through a third room", () => {
+  let checked = 0;
+  for (const seed of [12345, 777, 2024, 31337, 4242]) {
+    const manager = grow(seed, 30);
+    const rooms = manager.allRooms();
+    for (const connection of manager.allConnections()) {
+      for (const cell of [...connection.joint, ...connection.bridge]) {
+        for (const room of rooms) {
+          if (room.id === connection.a.roomId || room.id === connection.b.roomId) continue;
+          const localX = cell.x - room.origin.x;
+          const localY = cell.y - room.origin.y;
+          const inside = room.mask.cells[localY] && room.mask.cells[localY][localX];
+          assert.ok(!inside, `${connection.id} runs through ${room.id} at ${cell.x},${cell.y}`);
+        }
+        checked += 1;
+      }
+    }
+  }
+  assert.ok(checked > 0, "no corridor cell was inspected");
+});
+
+// ------------------------------------------- rooms can still be connected ---
+
+test("every generated room could still host a doorway", () => {
+  // Sizes are drawn from a ladder of bands, so this is a property of the ladder
+  // and not of one lucky draw: the narrowest side any band allows has to be able
+  // to carry `minOpenings` doorways with their corner clearance.
+  for (let index = 0; index < DUNGEON_CONFIG.sizeBands.length; index += 1) {
+    const band = DUNGEON_CONFIG.sizeBands[index];
+    const smallestFace = Math.min(band[1], band[2]);
+    const needed = DUNGEON_CONFIG.minPassageWidth + 2 * DUNGEON_CONFIG.minCornerClearance;
+    assert.ok(smallestFace >= needed,
+      `band ${index} draws a ${band[1]}-cell side, which cannot host a ${DUNGEON_CONFIG.minPassageWidth}-cell doorway`);
+  }
+});

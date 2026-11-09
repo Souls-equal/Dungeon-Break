@@ -17,11 +17,12 @@ import { createSpatialIndex } from "./spatialIndex.js";
 import { generateShape } from "./shapes.js";
 import {
   bridgeCells,
+  openingSpan,
   narrowOpening,
   spanOverlap,
-  canConnectDirectly,
   jointCells,
   OPENING_STATUS,
+  planConnection,
   planOpenings,
   placeRoomForOpening,
 } from "./openings.js";
@@ -57,6 +58,11 @@ export function createDungeonManager(options = {}) {
   // actually stopped it instead of a generic "exhausted".
   let lastRefusal = null;
   let indexRejected = 0;
+  // Every cell of every committed corridor, keyed `x,y`. The manager owns it
+  // because it is the only place that sees a connection the moment it is
+  // committed: nothing else re-reads a corridor, so a room that lands on one is a
+  // sealed branch, and no later pass would notice.
+  const corridorCells = new Set();
   const lastRejections = [];
 
   function noteRefusal(code) {
@@ -119,6 +125,13 @@ export function createDungeonManager(options = {}) {
     if (roomA.id !== roomB.id) roomB.connections.push(connection.id);
     index.refreshOpenings(roomA);
     if (roomA.id !== roomB.id) index.refreshOpenings(roomB);
+    const lists = [connection.joint, connection.bridge];
+    for (let list = 0; list < lists.length; list += 1) {
+      const entries = lists[list] || [];
+      for (let at = 0; at < entries.length; at += 1) {
+        corridorCells.add(`${entries[at].x},${entries[at].y}`);
+      }
+    }
     return connection;
   }
 
@@ -251,62 +264,63 @@ export function createDungeonManager(options = {}) {
    * two opening identifiers: it is never inferred from proximity at build time.
    */
   function commitIfValid(roomA, openingA, roomB, openingB, kind) {
-    let joint = null;
-    let bridge = null;
-    if (kind === "direct") {
-      if (!canConnectDirectly(openingA, roomA.origin, roomA.mask, openingB, roomB.origin, roomB.mask)) {
-        return null;
-      }
-      joint = jointCells(roomA, openingA);
-    } else {
-      const built = bridgeCells(roomA, openingA, roomB, openingB);
-      if (!built) return null;
-      bridge = built.cells;
-      // A bridge must not cross a third room.
-      for (let index_ = 0; index_ < bridge.length; index_ += 1) {
+    const plan = planConnection(roomA, openingA, roomB, openingB, kind);
+    if (!plan.ok) return null;
+
+    // A bridge must not cross a third room. `planConnection` already refused one
+    // that runs within `doorwayClearance` of the two rooms it joins; this is the
+    // other half — the rooms it joins are not the only rooms in the dungeon.
+    if (plan.bridge.length > 0) {
+      for (let index_ = 0; index_ < plan.bridge.length; index_ += 1) {
         const rooms_ = index.queryRect({
-          x1: bridge[index_].x, y1: bridge[index_].y, x2: bridge[index_].x, y2: bridge[index_].y,
+          x1: plan.bridge[index_].x, y1: plan.bridge[index_].y,
+          x2: plan.bridge[index_].x, y2: plan.bridge[index_].y,
         });
         for (let other = 0; other < rooms_.length; other += 1) {
           if (rooms_[other].id === roomA.id || rooms_[other].id === roomB.id) continue;
           const local = {
-            x: bridge[index_].x - rooms_[other].origin.x,
-            y: bridge[index_].y - rooms_[other].origin.y,
+            x: plan.bridge[index_].x - rooms_[other].origin.x,
+            y: plan.bridge[index_].y - rooms_[other].origin.y,
           };
           if (rooms_[other].mask.cells[local.y] && rooms_[other].mask.cells[local.y][local.x]) return null;
         }
       }
     }
-    // Two doorways rarely line up cell for cell. When they meet on a few cells,
-    // both are **narrowed to those cells** — otherwise each door keeps a span
-    // that is partly in front of masonry, which the player sees as a hole with a
-    // wall behind it. The narrowing happens before anything is committed, so no
-    // state ever describes a doorway wider than the corridor it opens onto.
-    const overlap = spanOverlap(roomA, openingA, roomB, openingB);
-    if (overlap && overlap.length < openingA.width) {
-      if (overlap.length < DUNGEON_CONFIG.minConnectionOverlap) return null;
-      narrowOpening(roomA, openingA, overlap.from, overlap.to);
-      narrowOpening(roomB, openingB, overlap.from, overlap.to);
-    }
+
+    // How wide the corridor is, is how wide the two doorways will be. The
+    // narrowing happens off to the side first: a connection that turns out not to
+    // be walkable must leave both rooms exactly as it found them, and narrowing is
+    // the only mutation in this function that a refusal used to leave behind.
+    const narrowed = { from: plan.overlap.from, to: plan.overlap.to };
+    const spanA = openingSpan(openingA);
+    const spanB = openingSpan(openingB);
+    const localA = { from: narrowed.from - (spanA.alongX ? roomA.origin.x : roomA.origin.y), to: narrowed.to - (spanA.alongX ? roomA.origin.x : roomA.origin.y) };
+    const localB = { from: narrowed.from - (spanB.alongX ? roomB.origin.x : roomB.origin.y), to: narrowed.to - (spanB.alongX ? roomB.origin.x : roomB.origin.y) };
 
     // A logical connection is not enough: the corridor it describes must be
     // physically walkable from inside one room to inside the other. This check
-    // was written in Phase 2 and never called at commit time; it is called here
-    // because everything else about a connection is geometry on paper, and a
-    // room whose only door opens onto a wall is built, visible and impossible to
-    // enter. Measured on 95 direct connections: it refuses none today, which is
-    // exactly why it is cheap to keep.
-    if (!passageIsWalkable(roomA, openingA, roomB, openingB)) return null;
+    // was written in Phase 2 and never called; it is called here, on the narrowed
+    // geometry, because everything else about a connection is geometry on paper,
+    // and a room whose only door opens onto a wall is built, visible and
+    // impossible to enter.
+    if (!passageIsWalkable(roomA, { ...openingA, ...openingSpanFields(openingA, localA) }, roomB, { ...openingB, ...openingSpanFields(openingB, localB) })) {
+      return null;
+    }
+
+    if (plan.width < openingA.width) {
+      narrowOpening(roomA, openingA, narrowed.from, narrowed.to);
+      narrowOpening(roomB, openingB, narrowed.from, narrowed.to);
+    }
 
     const connection = {
       id: nextConnectionId(openingA.id, openingB.id),
       a: { roomId: roomA.id, openingId: openingA.id },
       b: { roomId: roomB.id, openingId: openingB.id },
-      kind,
-      width: openingA.width,
+      kind: plan.kind,
+      width: plan.width,
       height: openingA.height,
-      joint: joint || [],
-      bridge: bridge || [],
+      joint: plan.joint,
+      bridge: plan.bridge,
     };
     commitConnection(connection, roomA, openingA, roomB, openingB);
     // The openings just moved to their narrowed span: their index key is the
@@ -385,8 +399,15 @@ export function createDungeonManager(options = {}) {
       }
 
       // Try each candidate opening of the child: the first that validates wins.
-      for (let at = 0; at < candidates.length; at += 1) {
-        const childOpeningTemplate = candidates[at];
+      //
+      // Ordered by how much of the parent's doorway the child's doorway actually
+      // faces. `placeRoomForOpening` centres the two spans on each other, so the
+      // overlap is the window on the parent's door; a candidate that covers at
+      // least `minConnectionOverlap` cells gives a corridor as wide as the hole,
+      // and anything less is a room hung by two cells of a five-cell door.
+      const usable = candidates.filter((entry) => Math.min(opening.width, entry.width) >= DUNGEON_CONFIG.minConnectionOverlap);
+      for (let at = 0; at < (usable.length > 0 ? usable.length : candidates.length); at += 1) {
+        const childOpeningTemplate = (usable.length > 0 ? usable : candidates)[at];
         const origin = placeRoomForOpening(room, opening, shape.mask, childOpeningTemplate);
         const childId = options_.childId || nextRoomId(room.id, opening.id);
         if (options_.childId && rooms.has(childId)) {
@@ -407,6 +428,7 @@ export function createDungeonManager(options = {}) {
           childOpening,
           radius,
           clearances,
+          corridors: corridorCells,
         });
         if (!verdict.ok) {
           noteRefusal(verdict.code);
@@ -422,12 +444,19 @@ export function createDungeonManager(options = {}) {
           room.depth + 1,
           { roomId: room.id, openingId: opening.id },
         );
+        // The corridor is exactly the window the two doorways share. Both are
+        // narrowed to it *before* the commit, so no state ever describes a door
+        // wider than the hole in front of it, and the joint is carved through the
+        // shared cells rather than through the parent's original span.
+        const shared = sharedSpan(room, opening, origin, childOpening);
+        narrowOpening(room, opening, shared.from, shared.to);
+        narrowOpening({ origin }, childOpening, shared.from, shared.to);
         const connection = {
           id: nextConnectionId(opening.id, childOpening.id),
           a: { roomId: room.id, openingId: opening.id },
           b: { roomId: childId, openingId: childOpening.id },
           kind: "direct",
-          width: opening.width,
+          width: shared.to - shared.from + 1,
           height: opening.height,
           joint: jointCells(room, opening),
           // Declared even when empty: a shape that only sometimes has the field
@@ -453,6 +482,37 @@ export function createDungeonManager(options = {}) {
     // The caller needs the reason, not the fact that attempts ran out: the
     // diagnostic tool is useless if every dead branch looks the same.
     return { ok: false, code: lastRefusal || "NO_FREE_SPACE", blocked, attempts: opening.failures };
+  }
+
+  /**
+   * The cells two facing doorways share, in world coordinates, once the child has
+   * been placed at `childOrigin`.
+   *
+   * Both spans are read on the axis *along* the wall — the same axis for the two
+   * doorways, since opposite faces run the same way — so the shared window is a
+   * plain interval intersection. It is computed before either doorway is narrowed,
+   * because narrowing one and then measuring the other is how a corridor ends up
+   * one cell wider than the door it leaves.
+   */
+  function sharedSpan(parentRoom, parentOpening, childOrigin, childOpening) {
+    const vertical = parentOpening.side === "north" || parentOpening.side === "south";
+    const parentBase = vertical ? parentRoom.origin.x : parentRoom.origin.y;
+    const childBase = vertical ? childOrigin.x : childOrigin.y;
+    const from = Math.max(parentBase + parentOpening.offsetStart, childBase + childOpening.offsetStart);
+    const to = Math.min(parentBase + parentOpening.offsetEnd, childBase + childOpening.offsetEnd);
+    return { from, to };
+  }
+
+  /** The two span fields a doorway would have, without mutating it. */
+  function openingSpanFields(opening, span) {
+    const alongX = opening.side === "north" || opening.side === "south";
+    const middle = span.from + Math.floor((span.to - span.from) / 2);
+    return {
+      offsetStart: span.from,
+      offsetEnd: span.to,
+      width: span.to - span.from + 1,
+      ...(alongX ? { centerX: middle } : { centerY: middle }),
+    };
   }
 
   /** The identifier an opening would have once its room is known. */

@@ -27,6 +27,7 @@ import {
   worldToLogical,
 } from "../../src/dungeon/engine/geometry.js";
 import { generateShape, SHAPE_FAMILY_NAMES } from "../../src/dungeon/engine/shapes.js";
+import { REFUSAL, validateRoom } from "../../src/dungeon/engine/validator.js";
 import {
   canConnectDirectly,
   bridgeCells,
@@ -430,3 +431,157 @@ function openingCells(mask, opening) {
   }
   return cells;
 }
+
+// ------------------------------------------------- room size variety ------
+
+test("room sizes are drawn from a ladder of bands, not a flat range", () => {
+  // A uniform draw over [minWidth, maxWidth] gives every width the same chance:
+  // measured over 280 rooms, one exact width came up 20 times and the dungeon
+  // read as a row of clones. The ladder is what makes sizes differ.
+  const sizes = [];
+  for (let index = 0; index < 400; index += 1) {
+    const shape = generateShape(900000 + index * 13, 0);
+    if (!shape.ok) continue;
+    sizes.push(shape.mask.w);
+    sizes.push(shape.mask.h);
+  }
+  assert.ok(sizes.length > 400, "not enough shapes to draw a conclusion");
+
+  // Every side is inside the envelope the config promises.
+  for (const side of sizes) {
+    assert.ok(side >= DUNGEON_CONFIG.minWidth && side <= DUNGEON_CONFIG.maxWidth,
+      `${side} is outside the configured envelope`);
+  }
+
+  // Variety: at least ten distinct sides, and the smallest under two thirds of the
+  // largest. A flat draw also passes this, so the point is the *shape* of the
+  // distribution below.
+  const distinct = new Set(sizes);
+  assert.ok(distinct.size >= 10, `only ${distinct.size} distinct room sides`);
+  assert.ok(Math.min(...sizes) < Math.max(...sizes) * 0.66, "every room is the same size");
+
+  // The ladder has to produce small rooms: a band whose whole range is in the
+  // bottom third must actually be drawn from. Without it, the "small" end of the
+  // dungeon is only ever a uniform tail.
+  const small = DUNGEON_CONFIG.minWidth + (DUNGEON_CONFIG.maxWidth - DUNGEON_CONFIG.minWidth) / 3;
+  const smallCount = sizes.filter((side) => side <= small).length;
+  assert.ok(smallCount > sizes.length * 0.1,
+    `only ${smallCount} of ${sizes.length} sides are small: the ladder is not being drawn from`);
+});
+
+test("no room may land on a corridor that is already committed", () => {
+  // The rule that keeps corridors honest, and it is deliberately narrow: only
+  // committed corridors are protected. A room's own *pending* doorway that looks
+  // at a neighbour is not a conflict — the builder walls a doorway that leads
+  // nowhere. A corridor is the only way through to the rooms it joins, and
+  // nothing re-reads it, so a room arriving on top of it seals a live branch.
+  const side = 30;
+  const mask = maskFrom(...Array.from({ length: side }, () => "1".repeat(side)));
+  const candidate = { mask, origin: { x: 0, y: 0 }, openings: [
+    fakeOpening({ side: "east", centerX: side - 1, centerY: 10, width: DUNGEON_CONFIG.minPassageWidth }),
+  ] };
+
+  // A corridor cell under the candidate's own floor: refused.
+  const blocked = validateRoom({
+    candidate,
+    nearby: [],
+    parent: null,
+    childOpening: null,
+    radius: 1000,
+    clearances: clearanceMap(mask),
+    corridors: new Set(["12,12"]),
+  });
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.code, REFUSAL.CORRIDOR_BLOCKED);
+
+  // A corridor cell one step outside the footprint: accepted. It is beside the
+  // room, not inside it, and the room's wall does not block a tunnel.
+  const clear = validateRoom({
+    candidate,
+    nearby: [],
+    parent: null,
+    childOpening: null,
+    radius: 1000,
+    clearances: clearanceMap(mask),
+    corridors: new Set(["12,30"]),
+  });
+  assert.equal(clear.ok, true, `a corridor outside the room was refused: ${clear.code}`);
+});
+
+// ------------------------------------------------- room size variety ------
+
+test("room sizes are drawn from a ladder of bands, not a flat range", () => {
+  // A uniform draw over [minWidth, maxWidth] gives every width the same chance:
+  // measured over 280 rooms, one exact width came up 20 times and the dungeon
+  // read as a row of clones. The ladder is what makes sizes differ.
+  const sizes = [];
+  for (let index = 0; index < 400; index += 1) {
+    const shape = generateShape(900000 + index * 13, 0);
+    if (!shape.ok) continue;
+    sizes.push(shape.mask.w);
+    sizes.push(shape.mask.h);
+  }
+  assert.ok(sizes.length > 400, "not enough shapes to draw a conclusion");
+
+  // Every side is inside the envelope the config promises.
+  for (const side of sizes) {
+    assert.ok(side >= DUNGEON_CONFIG.minWidth && side <= DUNGEON_CONFIG.maxWidth,
+      `${side} is outside the configured envelope`);
+  }
+
+  // Variety: at least ten distinct sides, and the smallest under two thirds of the
+  // largest. A flat draw also passes this, so the point is the *shape* of the
+  // distribution below.
+  const distinct = new Set(sizes);
+  assert.ok(distinct.size >= 10, `only ${distinct.size} distinct room sides`);
+  assert.ok(Math.min(...sizes) < Math.max(...sizes) * 0.66, "every room is the same size");
+
+  // The ladder has to produce small rooms: a band whose whole range is in the
+  // bottom third must actually be drawn from. Without it, the "small" end of the
+  // dungeon is only ever a uniform tail.
+  const small = DUNGEON_CONFIG.minWidth + (DUNGEON_CONFIG.maxWidth - DUNGEON_CONFIG.minWidth) / 3;
+  const smallCount = sizes.filter((side) => side <= small).length;
+  assert.ok(smallCount > sizes.length * 0.1,
+    `only ${smallCount} of ${sizes.length} sides are small: the ladder is not being drawn from`);
+});
+
+test("no room may land on a corridor that is already committed", () => {
+  // The rule that keeps corridors honest, and it is deliberately narrow: only
+  // committed corridors are protected. A room's own *pending* doorway that looks
+  // at a neighbour is not a conflict — the builder walls a doorway that leads
+  // nowhere. A corridor is the only way through to the rooms it joins, and
+  // nothing re-reads it, so a room arriving on top of it seals a live branch.
+  const side = 30;
+  const mask = maskFrom(...Array.from({ length: side }, () => "1".repeat(side)));
+  const candidate = {
+    mask,
+    origin: { x: 0, y: 0 },
+    openings: [fakeOpening({ side: "east", centerX: side - 1, centerY: 10, width: DUNGEON_CONFIG.minPassageWidth })],
+  };
+
+  // A corridor cell under the candidate's own floor: refused.
+  const blocked = validateRoom({
+    candidate,
+    nearby: [],
+    parent: null,
+    childOpening: null,
+    radius: 1000,
+    clearances: clearanceMap(mask),
+    corridors: new Set(["12,12"]),
+  });
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.code, REFUSAL.CORRIDOR_BLOCKED);
+
+  // A corridor cell one step outside the footprint: accepted. It runs beside the
+  // room, not through it, and a room's wall does not block a tunnel.
+  const clear = validateRoom({
+    candidate,
+    nearby: [],
+    parent: null,
+    childOpening: null,
+    radius: 1000,
+    clearances: clearanceMap(mask),
+    corridors: new Set(["12,30"]),
+  });
+  assert.equal(clear.ok, true, `a corridor outside the room was refused: ${clear.code}`);
+});

@@ -18,15 +18,14 @@ export const DUNGEON_CONFIG = {
 
   // ------------------------------------------------------------ dimensions --
   //
-  // Scale: the dungeon was built at 1× and is now built at **3×** in every
+  // Scale: the dungeon was built at 1× and is now built at **5×** in every
   // direction, so a room is a hall rather than a closet and a passage is a
-  // corridor two players can cross in. The multiplied values are exact
-  // triples of the 1× ones (4→12, 11→33, 4→12, 3→9, 4→12), so the shape
-  // families, the aspect ratios and the proportions between rooms are unchanged:
-  // a ×3 dungeon is the ×1 dungeon built three times bigger, not a different
-  // dungeon.
+  // corridor five cells wide. The multiplied values are exact fifths of the 1×
+  // ones (4→20, 11→55, 3→15, 6→30), so the shape families, the aspect ratios and
+  // the proportions between rooms are unchanged: a ×5 dungeon is the ×1 dungeon
+  // built five times bigger, not a different dungeon.
   //
-  // Three values inside the openings block are **not** tripled, and each says
+  // Three values inside the openings block are **not** multiplied, and each says
   // why next to it. Everything else in the file that is a distance scales.
   cellSize: 1,
   // How many cells one cell of the original 1× design is worth. The shapes and
@@ -39,19 +38,56 @@ export const DUNGEON_CONFIG = {
   // cell beside the door, see `openings.js`), the size was not. ×5 is 25 times
   // the floor area of the original design.
   scale: 5,
-  // Room dimensions in cells, exterior walls included.
-  minWidth: 20,
+  // Room dimensions in cells, exterior walls included. These are the envelope of
+  // `sizeBands` below, not the draw: they bound what any shape may be, and the
+  // tests assert against them.
+  minWidth: 16,
   maxWidth: 55,
-  minDepth: 20,
+  minDepth: 16,
   maxDepth: 55,
   // Interior height: floor is at floorLevel, walls occupy 1..wallHeight, and a
-  // ceiling sits on wallHeight + 1. 16 blocks of headroom over halls 20 to 55
-  // cells wide, which keeps the doorway-to-wall proportion at 4/16 — the same one
-  // the 1-cell doorway had in a 4-block wall.
-  wallHeight: 16,
-  // Mean cells per room, used to derive dimensions from the room's own seed so
-  // that shapes vary in size as well as in outline.
-  areaSpread: 0.28,
+  // ceiling sits on wallHeight + 1, so a player walks under **5 blocks of air**.
+  //
+  // Not a scaled length, and deliberately not one: a room is 55 cells wide and a
+  // player is still two blocks tall. Sixteen blocks of ceiling over a hall read as
+  // a cathedral and cost 4 000 blocks of wall per room; ceiling height is not what
+  // makes a room feel big, floor area is. 5 is three blocks of headroom above the
+  // eye, which is what the 1× dungeon used to have.
+  wallHeight: 5,
+  // Room sizes are drawn from a ladder of **bands**, not from a uniform draw over
+  // [minWidth, maxWidth]: see `sizeBands` below and `drawDimensions` in
+  // `shapes.js`. Uniform draws produced a dunjon of clones — 20 draws out of 280
+  // landed on one exact width, and the median room was 36 whatever the seed.
+  //
+  // Each band is `[weight, min, max]`: a weight (a share of the draws), then the
+  // dimensions it draws from, both axes independently. Every band is a rectangle
+  // at least as large as one doorway plus its two corner clearances on each face,
+  // which is what keeps a room *placeable*: the doorway rule is
+  // `passageWidth + 2 × minCornerClearance` of continuous wall, so a band narrower
+  // than that would generate rooms that could never be connected.
+  //
+  // Band by band, this is what a player will meet:
+  //   16–18  a closet: four to six steps across, and it fits between two rooms
+  //   19–24  a small chamber
+  //   26–34  the ordinary room of the dungeon
+  //   36–46  a hall
+  //   48–55  the great hall
+  //   16–55  the odd one: a corridor-shaped slot, or a square the size of nothing
+  //          else in the dungeon
+  //
+  // The sizes are deliberately *bimodal* rather than uniform. A flat draw over
+  // [16, 55] gives every width the same chance, and the dungeon fills with
+  // middling rooms that all read the same; measured over 1 200 shapes, this ladder
+  // gives a spread of areas (q90 / q10 = 7.6) twice as wide as the flat draw's
+  // (4.2), with a third of the rooms small and a sixth of them halls.
+  sizeBands: [
+    [4, 16, 18],
+    [3, 19, 24],
+    [2, 26, 34],
+    [2, 36, 46],
+    [3, 48, 55],
+    [2, 16, 55],
+  ],
 
   // ---------------------------------------------------------------- walls ---
   // Masonry between two neighbouring rooms, in cells. Two rooms facing each
@@ -68,9 +104,10 @@ export const DUNGEON_CONFIG = {
   minPassageWidth: 5,
   maxPassageWidth: 5,
   // Passage height in cells, capped by wallHeight so a doorway never opens
-  // through the ceiling. 4 of the 16 blocks of wall height: the same
-  // doorway-to-wall proportion as 1 of 4 in the original design, and comfortably
-  // above a player's height.
+  // through the ceiling. 4 of the 5 blocks of wall height: the opening reaches to
+  // one block below the ceiling, so a corridor is a tunnel you can see the end of,
+  // not a slot in a wall. It is deliberately *not* multiplied with the rest — see
+  // `wallHeight`.
   passageHeight: 4,
   // Distance from a room corner to the nearest opening cell, at least.
   minCornerClearance: 5,
@@ -240,8 +277,8 @@ export const DUNGEON_CONFIG = {
 /** Ordered difficulties. One table for the lobby, the pads and the generator. */
 // `rooms` is a count and stays as it is: the difficulty ladder must keep the
 // same number of rooms, or every measured difficulty shifts. `maxRadius` is a
-// length, and every one of them is ×3 with the rooms: at the new size a room is
-// nine times the area, so the same count needs the same factor in radius.
+// length, and every one of them is ×5 with the rooms: at the new size a room is
+// twenty-five times the area, so the same count needs the same factor in radius.
 export const DIFFICULTIES = [
   { id: "veryEasy", label: "Very Easy", fromLobby: true, rooms: 10, maxRadius: 480 },
   { id: "easy", label: "Easy", fromLobby: true, rooms: 14, maxRadius: 640 },

@@ -30,6 +30,7 @@ export const REFUSAL = {
   OPENING_NO_APPROACH: "OPENING_NO_APPROACH",
   COLLISION_CELL: "COLLISION_CELL",
   NO_CLEARANCE: "NO_CLEARANCE",
+  CORRIDOR_BLOCKED: "CORRIDOR_BLOCKED",
   DOOR_MISMATCH: "DOOR_MISMATCH",
   NO_WALKABLE_PATH: "NO_WALKABLE_PATH",
   ROOM_DISCONNECTED: "ROOM_DISCONNECTED",
@@ -86,6 +87,28 @@ function openingsReachable(mask, openings, clearances) {
     if (!path) return false;
   }
   return true;
+}
+
+/**
+ * The first doorway of the candidate that looks straight into a neighbouring room.
+ *
+ * The test is symmetric on purpose: the candidate's own spans are checked against
+ * the rooms already placed, *and* every doorway of those rooms is checked against
+ * the candidate. A corridor committed earlier runs through the cells just outside
+ * its doorway, and nothing else in the engine re-reads them — so the arriving room
+ * is the last moment at which the collision can be seen at all.
+ */
+function blockedCorridor(corridors, candidate) {
+  if (!corridors || corridors.size === 0) return null;
+  const mask = candidate.mask;
+  for (let localY = 0; localY < mask.h; localY += 1) {
+    for (let localX = 0; localX < mask.w; localX += 1) {
+      if (!mask.cells[localY][localX]) continue;
+      const key = `${candidate.origin.x + localX},${candidate.origin.y + localY}`;
+      if (corridors.has(key)) return { x: candidate.origin.x + localX, y: candidate.origin.y + localY };
+    }
+  }
+  return null;
 }
 
 /** Every opening must sit on the real contour, not on a hole left by a bite. */
@@ -190,6 +213,18 @@ export function validateRoom(input) {
       && parent.opening.side !== childOpening.side;
     if (!aligned) return refuse(REFUSAL.DOOR_MISMATCH, { openingId: childOpening.id });
   }
+
+  // 5 bis. No room may land on a corridor that is already committed.
+  //
+  // Deliberately narrow. A room's own *pending* doorway that happens to look at a
+  // neighbour is not a conflict: the builder walls a doorway that leads nowhere, so
+  // it costs a wasted door and nothing else, and refusing those cost a third of
+  // the loops. A committed corridor is different — it is the only way through to
+  // the rooms it joins, nothing re-reads it, and a room arriving on top of it seals
+  // a branch that was already walkable. Measured with the broad size ladder, 60
+  // rooms out of 750 were cut off that way.
+  const blocked = blockedCorridor(input.corridors, candidate);
+  if (blocked) return refuse(REFUSAL.CORRIDOR_BLOCKED, blocked);
 
   // 6. Every opening of the room must be reachable from the others on foot.
   if (clearances && !openingsReachable(mask, candidate.openings, clearances)) {

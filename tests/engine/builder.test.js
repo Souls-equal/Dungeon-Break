@@ -18,18 +18,24 @@ import {
   STONE_PALETTE,
 } from "../../src/dungeon/builder.js";
 
+
+/**
+ * Grows a dungeon one room at a time, from the manager's own frontier.
+ *
+ * The frontier is re-read on every step on purpose: the manager is the only place
+ * that knows which doorways are still pending. A mirrored queue holds the graph as
+ * it was when the room was created — before the room closed its loops and before
+ * an attempt blocked a doorway — so it keeps asking for doorways that no longer
+ * exist and starves the ones that do. That is how a dungeon ends up with a single
+ * trunk and no doors left to develop.
+ */
 function grow(seed, targetRooms) {
   const manager = createDungeonManager({ seed, radius: 512 });
   manager.createEntrance();
-  const queue = manager.pendingOpenings().map((entry) => ({ room: entry.room, opening: entry.opening }));
-  while (queue.length > 0 && manager.roomCount < targetRooms) {
-    const next = queue.shift();
-    const result = manager.expand(next.room.id, next.opening.id);
-    if (result.ok && result.kind === "created") {
-      for (const opening of result.room.openings) {
-        if (opening.status === OPENING_STATUS.PENDING) queue.push({ room: result.room, opening });
-      }
-    }
+  while (manager.roomCount < targetRooms) {
+    const pending = manager.pendingOpenings();
+    if (pending.length === 0) break;
+    manager.expand(pending[0].room.id, pending[0].opening.id);
   }
   return manager;
 }
@@ -397,4 +403,29 @@ test("no cell is written twice once the passages are built too", () => {
     for (const block of passageBlocks(connection, world, index)) record(block, connection.id);
   }
   assert.ok(seen.size > 0);
+});
+
+// ------------------------------------------------ a ceiling five blocks up --
+
+test("a player walks under five blocks of air, whatever the room is", () => {
+  const manager = grow(12345, 8);
+  assert.equal(DUNGEON_CONFIG.wallHeight - DUNGEON_CONFIG.passageHeight, 1,
+    "the doorway should reach to one block below the ceiling");
+  for (const room of manager.allRooms()) {
+    const blocks = roomBlocks(room, worldOf(room));
+    const ceiling = blocks.filter((block) => block.phase === BUILD_PHASE.CEILING && block.name !== BLOCKS.EMPTY);
+    assert.ok(ceiling.length > 0, `${room.id} has no ceiling`);
+    for (const block of ceiling) {
+      assert.equal(block.y, worldOf(room).y + DUNGEON_CONFIG.wallHeight + 1,
+        `${room.id}: the ceiling is not on wallHeight + 1`);
+    }
+    // Nothing is written where the player's head is: the volume from the floor to
+    // the passage height is air at every non-wall cell of the shape.
+    for (const block of blocks) {
+      const level = block.y - worldOf(room).y;
+      if (level < 1 || level > DUNGEON_CONFIG.passageHeight) continue;
+      assert.ok(block.phase === BUILD_PHASE.WALL || block.phase === BUILD_PHASE.PAD,
+        `${room.id}: ${block.name} was written at head height ${level}`);
+    }
+  }
 });

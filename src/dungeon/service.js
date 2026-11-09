@@ -117,32 +117,54 @@ export function createDungeonService(options) {
       }
     }
 
-    let cell = null;
-    for (let localZ = 1; localZ < room.mask.h - 1 && !cell; localZ += 1) {
-      for (let localX = 1; localX < room.mask.w - 1 && !cell; localX += 1) {
-        if (!room.mask.cells[localZ][localX]) continue;
-        if (doorwayCells.has(`${localX},${localZ}`)) continue;
-        cell = { x: room.origin.x + localX, z: room.origin.y + localZ };
-      }
-    }
-    // A room with no inner cell at all still needs a floor cell to land on.
-    if (!cell) {
-      for (let localZ = 0; localZ < room.mask.h && !cell; localZ += 1) {
-        for (let localX = 0; localX < room.mask.w && !cell; localX += 1) {
-          if (!room.mask.cells[localZ][localX]) continue;
-          if (doorwayCells.has(`${localX},${localZ}`)) continue;
-          cell = { x: room.origin.x + localX, z: room.origin.y + localZ };
-        }
-      }
-    }
+    // The landing cell is the one the player materialises on, so it must be in the
+    // middle of the hall, not a random inner cell: the entrance is the first thing
+    // anyone sees, and a player who lands against a wall reads it as a bug.
+    //
+    // Two constraints, relaxed one at a time if the shape cannot satisfy them:
+    //   - away from the pad's own radius, so the landing pad stays inside the room
+    //     instead of spilling through its walls into the joint;
+    //   - closest to the centre of the room's cells.
+    const padRadius = DUNGEON_CONFIG.scale * 2;
+    const centre = { x: (room.mask.w - 1) / 2, z: (room.mask.h - 1) / 2 };
+    const score = (localX, localZ) => Math.abs(localX - centre.x) + Math.abs(localZ - centre.z);
+    let cell = pickLanding(room, doorwayCells, padRadius + 1, score);
+    if (!cell) cell = pickLanding(room, doorwayCells, 1, score);
     if (!cell) return null;
 
     dungeon.spawn = {
       cell,
       position: [cell.x + 0.5, floorY + 2, cell.z + 0.5],
       roomId: room.id,
+      // The room the landing happens in, so the pad can be clipped to it: a
+      // 21-cell square centred on a room narrower than that writes floor through
+      // the walls, into the joint and in front of the door.
+      room,
     };
     return dungeon.spawn;
+  }
+
+  /**
+   * The floor cell to land on: closest to the middle of the room, at least
+   * `margin` cells from the room's outer face, and never a doorway.
+   */
+  function pickLanding(room, doorwayCells, margin, score) {
+    let best = null;
+    let bestScore = Infinity;
+    for (let localZ = margin; localZ < room.mask.h - margin; localZ += 1) {
+      for (let localX = margin; localX < room.mask.w - margin; localX += 1) {
+        if (!room.mask.cells[localZ] || !room.mask.cells[localZ][localX]) continue;
+        if (doorwayCells.has(`${localX},${localZ}`)) continue;
+        // The cell below the doorway of a neighbour is a corridor mouth: the
+        // player would land in a tunnel rather than in the hall.
+        const nearDoorway = doorwayCells.has(`${localX - 1},${localZ}`) || doorwayCells.has(`${localX + 1},${localZ}`)
+          || doorwayCells.has(`${localX},${localZ - 1}`) || doorwayCells.has(`${localX},${localZ + 1}`);
+        if (nearDoorway) continue;
+        const value = score(localX, localZ);
+        if (value < bestScore) { bestScore = value; best = { x: room.origin.x + localX, z: room.origin.y + localZ }; }
+      }
+    }
+    return best;
   }
 
   /**
@@ -208,7 +230,7 @@ export function createDungeonService(options) {
       // No radius here: the pad's size is a length, so it follows the scale
       // (`scale * 2`, i.e. 21×21 at ×5). Pinning it to 2 left a 5×5 tile in the
       // middle of a 55-cell hall, which reads as a placement bug.
-      dungeon.worldBuilder.layLandingPad(spawn.cell);
+      dungeon.worldBuilder.layLandingPad(spawn.cell, { room: spawn.room });
       // 5. Build the entrance, and only then let the player in.
       buildEntrance(dungeon, (result) => {
         if (!result.done) {

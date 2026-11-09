@@ -13,18 +13,24 @@ import {
 } from "../../src/dungeon/engine/discovery.js";
 import { OPENING_STATUS } from "../../src/dungeon/engine/openings.js";
 
+
+/**
+ * Grows a dungeon one room at a time, from the manager's own frontier.
+ *
+ * The frontier is re-read on every step on purpose: the manager is the only place
+ * that knows which doorways are still pending. A mirrored queue holds the graph as
+ * it was when the room was created — before the room closed its loops and before
+ * an attempt blocked a doorway — so it keeps asking for doorways that no longer
+ * exist and starves the ones that do. That is how a dungeon ends up with a single
+ * trunk and no doors left to develop.
+ */
 function grow(seed, targetRooms) {
   const manager = createDungeonManager({ seed, radius: 512 });
   manager.createEntrance();
-  const queue = manager.pendingOpenings().map((entry) => ({ room: entry.room, opening: entry.opening }));
-  while (queue.length > 0 && manager.roomCount < targetRooms) {
-    const next = queue.shift();
-    const result = manager.expand(next.room.id, next.opening.id);
-    if (result.ok && result.kind === "created") {
-      for (const opening of result.room.openings) {
-        if (opening.status === OPENING_STATUS.PENDING) queue.push({ room: result.room, opening });
-      }
-    }
+  while (manager.roomCount < targetRooms) {
+    const pending = manager.pendingOpenings();
+    if (pending.length === 0) break;
+    manager.expand(pending[0].room.id, pending[0].opening.id);
   }
   return manager;
 }
@@ -86,7 +92,11 @@ test("distance to a room is zero inside it and grows outside", () => {
 });
 
 test("discovery only returns pending doorways within reach", () => {
-  const manager = grow(12345, 40);
+  // A small dungeon, on purpose: discovery covers a player's room, its neighbours
+  // and their neighbours (`anticipationDepth` three links), so by forty rooms the
+  // remaining doorways are four links out and out of reach — which is correct, and
+  // would make this test prove nothing about the reach itself.
+  const manager = grow(12345, 8);
   const entrance = manager.getRoom(manager.entranceRoomId);
   const start = entrance.openings[0];
   const player = {
@@ -106,7 +116,7 @@ test("discovery only returns pending doorways within reach", () => {
 });
 
 test("discovery walks every branch, not just the player's direction", () => {
-  const manager = grow(2222, 60);
+  const manager = grow(2222, 10);
   const entrance = manager.getRoom(manager.entranceRoomId);
   const player = {
     id: "p1",
