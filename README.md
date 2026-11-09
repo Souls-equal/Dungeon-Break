@@ -13,6 +13,25 @@ Les règles de travail du projet sont consignées dans [`AGENT_RULES.md`](AGENT_
 3. Copie-colle le contenu de [`world-code/worldCode.js`](world-code/worldCode.js) dans le World Code, puis sauvegarde. Ce fichier est le bundle compacté, prêt à coller.
 4. Entre dans le monde (spawn `10, 21, 10`) et marche sur un pad pour tester. Le compte à rebours s'affiche avec `middleTextUpper`; quitter tous les pads de la même difficulté l'annule.
 
+## Commandes de debug (rapport de bug)
+
+En jeu, dans le chat :
+
+| Commande | Effet |
+| --- | --- |
+| `/dbg` | Rapport complet : graine, cellule, salle (taille, origine, avancement de construction, portes libres), porte sous les pieds, couloir le plus proche, salles voisines, bloc sous les pieds |
+| `/dbg hud` | Affiche une ligne en haut de l'écran — `seed … · x,z · salle ou couloir`. **À activer avant de faire une capture** : la photo se lit alors toute seule |
+| `/dbg seed` | La graine seule, en une ligne |
+| `/dbg dungeon` | L'état du donjon entier : salles, liens, boucles, construction, refus du générateur |
+| `/dbg near [rayon]` | Les salles autour de soi, avec leur état et leurs portes libres |
+| `/dbg short` | La position seule |
+
+Une capture d'écran + le texte de `/dbg` suffisent pour reproduire exactement la géométrie en local :
+
+```
+node tools/visualize-dungeon.mjs --seed <graine> --rooms <nombre de salles>
+```
+
 ## Sources et version compacte
 
 Le code lisible est dans `src/` : `src/worldCode.js` contient le lobby, `src/utils/scheduler.js` le scheduler piloté par le callback `tick` de Bloxd, et `src/dungeon/generator.js` le générateur procédural par modules de salles. Le script de build les assemble en un seul fichier compact, `world-code/worldCode.js`, sans imports ni timers JavaScript natifs.

@@ -24,6 +24,7 @@ Les règles de travail du projet sont dans [`AGENT_RULES.md`](../AGENT_RULES.md)
 11. [Index spatial](#11-index-spatial)
 12. [Anticipation : les trois opérations et les trois files](#12-anticipation--les-trois-opérations-et-les-trois-files)
 13. [Construction physique](#13-construction-physique)
+13 bis. [Commandes de debug](#13-bis-commandes-de-debug)
 14. [Persistance](#14-persistance)
 15. [Suivi des modifications physiques — supprimé](#15-suivi-des-modifications-physiques--supprimé)
 16. [Garanties de performance](#16-garanties-de-performance)
@@ -233,6 +234,7 @@ La liste a été révisée en Phase 1 par rapport à la proposition initiale : `
 | `DungeonBuildQueue` | File de construction, curseur de reprise, coût en blocs | Écrire des blocs | ✅ `builder.js` (`createRoomWriter`) + `controller.js` |
 | — (non prévu, ajouté) | Le pont Bloxd : chargement, écriture, vérification, réparation, protection | Planifier des blocs | ✅ `worldBuilder.js` |
 | — (non prévu, ajouté) | Un donjon par difficulté, séquence de spawn, pads de progression | Décider du contenu | ✅ `service.js` |
+| — (non prévu, ajouté) | **Rapport de debug** : ce que le joueur a sous les pieds (salle, porte, couloir, bloc, voisins), en objet et en lignes de chat | Écrire, lire le monde, tourner à chaque tick | ✅ `debug.js` |
 | `DungeonPersistence` | Sérialisation compacte, fragments, budget de caractères, versions | Décider du contenu | ◻ Phase 5 |
 | `DungeonRecovery` | Rechargement, réparation, audit d'intégrité, reprise des constructions interrompues | Remplacer les autres modules | ◻ Phase 6 |
 
@@ -857,6 +859,31 @@ Un lot n'est pas une salle divisée en cinq par principe : `blocksPerBatch = 240
 
 ---
 
+## 13 bis. Commandes de debug
+
+Une capture d'écran ne transporte pas ce dont un rapport de bug a besoin : la graine, la cellule, la salle et la porte. Des commandes de chat le donnent, et une ligne HUD facultative l'écrit à l'écran pour que **toute** capture se lise toute seule.
+
+| Commande | Ce qu'elle envoie |
+| --- | --- |
+| `/dbg` (ou `/debug`, `/dbg info`) | le rapport complet : graine, donjon, difficulté, cellule, position, salle (taille, origine, profondeur, graine de salle, avancement de construction, liens, portes libres), la porte sous les pieds, le couloir le plus proche, les quatre salles les plus proches, le bloc sous les pieds et à hauteur de tête |
+| `/dbg seed` | une ligne : graine, difficulté, identifiant de donjon |
+| `/dbg dungeon [difficulté]` | quatre lignes sur le donjon entier : salles, liens, boucles, profondeur maximale, états de construction, plage d'aires, refus du générateur |
+| `/dbg near [rayon]` | les salles à moins de 120 cellules (rayon réglable) : distance, état de construction, liens, portes libres sur portes totales |
+| `/dbg hud` | bascule une ligne en haut de l'écran : `seed … · x,z · salle ou couloir` — c'est elle qui rend une photo exploitable |
+| `/dbg short` | la position seule, en une ligne |
+
+**Deux règles, tenues par les tests.**
+
+- **Rien sur le chemin du tick.** Un rapport est construit quand on le demande. Le HUD, seul à tourner dans `tick`, ne fait rien dix-neuf ticks sur vingt, ne balaie aucune salle et ne lit aucun bloc (il passe par `describePosition({ light: true })`). Mesuré sur un donjon de 48 salles : **0,113 ms** par rafraîchissement, un rafraîchissement par seconde ; **0,01 ms** par tick HUD éteint, c'est-à-dire exactement le coût d'un donjon sans commandes de debug — et aucun `middleTextTop` n'est écrit pour un joueur qui n'a pas tapé `/dbg hud`, ce qu'un test vérifie.
+- **Le HUD ne survit pas à la déconnexion.** L'état est effacé dans `onPlayerLeave` : un joueur qui revient ne retrouve pas un overlay qu'il n'a pas redemandé, et il n'y a pas une entrée de plus par joueur passé par le monde.
+- **Aucun message ne part à quelqu'un d'autre.** Un rapport répond au joueur qui l'a demandé, et à lui seul : rien n'est diffusé, rien n'est journalisé côté serveur, et une erreur d'envoi est avalée pour qu'une commande de debug ne puisse jamais casser un tick.
+
+**Ce que « je suis là » veut dire.** `outside` ≠ `room` ≠ `corridor` : un joueur dans un joint est *à côté* des salles que `locatePlayerRoom` renvoie, jamais dedans, et le rapport le dit avec une distance mesurée sur **les cellules de sol** d'une salle — pas sur sa boîte englobante, qui laisserait croire que le coin vide d'une salle en croix lui appartient. Les portes listées portent leur état (`connected`, `blocked`, `pending`) et la cellule monde de leur premier bloc, ce qu'il faut pour aller voir sur place.
+
+**Ce que les commandes ne font pas :** elles ne modifient rien. Un test balaie toutes les salles d'un donjon en construisant un rapport sur chacune, et vérifie que ni le nombre de salles, ni celui des connexions, ni un seul `status`/`width` d'ouverture n'a bougé.
+
+Côté code, le calcul est **pur** dans `src/dungeon/debug.js` (aucun `api`, testable en Node) ; le câblage — `playerCommand`, le HUD, le format des messages — vit dans `src/worldCode.js`, le seul fichier qui connaisse `api`. Le service expose `debugReport`, `debugLines`, `debugNearby(Lines)`, `debugDungeon(Lines)` et `hudLineOf` : il ne connaît ni le chat ni le HUD.
+
 ## 14. Persistance
 
 ### 14.1 Le problème
@@ -984,6 +1011,8 @@ Les tests du moteur existent : **105 tests** dans `tests/engine/`, rejoints par 
 
 | Fichier | Ce qui est vérifié | État |
 | --- | --- | --- |
+| `tests/engine/debug.test.js` | Le rapport nomme la graine, la cellule, la salle, la porte et le couloir ; une salle n'est « à distance 0 » que si le joueur est sur une de ses **cellules de sol** ; le couloir vient des cellules committées, jamais d'une déduction sur l'écart ; le résumé compte salles, liens et boucles comme le graphe ; l'avancement de construction vient du constructeur ; aucune ligne ne contient `undefined` ni `NaN` ; **un rapport ne modifie rien** (ni salle, ni connexion, ni ouverture). | ✅ |
+| `tests/world-code.test.js` (debug) | Les commandes `/dbg`, `/dbg seed`, `/dbg dungeon`, `/dbg near`, `/dbg hud` répondent une fois, avec des lignes étiquetées et sans `undefined` ; une commande inconnue n'est pas avalée (`playerCommand` renvoie `false`) ; le HUD s'écrit **une fois par seconde au plus** et seulement si la ligne a changé ; il ne s'écrit jamais pour un joueur qui ne l'a pas activé, et se vide quand on l'éteint. | ✅ |
 | `tests/engine/geometry.test.js` | Conversions `logique ↔ local ↔ monde` aller-retour ; masques, rotations, miroirs ; connectité ; scellement des trous ; dégagements (centre, bord, trou, L) ; contour ; chevauchement sur cellules réelles, y compris la marge, dans les deux sens ; parcours marchable ; les 7 familles de formes ; déterminisme et indépendance vis-à-vis de l'ordre d'appel ; 400 formes sans morceau détaché ni trou ; **toute forme générée peut héberger au moins deux portes** ; ouvertures sur le contour, hors angles, avec espacement ; reproductibilité des ouvertures ; nombre d'ouvertures variable ; `canConnectDirectly`, `placeRoomForOpening`, `jointCells`, `bridgeCells`, `passageCells` ; **taille tirée dans une échelle de paliers** (largeurs étalées, 10 tailles distinctes au moins, palier bas réellement tiré, enveloppe respectée) ; refus d'une salle posée sur un couloir committé, et acceptation d'un couloir qui passe à côté. | ✅ |
 | `tests/engine/index.test.js` | Index contre référence O(n²) sur trois seeds ; toutes les salles réellement en chevauchement sont renvoyées ; suppression d'une salle et de ses ouvertures ; coût par salle non croissant avec la taille du donjon ; une ouverture bloquée n'est jamais proposée ; `wallGap` respecté par **toutes** les connexions commitées. | ✅ |
 | `tests/engine/graph.test.js` | Réseau réel : plus d'arêtes que d'un arbre, carrefours, culs-de-sac, tout est atteignable ; aucune cellule partagée ; chaque ouverture appartient à exactement une connexion ou reste libre ; un refus ne laisse **aucune** trace ; même seed ⇒ même donjon (structure complète comparée) ; ordre d'exploration sans effet ; profondeurs cohérentes ; les ouvertures libres ne disparaissent pas ; huit difficultés ordonnées ; rayon respecté ; **aucun appel à `Math.random`** (interdit pendant le test). | ✅ |
