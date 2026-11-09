@@ -126,6 +126,14 @@ test("a player enters: the floor exists before anything is announced", () => {
   const cell = ready.spawn.cell;
   assert.ok(FLOOR_BLOCKS.includes(api.cells.get(`${cell.x},${DUNGEON_CONFIG.floorY},${cell.z}`)),
     "the player was told the dungeon was ready while standing over a hole");
+  // The pad under the player follows the scale too: the service passing a fixed
+  // radius is how the pad stayed at 5×5 while the rooms grew to 55.
+  const padRadius = DUNGEON_CONFIG.scale * 2;
+  for (const [dx, dz] of [[0, 0], [padRadius, padRadius], [-padRadius, -padRadius]]) {
+    assert.ok(FLOOR_BLOCKS.includes(api.cells.get(`${cell.x + dx},${DUNGEON_CONFIG.floorY},${cell.z + dz}`)),
+      `the landing pad is missing a cell at ${dx},${dz}`);
+  }
+
   // No lock is requested: `survivalAdventure` already keeps the shell intact.
   assert.equal(api.calls.setCanChangeType.length, 0,
     "a permission was requested, but nothing is breakable by default");

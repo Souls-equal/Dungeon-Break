@@ -57,20 +57,18 @@ Les passages comptent aussi dans le budget de blocs du tick : sans cela, un cycl
 
 ## Mesure de sortie
 
-Quatre donjons, faux serveur, joueur immobile dans l'entrée, **à l'échelle ×3** :
+Quatre donjons, faux serveur, joueur immobile dans l'entrée, **à l'échelle ×5** :
 
-| Donjon | Difficulté | Salles | Connexions | Passages | Atteignables à pied | Écritures perdues | Audits / échecs | Tous les passages au tick |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| alpha | Very Easy | 11 | 10 | 10 | **11 / 11** | 0 | 7 / 0 | 24 (1,2 s) |
-| beta | Easy | 9 | 8 | 8 | **9 / 9** | 0 | 5 / 0 | 23 (1,1 s) |
-| gamma | Medium | 14 | 13 | 13 | **14 / 14** | 0 | 8 / 0 | 26 (1,3 s) |
-| delta | Normal | 13 | 12 | 12 | **13 / 13** | 0 | 8 / 0 | 25 (1,3 s) |
+| Donjon | Difficulté | Salles | Plus grande | Connexions | Passages | Atteignables à pied | Écritures perdues | Audits / échecs | Tous bâtis | Blocs |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| alpha | Very Easy | 28 | 55 blocs | 27 | 27 | **28 / 28** | 0 | 28 / 0 | 124 (6,2 s) | 183 333 |
+| beta | Easy | 33 | 55 blocs | 35 | 35 | **33 / 33** | 0 | 33 / 0 | 140 (7,0 s) | 223 219 |
+| gamma | Medium | 36 | 52 blocs | 37 | 37 | **36 / 36** | 0 | 36 / 0 | 142 (7,1 s) | 245 055 |
+| delta | Normal | 35 | 55 blocs | 38 | 38 | **35 / 35** | 0 | 35 / 0 | 151 (7,5 s) | 240 768 |
 
-Le BFS part de la cellule d'entrée, ne marche que sur des cellules de sol non recouvertes, et ignore l'`Air`. À l'échelle ×3, une seule salle pèse autant que quatre salles de ×1 (22 912 blocs pour 11 salles dans alpha), donc ces quatre donjons valent à peu près les trois donjons de ×1 mesurés auparavant.
+Le BFS part de la cellule d'entrée, ne marche que sur des cellules de sol non recouvertes, et ignore l'`Air`. Un donjon de 33 salles pèse ici 223 000 blocs — l'équivalent de seize donjons de ×1.
 
-Le test d'intégration `tests/engine/service.test.js` fait exactement cela sur la difficulté Easy, et vérifie en plus que **chaque connexion a son passage construit** (`stats.passages === connections.length`).
-
-Le test d'intégration `tests/engine/service.test.js` fait exactement cela : il part de l'entrée, marche de cellule en cellule au niveau du sol, et échoue si une salle construite n'est pas atteignable.
+Le test d'intégration `tests/engine/service.test.js` fait exactement cela sur la difficulté Easy : il part de l'entrée, marche de cellule en cellule au niveau du sol, échoue si une salle construite n'est pas atteignable, et vérifie en plus que **chaque connexion a son passage construit** (`stats.passages === connections.length`).
 
 **Texture.** Chaque bloc structurel est tiré **un par un** dans `"Stone"`, `"Messy Stone"`, `"Smooth Stone"`, `"Stone Bricks"`, `"Cracked Stone Bricks"`, `"Mossy Stone Bricks"`. Sol : famille des briques ; plafond : `Smooth Stone` ; murs et linteaux : la palette entière. Le tirage est un hachage de `(graine de salle, cellule, niveau)`, donc :
 - une salle interrompue puis reprise a les mêmes pierres qu'une salle construite d'un trait ;
@@ -104,7 +102,7 @@ Rien n'est écrit avant que la zone soit chargée. Le pont sonde `getBlock` sur 
 6. onReady — et seulement là, le joueur entre dans le donjon
 ```
 
-Mesuré sur un faux serveur **à l'échelle ×3** : entrée prête au tick **5** (0,25 s), **975 blocs** écrits (dont les 225 du pad de 15×15 à l'atterrissage, puis la salle par lots), **0 écriture perdue**, jamais plus de **720** blocs dans un tick — c'est la taille du lot, et c'est elle qui borne un tick à l'entrée, pas le budget. Le pad de 5×5 est devenu 15×15 avec l'échelle : un îlot de 5 blocs au milieu d'une salle de 20 se lit comme une erreur de placement. Le sol de la cellule d'atterrissage est relu en `Stone Bricks` au moment exact de `onReady` : rien n'est annoncé avant que le sol existe.
+Mesuré sur un faux serveur **à l'échelle ×5** : entrée prête au tick **10** (0,5 s), **5 351 blocs** écrits (dont les **441** du pad de 21×21 à l'atterrissage, puis la salle par lots), **0 écriture perdue**, jamais plus de **720** blocs dans un tick — c'est la taille du lot, et c'est elle qui borne un tick à l'entrée, pas le budget. Le pad suit l'échelle (5×5 → 21×21) : un îlot de 5 blocs au milieu d'une salle de 55 se lit comme une erreur de placement. Il a d'ailleurs fallu une correction pour que ce soit vrai : le service passait encore un rayon de 2 en dur, ce qui laissait le pad à 5×5 pendant que les salles passaient à 55 — le rayon est désormais celui de `layLandingPad`, dérivé de `scale`. Le sol de la cellule d'atterrissage est relu en `Stone Bricks` au moment exact de `onReady` : rien n'est annoncé avant que le sol existe.
 
 **Aucune protection de bloc n'est posée.** Le monde tourne en `survivalAdventure` : un joueur ne peut rien casser, donc verrouiller la coque serait un appel qui coûte et n'achète rien. Le seul sens utile de l'API est l'inverse — autoriser la casse — et il s'écrit **par type de bloc** (`setCanChangeType`), jamais par rectangle : un minerai est cassable, la pierre autour ne l'est pas, et les deux partagent la même colonne. `worldBuilder.allowMining()` existe déjà et ne fait aucun appel tant que `DUNGEON_CONFIG.breakableBlocks` est vide — c'est-à-dire aujourd'hui.
 
@@ -182,62 +180,80 @@ Soit **×8,3** sur le temps d'apparition du donjon, sans écrire un bloc de plus
 
 Un détail qui compte pour la suite : `cycle()` **ne construit plus**. Tout test qui veut des écritures de bloc doit appeler `controller.cycle()` d'abord (pour remplir la file) puis laisser tourner les ticks. Le contrat est plus net ainsi — le graphe décide, le tick écrit — mais il se paie d'un piège : un `buildStep()` seul, sans cycle préalable, ne trouve rien à construire.
 
-## Changement d'échelle : ×3 en tout sens
+## Changement d'échelle : ×5, et ce que le ×5 a révélé
 
-Le donjon est passé de salles de 4 à 11 cellules et de couloirs d'une cellule à des salles de 12 à 33 et des couloirs de 3. Les valeurs multipliées sont des **triples exacts** des anciennes, pour que ce soit le même donjon en trois fois plus grand, et pas un autre donjon.
+Le donjon est passé de salles de 4 à 11 cellules et de couloirs d'une cellule à des salles de 20 à 55 et des couloirs de 5. Les valeurs multipliées sont des **multiples exacts** des anciennes (4 × 5 = 20, 11 × 5 = 55), pour que ce soit le même donjon cinq fois plus grand, et pas un autre donjon.
 
-| Paramètre | ×1 | ×3 | Pourquoi |
+| Paramètre | ×1 | ×5 | Pourquoi |
 | --- | --- | --- | --- |
-| `minWidth` / `maxWidth` | 4 / 11 | **12 / 33** | la taille des salles |
-| `minDepth` / `maxDepth` | 4 / 11 | **12 / 33** | idem |
-| `wallHeight` | 4 | **12** | 12 blocs de hauteur sous plafond |
-| `wallGap` | 3 | **9** | la maçonnerie entre deux salles suit |
-| `minPassageWidth` / `maxPassageWidth` | 1 / 1 | **3 / 3** | « taille des couloirs » |
-| `minCornerClearance` | 1 | **3** | une porte ne colle plus au coin |
-| `minOpeningSpacing` | 2 | **6** | deux portes d'une même face |
-| `cellsPerOpening` | 6 | **18** | la densité de portes, pas leur nombre |
-| `maxBridgeLength` | 4 | **12** | un pont est un couloir |
-| `worldMargin` | 8 | **24** | marge autour du donjon |
-| `discoveryDistance` / `crossingDistance` | 30 / 6 | **90 / 18** | mesurés depuis la porte, donc en blocs |
-| `activeRoomDistance` / `suspendDistance` | 48 / 96 | **144 / 288** | idem |
-| `maxDungeonRadius` | 512 | **1536** | neuf fois la surface, trois fois le rayon |
-| `maxRadius` par difficulté | 96…384 | **288…1152** | idem |
-| `maxBlocksPerTick` | 800 | **2400** | une salle pèse ~7× plus de blocs |
+| `minWidth` / `maxWidth` | 4 / 11 | **20 / 55** | la taille des salles |
+| `minDepth` / `maxDepth` | 4 / 11 | **20 / 55** | idem |
+| `wallHeight` | 4 | **16** | 16 blocs de hauteur sous plafond |
+| `wallGap` | 3 | **15** | la maçonnerie entre deux salles suit |
+| `minPassageWidth` / `maxPassageWidth` | 1 / 1 | **5 / 5** | « taille des couloirs » |
+| `passageHeight` | 1 | **4** | 4 blocs sur 16 de mur : même proportion que 1 sur 4 |
+| `minCornerClearance` | 1 | **5** | une porte ne colle plus au coin |
+| `minOpeningSpacing` | 2 | **10** | deux portes d'une même face |
+| `cellsPerOpening` | 6 | **30** | la densité de portes, pas leur nombre |
+| `maxBridgeLength` | 4 | **20** | un pont est un couloir |
+| `worldMargin` | 8 | **40** | marge autour du donjon |
+| `discoveryDistance` / `crossingDistance` | 30 / 6 | **150 / 30** | mesurés depuis la porte, donc en blocs |
+| `activeRoomDistance` / `suspendDistance` | 48 / 96 | **240 / 480** | idem |
+| `maxDungeonRadius` | 512 | **2560** | vingt-cinq fois la surface, cinq fois le rayon |
+| `maxRadius` par difficulté | 96…384 | **480…1920** | idem |
+| `maxBlocksPerTick` | 800 | **2400** | une salle pèse ~25× plus de blocs |
 | `blocksPerBatch` | 240 | **720** | suit le budget |
-| `REGION_SIZE` (index) | 16 | **48** | une région contient toujours une salle |
+| `REGION_SIZE` (index) | 16 | **80** | une région contient toujours une salle |
+
+Une valeur nouvelle apparaît avec cette échelle : **`minConnectionOverlap` (3)**, le nombre de cellules que deux fentes de porte doivent partager pour que la connexion existe (voir plus bas).
 
 **Ce qui n'a volontairement pas été multiplié**, et pourquoi :
 
-- **`passageHeight` reste 3.** C'est 3 blocs de haut sur 12 de hauteur de mur, soit exactement la proportion de 1 sur 4 d'avant. En faire 9 ferait une porte plus haute que large sur un couloir de 3, un portique.
+- **`passageHeight` passe à 4 et non à 5.** C'est 4 blocs de haut sur 16 de hauteur de mur, soit exactement la proportion de 1 sur 4 d'avant, et bien au-dessus de la taille d'un joueur. Multipliée, la porte ferait 5 sur 5 : un portique.
 - **`minOpenings` / `maxOpenings` restent 2 / 5.** Ce sont des **nombres**, pas des longueurs : une salle garde deux à cinq portes, sinon chaque salle devient un carrefour.
-- **`minApproachDepth` reste 1**, et c'est le seul chiffre pour lequel le ×3 **casse** le moteur : la règle est `clearance > minApproachDepth`, donc 1 exige un dégagement de 2 et 3 exige un dégagement de 4. À 4, plus aucune forme ne peut héberger une porte — l'entrée elle-même échoue, six fois sur six (`ROOM_DISCONNECTED`). Le dégagement 2 est une cellule avec au plus deux voisins vides, et `faceRuns` refuse déjà les deux vides derrière une porte : la porte n'est jamais plus étroite que le mur qu'elle perce, à n'importe quelle échelle.
+- **`minApproachDepth` reste 1**, et c'est le seul chiffre pour lequel la montée d'échelle **casse** le moteur : la règle est `clearance > minApproachDepth`, donc 1 exige un dégagement de 2 et 3 exigerait un dégagement de 4. À 4, plus aucune forme ne peut héberger une porte — l'entrée elle-même échoue, six fois sur six (`ROOM_DISCONNECTED`, mesuré au ×3). Le dégagement 2 est une cellule avec au plus deux voisins vides, et `faceRuns` refuse déjà les deux vides derrière une porte : la porte n'est jamais plus étroite que le mur qu'elle perce, à n'importe quelle échelle.
 - **`anticipationDepth` (3), `priorityDepthWeight` (40), `backlogThreshold` (60)** sont des profondeurs et des poids, pas des distances.
 - **`chunkSize` (32)** est une propriété du serveur, pas du donjon.
 
-### Ce que le ×3 a révélé : les formes aussi avaient une échelle
+### Trois défauts que seul le passage à ×5 a rendus visibles
 
-Les familles de formes sont écrites en proportions là où elles peuvent l'être (une entaille fait 35 % du côté, une barre un tiers de la largeur), mais quelques épaisseurs sont **absolues** : une aile d'une cellule, une prise de deux cellules. À ×3, une aile d'une cellule sur une salle de 33 est un cheveu — et aucune porte de 3 ne s'y ouvre. Ces épaisseurs sont désormais exprimées en `UNIT` = `DUNGEON_CONFIG.scale`, et une forme qui **ne peut pas héberger le minimum de portes est refusée dans `generateShape`** (`NO_OPENING`), au lieu d'être renvoyée au générateur qui la refusera ensuite.
+1. **Les couloirs n'étaient pas trop étroits : ils étaient décalés.** `jointCells`, `bridgeCells` et `passageCells` partaient de `centerX`/`centerY` en croyant lire le début de la fente. Une ouverture porte deux choses qui se ressemblent : sa **fente** le long du mur (`offsetStart`…`offsetEnd`) et son **centre** — qui est sa cellule du milieu sur l'axe du mur, et le mur lui-même sur l'autre axe. Lire les deux coordonnées dans la même paire est juste sur un axe et faux sur l'autre. Mesuré sur un donjon réel, face est, porte de 3 en offsets 6..8 : porte en colonne 13, couloir en 14..22, donc décalé d'une cellule. Un joueur traversait une ouverture de trois blocs et trouvait un boyau d'un bloc sur le côté. **Invisible à ×1** : une porte d'une cellule n'a aucune différence entre son centre et son début. Le correctif introduit `openingSpan` (la fente en coordonnées de salle) et `doorwayStart` (la même en monde, avec la coordonnée qui *traverse* le mur séparée de celle qui le longe).
 
-Mesure sur 200 formes, après le correctif : **0 forme sans porte**, moyenne 3,48 portes (histogramme 2 : 49, 3 : 51, 4 : 54, 5 : 46). La famille `cross`, dont les bras ne peuvent pas tenir une porte de 3 avec 3 de dégagement de coin (il faudrait 9 blocs de large), est simplement redessinée quand elle tombe : 57 formes sur 120 tirées passent le filtre, les autres sont remplacées par un autre tirage.
+2. **Deux portes larges ne se connectaient presque jamais.** La connexion exigeait des centres **exactement** alignés — un hasard qu'une porte d'une cellule satisfait par construction et qu'une porte de cinq presque jamais. Effet mesuré à ×5 : le réseau ne fermait plus aucune boucle et les ponts avaient disparu. Désormais deux portes se connectent dès que leurs fentes se **recouvrent** d'au moins `minConnectionOverlap` (3) cellules, et les deux portes sont **rétrécies** aux cellules partagées : le couloir est exactement aussi large que le trou qu'il relie, et aucune porte ne garde une partie de sa fente devant de la maçonnerie. L'index d'ouvertures cherche le partenaire sur toute la rangée d'en face, au lieu d'une seule cellule.
+
+3. **Le contrôle d'aire chargée ne regardait que le milieu d'une salle.** Quatre sondes réparties en ordre de lecture tombaient toutes dans le même coin d'une salle de 55 blocs, et le constructeur écrivait dans un chunk non chargé — où le serveur perd le bloc **sans erreur**. Les sondes sont les quatre coins de la boîte englobante.
+
+### Deux corrections structurelles, du même passage
+
+- **`passageIsWalkable` existait, était testé, et n'était jamais appelé.** Il l'est maintenant au moment de committer une connexion : une porte qui ouvre sur un mur ne peut plus être enregistrée. Mesuré sur 95 connexions : il n'en refuse aucune, ce qui est précisément pourquoi il ne coûte rien.
+- **Un passage était écrit d'un seul tenant, hors budget.** À ×5, un joint de 15 cellules sur 5 de large avec toit et flancs fait environ 4 000 blocs dans un tick. Il est découpé en lots avec un curseur, comme les salles, et ses deux portes ne s'ouvrent qu'à la fin : un demi-couloir qui ouvre sur un trou est pire qu'un couloir en attente.
+- **Le pad d'atterrissage ne suivait plus l'échelle.** Le service passait un rayon de 2 en dur à `layLandingPad`, ce qui avait été juste à ×1 puis faux partout ailleurs : 5×5 au milieu d'une salle de 55. Le rayon par défaut (`scale * 2`) est maintenant le seul utilisé, et le pad fait 21×21.
+
+### Ce que les formes ont exigé
+
+Les familles de formes sont écrites en proportions là où elles peuvent l'être (une entaille fait 35 % du côté, une barre un tiers de la largeur), mais quelques épaisseurs sont **absolues** : une aile d'une cellule, une prise de deux cellules. À ×5, une aile d'une cellule sur une salle de 55 est un cheveu — et aucune porte de 5 ne s'y ouvre. Ces épaisseurs sont exprimées en `UNIT` = `DUNGEON_CONFIG.scale`, et une forme qui **ne peut pas héberger le minimum de portes est refusée dans `generateShape`** (`NO_OPENING`), au lieu d'être renvoyée au générateur qui la refusera ensuite.
+
+Mesure sur 200 formes à ×5, après les correctifs : **0 forme sans porte**, moyenne **3,91** portes (histogramme 2 : 22, 3 : 48, 4 : 56, 5 : 74).
 
 ### Mesure de la nouvelle échelle
 
-| Mesure | ×1 | ×3 |
+| Mesure | ×1 | **×5** |
 | --- | --- | --- |
-| taille des salles | 4–11 blocs | **12–33 blocs** |
-| hauteur sous plafond | 4 | **12** |
-| largeur des couloirs | 1 | **3** |
-| genèse d'une salle (blocs) | ~360 | **~3 500** (11×11) à **7 000** (33×33) |
-| donjon Hell complet (débit actuel) | 13 584 blocs | **~82 000 blocs** |
-| donjon Hell complet, temps | 2,65 s | **~9 s** |
+| taille des salles | 4–11 blocs | **20–55** |
+| hauteur sous plafond | 4 | **16** |
+| largeur des couloirs | 1 | **5** |
+| genèse d'une salle (blocs, passages compris) | ~360 | **6 500 à 6 900** (blocs du donjon ÷ salles) |
+| donjon de 28 à 36 salles | 13 584 blocs | **183 000 à 245 000 blocs** |
+| temps de construction | 2,65 s | **6,2 à 7,5 s** |
+| salles atteignables à pied | toutes | **toutes** — 28/28, 33/33, 36/36, 35/35 sur quatre difficultés |
 
-Le temps suit le nombre de blocs, et le budget par tick a été triplé en conséquence : c'est la même quantité de travail par tick, répartie sur des salles plus grosses. Un donjon ×3 est donc plus long à apparaître, mais chaque tick coûte ce qu'il coûtait.
+Le temps ne suit pas linéairement les blocs : le budget par tick absorbe une partie du surcoût, et le graphe s'arrête quand la difficulté est atteinte. Un donjon de ×5 est plus long à apparaître proportionnellement moins que ses vingt-cinq fois de surface, mais chaque tick coûte ce qu'il coûtait, parce que le lot et le budget ont suivi.
 
 ## Ce qui n'est pas fait
 
 - **la persistance** : rien n'est encore écrit en base. Un redémarrage reconstruit depuis la graine, ce qui est correct mais ne conserve ni les salles déjà construites ni la position des joueurs (Phase 5) ;
 - **les minerais** : l'emplacement de l'appel est prêt (`allowMining`, liste vide), il reste à décider où les poser ;
 - **le pad de progression** n'est posé que si une salle le demande ; le service ne choisit pas encore laquelle ;
-- **les ponts** (`bridge`) partagent le code des passages mais restent rares : 0 sur les trois donjons mesurés ;
+- **les ponts** (`bridge`) partagent le code des passages et restent rares : le réseau se ferme désormais par recouvrement de portes (`minConnectionOverlap`), donc les boucles existent, mais un pont qui traverse un vide entre deux salles non jointives reste l'exception ;
 - **le pad posé dans les salles autres que l'entrée** : le constructeur sait le faire (`roomBlocks(..., { pad })`), le service ne choisit pas encore quelle salle le porte ;
 - **les tests en jeu** : tout ce qui précède est vérifié contre des faux. Les questions ouvertes de `docs/ARCHITECTURE.md` §19 (portée réelle de la DB de lobby, comportement de `setCantChangeBlockRect` sur un volume) demandent une session Bloxd réelle.

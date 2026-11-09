@@ -426,8 +426,10 @@ export function createWorldBuilder(options) {
    *
    * The default radius follows the dungeon's scale: 5×5 cells was what a
    * one-cell-wide dungeon needed to give the player a solid spot underfoot; at
-   * ×3 the same pad is 15×15, because a 5×5 island in the middle of a 20-cell
-   * hall reads as a tile the player was placed on by mistake.
+   * ×5 the same pad is 21×21, because a 5×5 island in the middle of a 55-cell
+   * hall reads as a tile the player was placed on by mistake. Callers must not
+   * pass a radius of their own — that is how the pad stayed at 5×5 when the
+   * rooms grew.
    */
   function layLandingPad(cell, radius = DUNGEON_CONFIG.scale * 2) {
     let written = 0;

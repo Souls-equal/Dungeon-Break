@@ -16,7 +16,7 @@ Les règles de travail du projet sont dans [`AGENT_RULES.md`](../AGENT_RULES.md)
 4. [Vue d'ensemble des modules](#4-vue-densemble-des-modules)
 5. [Système de coordonnées](#5-système-de-coordonnées)
 6. [Structures de données versionnées](#6-structures-de-données-versionnées)
-6 bis. [L'échelle du donjon : ×3](#6-bis-léchelle-du-donjon--3)
+6 bis. [L'échelle du donjon : ×5](#6-bis-léchelle-du-donjon--5)
 7. [Formes procédurales et géométrie](#7-formes-procédurales-et-géométrie)
 8. [Ouvertures](#8-ouvertures)
 9. [Algorithme de génération par ouvertures](#9-algorithme-de-génération-par-ouvertures)
@@ -364,24 +364,32 @@ Une salle à 714 caractères ne tient pas dans un budget réaliste. Le format de
 
 ---
 
-## 6 bis. L'échelle du donjon : ×3
+## 6 bis. L'échelle du donjon : ×5
 
-Le donjon se construit à **trois fois** la taille pour laquelle il a été conçu, et ce paramètre unique s'appelle `DUNGEON_CONFIG.scale`. Une salle fait 12 à 33 cellules au lieu de 4 à 11, un mur 12 blocs de haut au lieu de 4, un couloir 3 cellules de large au lieu d'une.
+Le donjon se construit à **cinq fois** la taille pour laquelle il a été conçu, et ce paramètre unique s'appelle `DUNGEON_CONFIG.scale`. Une salle fait 20 à 55 cellules au lieu de 4 à 11, un mur 16 blocs de haut au lieu de 4, un couloir 5 cellules de large au lieu d'une : vingt-cinq fois la surface au sol du dessin d'origine.
 
-La règle qui rend ce changement sûr est simple : **tout ce qui est une longueur est multiplié, tout ce qui est un nombre ou une proportion reste**. Les valeurs multipliées sont des triples exacts, donc les familles de formes, les ratios d'aspect et les proportions entre salles sont identiques : c'est le même donjon, trois fois plus grand, pas un autre donjon.
+La règle qui rend ce changement sûr est simple : **tout ce qui est une longueur est multiplié, tout ce qui est un nombre ou une proportion reste**. Les valeurs multipliées sont exactement cinq fois les valeurs d'origine, donc les familles de formes, les ratios d'aspect et les proportions entre salles sont identiques : c'est le même donjon, cinq fois plus grand, pas un autre donjon.
 
 | Multiplié (longueurs) | Non multiplié (nombres, proportions, contraintes extérieures) |
 | --- | --- |
 | dimensions des salles, hauteur des murs, `wallGap`, largeur des couloirs, dégagement de coin, espacement des portes, densité de portes (`cellsPerOpening`), longueur des ponts, marge du monde, rayons des difficultés, distances d'anticipation, budget de blocs par tick, taille des lots, `REGION_SIZE` | `minOpenings` / `maxOpenings` (2 à 5 portes), profondeurs d'anticipation, poids de priorité, seuil de retard, `chunkSize` (propriété du serveur), `passageHeight` (proportion), `minApproachDepth` (voir ci-dessous) |
 
-Les deux exceptions verticales méritent leur paragraphe :
+Deux exceptions à la multiplication méritent leur paragraphe :
 
-- **`passageHeight` reste 3.** La hauteur de mur étant passée à 12, c'est la même proportion de porte que 1 sur 4 auparavant. À 9, la porte serait plus haute que large sur un couloir de 3 : un portique, pas un passage.
-- **`minApproachDepth` reste 1**, et c'est la seule valeur où le ×3 **aurait cassé le moteur**. La règle du validateur est `clearance > minApproachDepth` ; à 1 elle exige 2, à 3 elle exige 4, c'est-à-dire une cellule derrière la porte à quatre cases de tout trou de la forme. Aucune famille ne le fournit : l'entrée elle-même échoue (`ROOM_DISCONNECTED`, six tirages sur six, mesuré). Le dégagement 2 est une cellule à deux voisins vides au plus, et `faceRuns` refuse déjà le cas des deux vides derrière une porte : la porte n'est donc jamais plus étroite que le mur qu'elle perce, à n'importe quelle échelle.
+- **`passageHeight` vaut 4 sur 16 blocs de mur** — la même proportion de porte que 1 sur 4 à l'origine, et bien au-dessus de la taille d'un joueur. Multipliée comme le reste (1 → 5), elle donnerait une ouverture de 5 de haut sur 5 de large : un portique, pas un passage.
+- **`minApproachDepth` reste 1**, et c'est la seule valeur où la montée d'échelle **aurait cassé le moteur**. La règle du validateur est `clearance > minApproachDepth` ; à 1 elle exige 2, à 3 elle exigerait 4 — une cellule derrière la porte à quatre cases de tout trou de la forme. Aucune famille ne le fournit : tenté à l'échelle ×3, l'entrée elle-même échouait (`ROOM_DISCONNECTED`, six tirages sur six, mesuré). Le dégagement 2 est une cellule à deux voisins vides au plus, et `faceRuns` refuse déjà le cas des deux vides derrière une porte : la porte n'est donc jamais plus étroite que le mur qu'elle perce, à n'importe quelle échelle.
 
-Corollaire que le ×3 a rendu visible : **les familles de formes contiennent aussi des longueurs absolues** (une aile d'une cellule, une prise de deux cellules). Elles sont écrites en `UNIT = DUNGEON_CONFIG.scale` pour rester des proportions, et une forme qui ne peut pas héberger `minOpenings` portes est refusée à la source (`NO_OPENING`, §7.2) plutôt que renvoyée au générateur qui la refusera. Mesure après correctif, sur 200 formes : 0 forme sans porte, 3,48 portes en moyenne.
+### 6 ter. Ce que la largeur des portes a cassé
 
-Enfin, la **taille de la zone de chargement** que les faux serveurs simulent doit suivre : un faux serveur qui ne charge que ±48 blocs autour d'un joueur immobile perd les écritures d'une salle située à l'autre bout d'un donjon ×3, et fait passer le test d'accessibilité pour un bug de constructeur. Les tests utilisent ±160, et le cas réel (une écriture dans un chunk non chargé) est couvert directement par `worldBuilder.test.js`, qui place la frontière où il veut.
+Trois défauts dormaient depuis les phases 2 et 4, invisibles tant que les portes faisaient **une** cellule, et révélés le jour où elles en ont fait trois puis cinq. Ils sont décrits en détail dans `docs/PHASE4.md` ; ce qui compte ici est la règle qu'ils ont laissée :
+
+- **une ouverture a deux jeux de coordonnées, et ils ne sont pas interchangeables.** `offsetStart`/`offsetEnd` sont sa fente le long du mur ; `centerX`/`centerY` sont son centre — cellule du milieu sur un axe, mur sur l'autre. Tout ce qui dessine un couloir passe par `openingSpan` (salle) ou `doorwayStart` (monde), jamais par une lecture directe. Le bug : les couloirs étaient dessinés une cellule à côté de la porte.
+- **deux portes se connectent par recouvrement, pas par coïncidence.** Exiger des centres identiques marchait pour une porte d'une cellule et pour rien d'autre : à cinq, le réseau ne fermait plus aucune boucle. Elles se connectent dès que leurs fentes partagent `minConnectionOverlap` cellules, et sont **rétrécies** à ces cellules.
+- **les sondes d'aire chargée sont les quatre coins** de la boîte englobante, pas quatre échantillons en ordre de lecture : sur une salle de 55 blocs, ceux-ci tombaient tous dans le même coin et le constructeur écrivait dans un chunk absent, où le serveur perd le bloc sans erreur.
+
+Corollaire que le ×5 a rendu visible : **les familles de formes contiennent aussi des longueurs absolues** (une aile d'une cellule, une prise de deux cellules). Elles sont écrites en `UNIT = DUNGEON_CONFIG.scale` pour rester des proportions, et une forme qui ne peut pas héberger `minOpenings` portes est refusée à la source (`NO_OPENING`, §7.2) plutôt que renvoyée au générateur qui la refusera. Mesure après correctif, sur 200 formes à l'échelle ×5 : 0 forme sans porte, 3,91 portes en moyenne.
+
+Enfin, la **taille de la zone de chargement** que les faux serveurs simulent doit suivre : un faux serveur qui ne charge que ±48 blocs autour d'un joueur immobile perd les écritures d'une salle située à l'autre bout d'un donjon ×5, et fait passer le test d'accessibilité pour un bug de constructeur. Les tests utilisent ±120 à ±400 selon le besoin, et le cas réel (une écriture dans un chunk non chargé) est couvert directement par `worldBuilder.test.js`, qui place la frontière où il veut.
 
 ---
 
@@ -403,7 +411,7 @@ Une forme est un **ensemble de cellules** sur une grille `w × h`, avec `w, h �
 | `cross` | rectangle plus deux extensions opposées, débordantes |
 | `extensions` | rectangle plus une à trois extensions latérales |
 | `irregular` | rectangle mordu depuis son contour (profondeur ≤ 2, jamais un angle) |
-| `narrow` | rectangle avec une partie étroite, `scale` cellules de large (1 à ×1, 3 à ×3) |
+| `narrow` | rectangle avec une partie étroite, `scale` cellules de large (1 à ×1, 5 à ×5) |
 
 La grammaire est **extensible par construction** : une famille est une fonction qui reçoit `(random, width, height)` et remplit un masque. En ajouter une ne demande aucune modification du reste du moteur, et une famille qui produit une forme inutilisable est simplement refusée par la grille d'acceptation, pas par un cas particulier.
 
@@ -414,7 +422,7 @@ Chaque forme passe ensuite par une **grille d'acceptation**. Les refus sont des 
 3. `NO_WALKABLE_CORE` — aucune cellule de dégagement ≥ 1 : la salle serait un couloir de murs.
 4. `PADDED` — le masque a une bordure vide (invariant de normalisation).
 5. `DUPLICATE` — même forme déjà essayée pour cette salle.
-6. `NO_OPENING` — la forme ne peut pas héberger `minOpenings` portes légales. La règle est vérifiée là et non chez l'appelant, parce qu'une forme sans porte est un morceau de roche à quatre murs, et parce que c'est ce qui permet d'affirmer « toute forme rendue peut être une salle » (`geometry.test.js`). C'est ce refus qui écarte les familles aux membrures trop minces à l'échelle ×3 : un `cross` dont les bras font 3 cellules ne peut pas tenir une porte de 3 avec 3 de dégagement de coin.
+6. `NO_OPENING` — la forme ne peut pas héberger `minOpenings` portes légales. La règle est vérifiée là et non chez l'appelant, parce qu'une forme sans porte est un morceau de roche à quatre murs, et parce que c'est ce qui permet d'affirmer « toute forme rendue peut être une salle » (`geometry.test.js`). C'est ce refus qui écarte les familles aux membrures trop minces : un `cross` dont les bras font une largeur de passage ne peut pas tenir une porte de cette largeur avec le dégagement de coin exigé.
 7. `EXHAUSTED` — plus aucune famille productive : la tentative échoue proprement.
 
 `sealHoles` est appliqué avant l'acceptation : une forme dont un trou d'une cellule subsiste serait une salle percée d'un puits, ce que le joueur lirait comme un bug.
@@ -423,7 +431,7 @@ Chaque forme passe ensuite par une **grille d'acceptation**. Les refus sont des 
 
 **✅ Implémenté.** Un masque est `{ w, h, cells }`, `cells[y][x]` valant `0` ou `1`. `toRows` / `fromRows` donnent la vue texte (une chaîne par ligne), qui sert aux tests et à la visualisation ASCII ; c'est le format qui apparaît dans tout diagnostic.
 
-Taille maximale : `maxWidth × maxDepth = 33 × 33`, soit 1 089 cellules (à l'échelle ×1 : 11 × 11, 121 cellules). Les contours, les dégagements et les cellules extérieures sont **dérivés** et jamais stockés.
+Taille maximale : `maxWidth × maxDepth = 55 × 55`, soit 3 025 cellules (à l'échelle ×1 : 11 × 11, 121 cellules). Les contours, les dégagements et les cellules extérieures sont **dérivés** et jamais stockés.
 
 Deux primitives remplacent la dilatation de la proposition initiale :
 
@@ -475,7 +483,7 @@ Le choix des positions se fait par **score plus pénalité de diversité** : cha
 
 ### 8.3 Géométrie du joint — la constante unique
 
-**Décision figée : `wallGap = 3 × scale` cellules de maçonnerie entre deux salles voisines — 3 à l'échelle ×1, 9 aujourd'hui.** C'est la valeur voulue par le propriétaire du projet (« 3 blocks est bien »), mise à l'échelle avec les salles. Si l'intention était un autre découpage, `DUNGEON_CONFIG.wallGap` est le seul paramètre à changer : rien d'autre dans le moteur ne code une distance en dur.
+**Décision figée : `wallGap = 3 × scale` cellules de maçonnerie entre deux salles voisines — 3 à l'échelle ×1, 15 aujourd'hui.** C'est la valeur voulue par le propriétaire du projet (« 3 blocks est bien »), mise à l'échelle avec les salles. Si l'intention était un autre découpage, `DUNGEON_CONFIG.wallGap` est le seul paramètre à changer : rien d'autre dans le moteur ne code une distance en dur.
 
 Ce que « 3 » signifie exactement, parce que trois conventions ont déjà coexisté et produit zéro boucle détectée :
 
@@ -661,7 +669,7 @@ Une salle n'entre dans le graphe qu'après validation complète, par `commitRoom
 
 **✅ Implémenté** (`spatialIndex.js`). Deux structures, toutes deux en `Map`.
 
-**Grille de régions pour les salles.** `REGION_SIZE = 48` cellules = 16 × l'échelle (et non 96 : nos salles font au plus 33 cellules de côté, une région de 48 contient donc une salle et son voisinage immédiat, alors qu'une région de 96 aurait fait tenir quatre salles dans chaque case, et 16 aurait étalé une seule salle sur neuf régions). Une salle est enregistrée dans toutes les régions que couvre sa boîte. `queryRect(rect)` renvoie l'union des salles des régions touchées, dédupliquée. Insertion et suppression coûtent O(régions touchées), soit 1 à 4 pour une salle de 33×33.
+**Grille de régions pour les salles.** `REGION_SIZE = 80` cellules = 16 × l'échelle (et non 160 : nos salles font au plus 55 cellules de côté, une région de 80 contient donc une salle et son voisinage immédiat, alors qu'une région de 160 aurait fait tenir quatre salles dans chaque case, et 16 aurait étalé une seule salle sur vingt-cinq régions). Une salle est enregistrée dans toutes les régions que couvre sa boîte. `queryRect(rect)` renvoie l'union des salles des régions touchées, dédupliquée. Insertion et suppression coûtent O(régions touchées), soit 1 à 4 pour une salle de 55×55.
 
 **Index des ouvertures.** Clé = cellule **centre de l'ouverture, sur la face de sa propre salle**, plus son côté. Une requête « y a-t-il une ouverture face à la mienne ? » lit la case située à `wallGap + 1` dans la normale : une seule lecture de `Map`.
 
@@ -750,16 +758,16 @@ La séparation est une correction de conception, pas un réglage. Les deux étai
 
 Conséquence de contrat, à connaître avant d'écrire un test : **`cycle()` ne construit plus**. Un test qui veut des écritures appelle `cycle()` pour remplir la file, puis laisse tourner les ticks (ou appelle `buildStep()`).
 
-Mesures (`npm run simulate`, builder qui coûte `w × h` blocs par salle). Les deux premières lignes sont celles de l'échelle ×1, la troisième est la même mesure refaite à ×3 — c'est le chiffre à regarder aujourd'hui :
+Mesures (`npm run simulate`, builder qui coûte `w × h` blocs par salle). Les trois premières lignes sont celles de l'échelle ×1, la quatrième est la même mesure refaite à ×5 — c'est le chiffre à regarder aujourd'hui :
 
 | Échelle | Scénario | Salles | Cycles | Médiane par cycle | p99 | Max |
 | --- | --- | --- | --- | --- | --- | --- |
 | ×1 | 1 joueur qui marche | 39 | 200 | 0,02 ms | 0,76 ms | 22 ms (2e cycle) |
 | ×1 | 6 joueurs qui marchent | 39 | 200 | 0,03 ms | 0,9 ms | 16 ms en régime |
 | ×1 | 6 joueurs immobiles | 31 | 200 | 0,02 ms | 0,6 ms | 8,7 ms |
-| **×3** | 1 joueur qui marche | 40 | 120 | **4,2 ms** | — | **48 ms** |
+| **×5** | 1 joueur qui marche | 39 | 120 | **7,0 ms** | — | **116 ms** |
 
-À ×3 un cycle de graphe coûte ~4 ms en moyenne (636 ms de génération cumulée sur 120 cycles), soit trois à quatre fois le ×1 : les salles sont neuf fois plus grandes, et la recherche de candidats, le scannage des contours et le calcul des dégagements travaillent sur des masques neuf fois plus grands. Le pire cycle reste sous les 50 ms, donc une demi-seconde de budget (`cycleTicks = 10`) garde un facteur dix de marge.
+Un cycle de graphe grandit avec la surface des salles : 0,02 ms à ×1, ~4 ms à ×3, **7 ms à ×5** en moyenne, avec un pire cycle à 116 ms. Le budget laisse 500 ms entre deux cycles (`cycleTicks = 10`), donc il reste un facteur quatre de marge — plus mince qu'à ×3, et c'est le chiffre à surveiller si les salles grandissent encore : c'est `cycleTicks` qui devra monter, pas la taille qui devra baisser.
 
 Les pics des premiers cycles ne sont pas la charge de travail : un cycle coûte 80 à 90 % de son temps en **génération**, et seuls les premiers cycles ont quelque chose à générer. Un donjon déjà rempli passe à 0,02 ms. L'important est que le **travail par cycle soit borné par le budget** : c'est vérifié par un test qui compte les tentatives, pas par un chronomètre — une assertion de temps serait instable sur une machine chargée.
 
@@ -803,6 +811,8 @@ Si une précondition manque, la salle est reportée, pas abandonnée.
 | 4 bis | **passage d'une connexion** : colonne nettoyée, sol, flancs, plafond | le seuil entre deux salles est un couloir, pas un trou (voir ci-dessous) |
 | 5 | **pose du pad** de difficulté, si la salle en porte un | après la géométrie, sur une cellule de sol connue et jamais dans un passage (§15.2) |
 | 6 | vérification **hors du chemin de construction** : la salle finie entre en file d'audit, `auditNext` en traite une par tick, répare une fois et **relit** ce qu'il a réparé | ne jamais faire confiance à une écriture, et ne pas mêler le coût de la lecture à celui de l'écriture |
+
+Le **passage d'une connexion** suit les mêmes règles : il est découpé en lots avec un curseur, et ses deux portes ne s'ouvrent qu'une fois le couloir entier écrit. À ×5 un joint fait 15 cellules sur 5 de large, soit ~4 000 blocs : le servir d'un seul tenant était un tick entier sans budget.
 
 **Texture, décidée en Phase 4** : chaque bloc structurel est tiré **un par un** dans la palette `"Stone"`, `"Messy Stone"`, `"Smooth Stone"`, `"Stone Bricks"`, `"Cracked Stone Bricks"`, `"Mossy Stone Bricks"`. Le sol reste dans la famille des briques (`Stone Bricks`, `Cracked Stone Bricks`) et le plafond en `Smooth Stone`, pour que la variété soit sur les murs, là où elle se voit. Le tirage est un **hachage de la graine de la salle et de la cellule**, jamais un générateur aléatoire : une salle interrompue puis reprise, ou reconstruite depuis sa graine, doit avoir exactement les mêmes pierres. C'est aussi la raison pour laquelle `setBlockRect` ne peut pas servir à la structure : un rectangle uniforme efface la texture, et il est plafonné à 360 blocs par appel.
 
@@ -970,8 +980,8 @@ Les tests du moteur existent : **105 tests** dans `tests/engine/`, rejoints par 
 | `tests/engine/discovery.test.js` | Formule de priorité et exemple chiffré ; pénalité de profondeur ; `crossing` prioritaire ; distance au plus proche seuil ; portée et profondeur respectées ; ordre total et reproductible ; un seuil vu par deux joueurs n'est offert qu'une fois ; coût d'un scan qui ne croît pas avec le donjon. | ✅ |
 | `tests/engine/controller.test.js` | Anti-doublons des trois files ; budget de génération **compté en tentatives** ; construction bornée par son budget ; **la construction avance à chaque tick alors que le cycle ne tourne qu'un tick sur `cycleTicks`** ; **`cycle()` ne construit plus rien** ; deux cycles de graphe ne tournent jamais en même temps, et le verrou est relâché même si le builder lève ; un tick ne déclenche pas de cycle avant l'échéance ; une salle suspendue reste dans le graphe ; travail borné quelle que soit la taille du donjon ; **un passage est demandé pour chaque connexion, boucles comprises** ; **une salle inachevée n'affame pas la file**. | ✅ |
 | `tests/engine/builder.test.js` | **Un passage est un couloir** : sol, flancs, plafond, hauteur marchable libre ; **aucune cellule d'une salle n'est écrite par un passage** ; **0 doublon sur tout le donjon, passages compris** ; sol complet sur **chaque** salle ; aucune cellule de passage murée sous `passageHeight` ; une ouverture libre est murée ; ordre des phases ; **aucune cellule écrite deux fois** ; 0 doublon entre deux salles voisines ; reprise du curseur explicite (et refus sans curseur) ; pad hors passage ; pad écrit en dernier ; audit qui nomme le trou ; déterminisme. | ✅ |
-| `tests/engine/worldBuilder.test.js` | Altitude absente refusée (`TypeError`) au lieu d'écrire à `NaN` ; rien n'est écrit avant chargement du chunk ; une salle finie n'est jamais réécrite ; **l'audit se fait une salle à la fois, et seulement sur une salle finie** ; une salle fausse est réparée **une fois**, relue, puis `failed` ; séquence d'atterrissage (lecture, téléport au milieu de la cellule) ; pad 5×5 ; protection par rectangle ; coût **et** `done` transmis au contrôleur. | ✅ |
-| `tests/engine/service.test.js` | **Toutes les salles d'un donjon fini sont atteignables à pied depuis l'entrée** (parcours cellule par cellule au niveau du sol) ; graine indépendante de l'horloge ; pads de difficulté et fin de progression ; sol présent à `onReady` ; un seul donjon par difficulté ; cellule d'atterrissage hors passage ; difficulté inconnue refusée ; `usePad` ; sortie vers le lobby ; donjon vide qui ne génère pas. | ✅ |
+| `tests/engine/worldBuilder.test.js` | Altitude absente refusée (`TypeError`) au lieu d'écrire à `NaN` ; rien n'est écrit avant chargement du chunk ; une salle finie n'est jamais réécrite ; **l'audit se fait une salle à la fois, et seulement sur une salle finie** ; une salle fausse est réparée **une fois**, relue, puis `failed` ; séquence d'atterrissage (lecture, téléport au milieu de la cellule) ; pad dont la taille suit l'échelle ; protection par rectangle ; coût **et** `done` transmis au contrôleur. | ✅ |
+| `tests/engine/service.test.js` | **Toutes les salles d'un donjon fini sont atteignables à pied depuis l'entrée** (parcours cellule par cellule au niveau du sol) ; graine indépendante de l'horloge ; pads de difficulté et fin de progression ; sol présent à `onReady`, pad compris à sa taille d'échelle ; un seul donjon par difficulté ; cellule d'atterrissage hors passage ; difficulté inconnue refusée ; `usePad` ; sortie vers le lobby ; donjon vide qui ne génère pas. | ✅ |
 | `tests/world-code.test.js` | Lobby (compte à rebours, même couleur, annulation, dernier tick) ; séquence de spawn sur le script **bundlé** ; aucun bloc écrit dans le tick de lecture ; lots bornés ; **aucune écriture hors chunk chargé** ; pad d'atterrissage intact après croissance ; retour au lobby. | ✅ |
 | `tests/dungeon/persistence.test.js` | Faux magasin clé/valeur avec **plafond de caractères** et pannes injectées (écriture perdue, partielle, `seq` régressive, `crc` faux) ; reprise sur double tampon ; journal d'opération rejoué une seule fois ; migration `v0 → v1` ; rétention (géométrie retirée puis reconstruite à l'identique). | ◻ Phase 5 |
 | `tests/engine/architecture.test.js` | Aucun appel `api.*` dans `src/dungeon/engine/` ; aucun `setTimeout`/`setInterval`/`Date.now`/`performance.now`/`await`/`import()` ; aucun import hors du dossier `engine/`. Les commentaires sont retirés avant analyse, sinon la documentation d'une interdiction la déclencherait. | ✅ |
@@ -1096,26 +1106,27 @@ Le pont `worldBuilder.js` et le service `service.js` ne figuraient pas au décou
 
 | Groupe | Paramètre | Défaut |
 | --- | --- | --- |
-| Échelle | `scale` (une cellule de ×1, en cellules d'aujourd'hui) | **3** |
-| Dimensions | `minWidth`, `maxWidth` | 12, 33 (×1 : 4, 11) |
-| | `minDepth`, `maxDepth` | 12, 33 (×1 : 4, 11) |
-| | `wallHeight` | 12 (×1 : 4) |
+| Échelle | `scale` (une cellule de ×1, en cellules d'aujourd'hui) | **5** |
+| Dimensions | `minWidth`, `maxWidth` | 20, 55 (×1 : 4, 11) |
+| | `minDepth`, `maxDepth` | 20, 55 (×1 : 4, 11) |
+| | `wallHeight` | 16 (×1 : 4) |
 | | `cellSize` | 1 |
-| Passages | `minPassageWidth`, `maxPassageWidth` | 3, 3 — uniforme, §8.4 (×1 : 1, 1) |
-| | `passageHeight` | **3**, non multiplié : 3 blocs sur 12 de mur, même proportion que 1 sur 4 |
-| | `wallGap` (**la** constante du joint) | **9** = 3 × `scale` |
-| | `minCornerClearance` | 3 |
-| | `minOpeningSpacing` | 6 |
+| Passages | `minPassageWidth`, `maxPassageWidth` | 5, 5 — uniforme, §8.4 (×1 : 1, 1) |
+| | `passageHeight` | **4** : 4 blocs sur 16 de mur, même proportion que 1 sur 4 |
+| | `minConnectionOverlap` | **3** — recouvrement minimal pour que deux portes se connectent |
+| | `wallGap` (**la** constante du joint) | **15** = 3 × `scale` |
+| | `minCornerClearance` | 5 |
+| | `minOpeningSpacing` | 10 |
 | | `minOpenings`, `maxOpenings` | 2, 5 — des **nombres**, pas des longueurs |
 | | `minApproachDepth` | **1**, non multiplié : la règle est `clearance > minApproachDepth`, donc 3 exige un dégagement de 4 et **aucune forme ne peut plus héberger de porte** (§7.2, mesuré) |
-| | `cellsPerOpening` (densité) | 18 cellules de périmètre par ouverture (×1 : 6) |
+| | `cellsPerOpening` (densité) | 30 cellules de périmètre par ouverture (×1 : 6) |
 | | `structureMargin` | 0 (une marge non nulle refuse des salles sans créer de boucle, §10.4) |
-| | `maxBridgeLength` | 12 (×1 : 4) |
+| | `maxBridgeLength` | 20 (×1 : 4) |
 | | `braidChance` | 0,5 |
 | Génération | `maxGenerationAttempts` (par tentative de salle) | 6 |
 | | `maxOpenAttempts` (avant `blocked`) | 3 |
-| | `maxDungeonRadius` (rayon du donjon) | 1536 cellules (×1 : 512) |
-| | `regionSize` (index spatial) | 48 |
+| | `maxDungeonRadius` (rayon du donjon) | 2560 cellules (×1 : 512) |
+| | `regionSize` (index spatial) | 80 |
 | | `originStride` | 4096 ◻ Phase 5 |
 | Anticipation ◻ | `triggerDistance` | 30 |
 | | `crossingDistance` | 6 |
@@ -1129,9 +1140,9 @@ Le pont `worldBuilder.js` et le service `service.js` ne figuraient pas au décou
 | | `cycleTicks` | 10 |
 | | `playerScanIntervalTicks` | 10 (lire les positions 2×/s, pas 20×/s) |
 | | `backlogThreshold` | 60 salles |
-| | `discoveryDistance` / `crossingDistance` | 90 / 18 blocs (×1 : 30 / 6) |
-| | `activeRoomDistance` / `suspendDistance` | 144 / 288 (×1 : 48 / 96) |
-| | `maxAnticipationDistance` | 288 blocs (×1 : 96) |
+| | `discoveryDistance` / `crossingDistance` | 150 / 30 blocs (×1 : 30 / 6) |
+| | `activeRoomDistance` / `suspendDistance` | 240 / 480 (×1 : 48 / 96) |
+| | `maxAnticipationDistance` | 480 blocs (×1 : 96) |
 | Construction | `blocksPerBatch` | 720 (×1 : 240) |
 | | `chunkWarmupTicks` | 3 (existant, inchangé) |
 | | `verifySampleRate` | 8 |
