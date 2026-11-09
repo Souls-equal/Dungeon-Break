@@ -477,8 +477,15 @@ export function placeRoomForOpening(parentRoom, parentOpening, childMask, childO
  *
  * Masonry, except where the passage is carved. Returned in dungeon coordinates
  * so the builder knows which cells are neither floor nor ordinary wall.
+ *
+ * `span` overrides where the corridor runs along the wall, **in the parent's
+ * local coordinates** (`{ from, to }`). It exists because a connection is now
+ * *planned* before it is committed: the planner has to know whether the corridor
+ * is straight and clear before anything is narrowed, and it must be able to say
+ * "the corridor is these cells" rather than read them back off an object it has
+ * already mutated.
  */
-export function jointCells(parentRoom, parentOpening) {
+export function jointCells(parentRoom, parentOpening, span = null) {
   const cells = [];
   // The joint starts at the **first cell of the doorway span**, not at its
   // centre. A one-cell doorway makes no difference between the two, which is why
@@ -486,12 +493,16 @@ export function jointCells(parentRoom, parentOpening) {
   // carved corridor then sat one cell to the side of the door it was supposed to
   // continue, so a three-cell doorway had a one-cell tunnel in front of it —
   // exactly "the corridors are one block wide".
-  const span = openingSpan(parentOpening);
-  const acrossX = parentRoom.origin.x + (span.alongX ? 0 : span.across);
-  const acrossY = parentRoom.origin.y + (span.alongX ? span.across : 0);
+  const own = openingSpan(parentOpening);
+  // Where the corridor runs, along the wall: the narrowed span when the caller
+  // gives one, the doorway's own first cell otherwise.
+  const from = span ? span.from : own.from;
+  const width = span ? span.to - span.from + 1 : parentOpening.width;
+  const acrossX = parentRoom.origin.x + (own.alongX ? 0 : own.across);
+  const acrossY = parentRoom.origin.y + (own.alongX ? own.across : 0);
   for (let step = 1; step <= DUNGEON_CONFIG.wallGap; step += 1) {
-    for (let offset = 0; offset < parentOpening.width; offset += 1) {
-      const reach = span.from + offset;
+    for (let offset = 0; offset < width; offset += 1) {
+      const reach = from + offset;
       if (parentOpening.side === "north") cells.push({ x: parentRoom.origin.x + reach, y: acrossY - step });
       else if (parentOpening.side === "south") cells.push({ x: parentRoom.origin.x + reach, y: acrossY + step });
       else if (parentOpening.side === "west") cells.push({ x: acrossX - step, y: parentRoom.origin.y + reach });
@@ -502,13 +513,91 @@ export function jointCells(parentRoom, parentOpening) {
 }
 
 /**
+ * Everything a connection does to the world before it is committed.
+ *
+ * Returns `{ ok: false, code }` or the exact geometry: the straight corridor
+ * (`joint` for a minimum joint, `bridge` for a longer one), the span both
+ * doorways are narrowed to, and the width the corridor will have.
+ *
+ * This exists as one function because the checks and the mutations used to be
+ * interleaved: `commitIfValid` narrowed both doorways *before* asking whether the
+ * corridor was walkable, so a refusal could leave a doorway narrowed and no
+ * connection to show for it — and the bridge itself was carved from the doorway
+ * spans as they were *before* the narrowing, which is how a four-cell doorway
+ * ended up with a five-cell corridor through it.
+ *
+ * Pure: nothing here mutates a room.
+ */
+export function planConnection(roomA, openingA, roomB, openingB, kind) {
+  let joint = null;
+  let bridge = null;
+
+  // The two doorways must share at least `minConnectionOverlap` cells, and that
+  // is the span the corridor will have: it is read once, here, and everything
+  // else is derived from it.
+  const overlap = spanOverlap(roomA, openingA, roomB, openingB);
+  if (!overlap || overlap.length < DUNGEON_CONFIG.minConnectionOverlap) {
+    return { ok: false, code: "NO_OVERLAP" };
+  }
+  if (kind === "direct" && !canConnectDirectly(openingA, roomA.origin, roomA.mask, openingB, roomB.origin, roomB.mask)) {
+    return { ok: false, code: "NOT_DIRECT" };
+  }
+  if (kind !== "direct") {
+    const built = bridgeCells(roomA, openingA, roomB, openingB);
+    if (!built) return { ok: false, code: "NO_BRIDGE" };
+    bridge = built.cells;
+  }
+  if (kind === "direct") {
+    // The planner speaks world coordinates; `jointCells` speaks the parent's. The
+    // conversion happens here, once, so no caller has to remember which frame a
+    // span is in — reading a world span as a local one draws the joint one origin
+    // away from the doorway, which is the same class of mistake as the corridor
+    // that used to sit beside its door.
+    const span = openingSpan(openingA);
+    const origin = span.alongX ? roomA.origin.x : roomA.origin.y;
+    joint = jointCells(roomA, openingA, { from: overlap.from - origin, to: overlap.to - origin });
+  }
+
+  // The corridor runs along `overlap` whatever the kind: a bridge is carved
+  // through the same shared span, so both are exactly as wide as the hole they
+  // join and neither can be wider than the other.
+  const width = overlap.length;
+  const cells = joint || bridge;
+  if (!cells || cells.length === 0) return { ok: false, code: "EMPTY" };
+
+  // Straight, and no wider than the doorway: one row of cells across the gap, and
+  // every cell of that row present. A corridor that is missing a cell is a
+  // corridor with a wall in it; a corridor with two rows is a room.
+  const vertical = openingA.side === "north" || openingA.side === "south";
+  const rows = new Set();
+  for (let index = 0; index < cells.length; index += 1) {
+    const cell = cells[index];
+    rows.add(vertical ? cell.x : cell.y);
+  }
+  if (rows.size !== width) return { ok: false, code: "NOT_STRAIGHT", rows: rows.size, width };
+  const span = Math.abs(
+    (vertical ? cells[0].y : cells[0].x) - (vertical ? cells[cells.length - 1].y : cells[cells.length - 1].x),
+  );
+  if (cells.length !== (span + 1) * width) return { ok: false, code: "GAP" };
+
+  return {
+    ok: true,
+    kind: kind === "direct" ? "direct" : "bridge",
+    joint: joint || [],
+    bridge: bridge || [],
+    overlap,
+    width,
+  };
+}
+
+/**
  * The cells of an explicit bridge between two facing openings that are further
  * apart than the minimum joint.
  *
- * Returns null when the pair cannot be bridged: opposite sides, same width,
- * aligned axis, and a length within the configured maximum. Everything else
- * would need a corridor whose route has to be computed, which this engine
- * deliberately does not guess.
+ * Returns null when the pair cannot be bridged: opposite sides, aligned axis, a
+ * shared span of at least `minConnectionOverlap`, and a length within the
+ * configured maximum. Everything else would need a corridor whose route has to be
+ * computed, which this engine deliberately does not guess.
  */
 export function bridgeCells(roomA, openingA, roomB, openingB) {
   if (openingA.side === openingB.side) return null;
@@ -533,6 +622,12 @@ export function bridgeCells(roomA, openingA, roomB, openingB) {
   if (span < minimum) return null;
   if (span > minimum + DUNGEON_CONFIG.maxBridgeLength) return null;
 
+  // A third room standing in the corridor is refused by the manager, which is the
+  // only place that can ask the index; a direct connection needs no such test,
+  // because `wallGap` cells between two walls leave no room for another room
+  // between them. What can still go wrong there is a room arriving *later* on the
+  // corridor's flank — that is `CORRIDOR_BLOCKED` in the validator's job, and it
+  // is checked on every candidate.
   const cells = [];
   const step = Math.sign(b.across - a.across);
   for (let distance = 1; distance < span; distance += 1) {

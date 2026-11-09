@@ -11,18 +11,24 @@ const isStructural = (name) => STONE_PALETTE.includes(name);
 const isFloor = (name) => BLOCKS.FLOOR_POOL.includes(name);
 import { ROOM_BUILD_STATE, createWorldBuilder } from "../../src/dungeon/worldBuilder.js";
 
+
+/**
+ * Grows a dungeon one room at a time, from the manager's own frontier.
+ *
+ * The frontier is re-read on every step on purpose: the manager is the only place
+ * that knows which doorways are still pending. A mirrored queue holds the graph as
+ * it was when the room was created — before the room closed its loops and before
+ * an attempt blocked a doorway — so it keeps asking for doorways that no longer
+ * exist and starves the ones that do. That is how a dungeon ends up with a single
+ * trunk and no doors left to develop.
+ */
 function grow(seed, targetRooms) {
   const manager = createDungeonManager({ seed, radius: 512 });
   manager.createEntrance();
-  const queue = manager.pendingOpenings().map((entry) => ({ room: entry.room, opening: entry.opening }));
-  while (queue.length > 0 && manager.roomCount < targetRooms) {
-    const next = queue.shift();
-    const result = manager.expand(next.room.id, next.opening.id);
-    if (result.ok && result.kind === "created") {
-      for (const opening of result.room.openings) {
-        if (opening.status === OPENING_STATUS.PENDING) queue.push({ room: result.room, opening });
-      }
-    }
+  while (manager.roomCount < targetRooms) {
+    const pending = manager.pendingOpenings();
+    if (pending.length === 0) break;
+    manager.expand(pending[0].room.id, pending[0].opening.id);
   }
   return manager;
 }
@@ -202,6 +208,29 @@ test("the landing pad is a floor, never a hole, and its size follows the scale",
     "the pad does not grow with the rooms: a 5×5 tile in a 55-cell hall reads as a mistake");
   assert.ok(isFloor(api.cells.get("0,-1000,0")), "the landing pad is not a floor block");
   assert.ok(isFloor(api.cells.get(`${radius},-1000,${-radius}`)), "the pad is not square around the cell");
+});
+
+test("the landing pad never spills through the walls of its room", () => {
+  // The pad is a square, the room is not. On a thin shape — the entrance can be a
+  // cross with a seven-cell bar — a 21-cell square centred on the landing cell
+  // writes floor through the wall, into the joint, and in front of the doorway.
+  const api = fakeApi();
+  const builder = createWorldBuilder({ api });
+  // A 12-cell-wide room, narrower than the pad: only the cells it owns may be
+  // floored by the pad.
+  const rows = ["111111111111", "111111111111", "111111111111"];
+  const mask = {
+    w: rows[0].length,
+    h: rows.length,
+    cells: rows.map((row) => [...row].map((value) => (value === "1" ? 1 : 0))),
+  };
+  const room = { id: "r0", origin: { x: 0, y: 0 }, mask };
+  const written = builder.layLandingPad({ x: 6, z: 1 }, { room });
+  assert.equal(written, mask.w * mask.h, "the pad wrote cells its room does not own");
+  for (const [key] of api.cells) {
+    const [x, , z] = key.split(",").map(Number);
+    assert.ok(z >= 0 && z < mask.h, `the pad wrote z=${z}, outside the room`);
+  }
 });
 
 test("nothing is locked: the game mode already keeps the shell unbreakable", () => {

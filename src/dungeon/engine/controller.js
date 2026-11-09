@@ -311,6 +311,13 @@ export function createDungeonController(options) {
       // to stay under it exactly would be to interrupt a room mid-construction,
       // and a half-built room is worse than a slightly long tick.
       if (written >= DUNGEON_CONFIG.maxBlocksPerTick) break;
+      // No single entry may take the tick past the budget plus one batch. A room
+      // and a passage are both written through the same batched writer, so the
+      // overshoot is bounded by `blocksPerBatch` per entry that is running when
+      // the budget runs out — and "the overshoot is at most one room" stopped
+      // being true the day a room could be 3 000 cells of shell.
+      const ceiling = DUNGEON_CONFIG.maxBlocksPerTick + DUNGEON_CONFIG.blocksPerBatch;
+      if (written >= ceiling) break;
       // The passages are checked *before* an entry is taken, so a cycle that
       // reached its budget leaves the queue exactly as it was: taking an entry
       // to push it back would reorder the queue for no reason.
@@ -331,16 +338,19 @@ export function createDungeonController(options) {
         written += cost;
         stats.blocksWritten += cost;
         if (passage.done === true && cost > 0) stats.passages += 1;
-        // A threshold whose chunk is not loaded yet is retried on the next
-        // cycle, and it is retried *eagerly*: dropping it lost the passage for
-        // good, and a room whose only connection was lost is unreachable — the
-        // dungeon then has rooms that are built, visible, and impossible to
-        // enter.
+        // A threshold whose chunk is not loaded yet — or that is only half
+        // written, now that a passage is served one batch at a time like a room —
+        // goes back in the queue. Dropping it lost the passage for good, and a
+        // room whose only connection was lost is unreachable: the dungeon then has
+        // rooms that are built, visible, and impossible to enter.
         if (passage.done !== true) {
           ownQueues.push(QUEUE.BUILD, entry);
           stats.resumed += 1;
-          // Carry on: the entry is back at the end of the queue, and stopping
-          // here is how a backlog of thresholds starves everything behind it.
+          // A batch that filled the budget ends the cycle here. Continuing is how
+          // a backlog of thresholds starves everything behind it, and it also
+          // means the ceiling below is checked on the next entry rather than after
+          // the work is done.
+          if (cost >= DUNGEON_CONFIG.blocksPerBatch) written = ceiling;
           continue;
         }
         continue;

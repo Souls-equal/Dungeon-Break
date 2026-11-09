@@ -186,12 +186,12 @@ Le donjon est passé de salles de 4 à 11 cellules et de couloirs d'une cellule 
 
 | Paramètre | ×1 | ×5 | Pourquoi |
 | --- | --- | --- | --- |
-| `minWidth` / `maxWidth` | 4 / 11 | **20 / 55** | la taille des salles |
-| `minDepth` / `maxDepth` | 4 / 11 | **20 / 55** | idem |
-| `wallHeight` | 4 | **16** | 16 blocs de hauteur sous plafond |
+| `minWidth` / `maxWidth` | 4 / 11 | **16 / 55** | l'enveloppe des salles ; les tailles se tirent dans une échelle de paliers (`sizeBands`) |
+| `minDepth` / `maxDepth` | 4 / 11 | **16 / 55** | idem |
+| `wallHeight` | 4 | **5** | non multiplié : la hauteur n'est pas ce qui fait une grande salle, et 16 blocs coûtaient 4 000 blocs de mur par salle |
 | `wallGap` | 3 | **15** | la maçonnerie entre deux salles suit |
 | `minPassageWidth` / `maxPassageWidth` | 1 / 1 | **5 / 5** | « taille des couloirs » |
-| `passageHeight` | 1 | **4** | 4 blocs sur 16 de mur : même proportion que 1 sur 4 |
+| `passageHeight` | 1 | **4** | calé sur `wallHeight` (4 sur 5), pas sur l'échelle : la porte arrive à un bloc du plafond |
 | `minCornerClearance` | 1 | **5** | une porte ne colle plus au coin |
 | `minOpeningSpacing` | 2 | **10** | deux portes d'une même face |
 | `cellsPerOpening` | 6 | **30** | la densité de portes, pas leur nombre |
@@ -209,7 +209,8 @@ Une valeur nouvelle apparaît avec cette échelle : **`minConnectionOverlap` (3)
 
 **Ce qui n'a volontairement pas été multiplié**, et pourquoi :
 
-- **`passageHeight` passe à 4 et non à 5.** C'est 4 blocs de haut sur 16 de hauteur de mur, soit exactement la proportion de 1 sur 4 d'avant, et bien au-dessus de la taille d'un joueur. Multipliée, la porte ferait 5 sur 5 : un portique.
+- **La hauteur, elle, ne suit pas l'échelle : `wallHeight` vaut 5, pas 20.** Une salle de 55 cellules sous 16 blocs de plafond se lit comme une cathédrale, coûte des milliers de blocs de mur de plus, et ne paraît pas plus grande — c'est la surface au sol qui fait la taille. Cinq blocs, c'est trois au-dessus des yeux.
+- **`passageHeight` vaut 4 et non 5.** Il est calé sur le mur (4 sur 5), pas sur l'échelle : à 5 la porte égalerait la hauteur du mur, soit un plafond ouvert au-dessus de chaque porte.
 - **`minOpenings` / `maxOpenings` restent 2 / 5.** Ce sont des **nombres**, pas des longueurs : une salle garde deux à cinq portes, sinon chaque salle devient un carrefour.
 - **`minApproachDepth` reste 1**, et c'est le seul chiffre pour lequel la montée d'échelle **casse** le moteur : la règle est `clearance > minApproachDepth`, donc 1 exige un dégagement de 2 et 3 exigerait un dégagement de 4. À 4, plus aucune forme ne peut héberger une porte — l'entrée elle-même échoue, six fois sur six (`ROOM_DISCONNECTED`, mesuré au ×3). Le dégagement 2 est une cellule avec au plus deux voisins vides, et `faceRuns` refuse déjà les deux vides derrière une porte : la porte n'est jamais plus étroite que le mur qu'elle perce, à n'importe quelle échelle.
 - **`anticipationDepth` (3), `priorityDepthWeight` (40), `backlogThreshold` (60)** sont des profondeurs et des poids, pas des distances.
@@ -222,6 +223,50 @@ Une valeur nouvelle apparaît avec cette échelle : **`minConnectionOverlap` (3)
 2. **Deux portes larges ne se connectaient presque jamais.** La connexion exigeait des centres **exactement** alignés — un hasard qu'une porte d'une cellule satisfait par construction et qu'une porte de cinq presque jamais. Effet mesuré à ×5 : le réseau ne fermait plus aucune boucle et les ponts avaient disparu. Désormais deux portes se connectent dès que leurs fentes se **recouvrent** d'au moins `minConnectionOverlap` (3) cellules, et les deux portes sont **rétrécies** aux cellules partagées : le couloir est exactement aussi large que le trou qu'il relie, et aucune porte ne garde une partie de sa fente devant de la maçonnerie. L'index d'ouvertures cherche le partenaire sur toute la rangée d'en face, au lieu d'une seule cellule.
 
 3. **Le contrôle d'aire chargée ne regardait que le milieu d'une salle.** Quatre sondes réparties en ordre de lecture tombaient toutes dans le même coin d'une salle de 55 blocs, et le constructeur écrivait dans un chunk non chargé — où le serveur perd le bloc **sans erreur**. Les sondes sont les quatre coins de la boîte englobante.
+
+### Quatre défauts de plus, révélés par un joueur : « les couloirs dépassent et bloquent une partie de l'entrée »
+
+Le défaut décrit en jeu — « parfois, les emboîtements avec les couloirs sont bizarres, ils dépassent et bloquent une partie de l'entrée » — n'était pas un défaut d'emboîtement : c'était **quatre** défauts qui se ressemblaient tous, et dont trois ne se voyaient qu'au niveau des blocs.
+
+1. **Un couloir pouvait être plus large que la porte qui le précède.** Le pont était taillé d'après les fentes des deux portes *avant* que celles-ci soient rétrécies aux cellules qu'elles partagent : une porte de 4 recevait un couloir de 5, dont une cellule mordait le mur et sortait de la salle. Mesuré sur 1 200 salles / 1 184 connexions : **2 couloirs** dans ce cas, soit 0,17 %. C'est peu, c'est très visible, et un joueur en voit un.
+   Le correctif est structurel : `planConnection` calcule **tout** — la fente partagée, la largeur, la rectitude, la continuité — *avant* que quoi que ce soit ne soit modifié, et `commitIfValid` ne rétrécit qu'ensuite. Un refus ne laisse plus de porte rétrécie sans connexion derrière (c'était le cas avant : le rétrécissement était fait avant `passageIsWalkable`).
+
+2. **Un couloir pouvait traverser une troisième salle.** Une salle posée sur le flanc d'un couloir déjà committé le murait : les deux salles qu'il reliait devenaient inaccessibles, et **rien ne le relisait**. Mesuré sur 750 salles : **3 couloirs sur 738** traversaient une troisième salle, et coupaient deux salles. Mesuré avec l'échelle de tailles plus large : **60 salles sur 750** coupées du donjon.
+   Le correctif : le manager tient l'ensemble des **cellules de couloir déjà committées**, et le validateur refuse tout candidat qui en couvre une (`CORRIDOR_BLOCKED`). La règle est volontairement étroite — seuls les couloirs committés sont protégés. Une porte *libre* qui regarde une salle voisine n'est pas un conflit : le constructeur mure une porte qui ne mène nulle part, ça coûte une porte et rien d'autre. Refuser ces portes-là a coûté un tiers des boucles (mesuré : 2 boucles au lieu de 6), parce qu'une grande salle posée contre une autre en regarde toujours quelques-unes.
+
+3. **Le pad d'atterrissage ne suivait pas le plafond et sortait des murs.** Le service passait un rayon de 2 en dur (`5×5`) alors que les salles font jusqu'à 55 : un îlot ridicule au milieu d'une halle, et sur une entrée en croix — le centre du milieu d'une croix est de la roche — un pad de 21×21 écrit **à travers les murs**, dans le joint et devant la porte. Le pad est maintenant découpé sur l'empreinte de la salle, et la cellule d'atterrissage est choisie **au plus près du milieu** de la salle, à distance du rayon du pad, jamais sur une porte ni à côté.
+
+4. **Un test comparait les mauvaises choses.** `bridgeCells only spans a bounded straight gap and never overlaps a room` construisait une paire dont les fentes ne se recouvraient pas (1 contre 5) : il passait avant que la connexion par recouvrement n'existe, et il ne testait donc pas ce qu'il annonçait.
+
+Mesure après les quatre correctifs, sur 1 200 salles / 1 184 connexions et sur 750 salles :
+
+| Défaut | Avant | Après |
+| --- | --- | --- |
+| couloir plus large que sa porte | 2 / 1 184 | **0** |
+| couloir traversant une 3ᵉ salle | 80 / 1 177 | **0** |
+| salles coupées du donjon (750 salles) | 61 | **0** |
+| pad hors de sa salle | mesuré | **0** (découpé sur l'empreinte) |
+
+Et deux tests le verrouillent : « every corridor is one straight run, exactly as wide as both its doorways » (rectitude, largeur, continuité, contact avec les deux murs) et « no corridor is ever built through a third room ».
+
+### Les tailles de salles : une échelle de paliers, pas un tirage uniforme
+
+« La taille des salles plus aléatoire » ne s'obtient pas en élargissant la plage : un tirage uniforme sur `[16, 55]` donne à chaque largeur la même chance, et le donjon se remplit de salles moyennes qui se ressemblent toutes. Mesuré sur 280 salles, la médiane était 36 et une largeur précise sortait 20 fois.
+
+Les dimensions se tirent maintenant dans une **échelle de paliers** (`sizeBands`), avec deux axes tirés indépendamment :
+
+| Palier | Poids | Ce que le joueur rencontre |
+| --- | --- | --- |
+| 16–18 | 4 | un cagibi : quatre à six pas de large, et il tient entre deux salles |
+| 19–24 | 3 | une petite chambre |
+| 26–34 | 2 | la salle ordinaire du donjon |
+| 36–46 | 2 | une halle |
+| 48–55 | 3 | la grande halle |
+| 16–55 | 2 | l'exception : un boyau, ou un carré qui n'a pas d'équivalent ailleurs |
+
+Le résultat sur 1 200 formes : `q90 / q10` des surfaces **7,6** contre **4,2** pour un tirage uniforme, 34 % de salles sous 700 cellules et 16 % au-dessus de 2 200. Sur 8 donjons réels de 35 salles, le coefficient de variation des surfaces passe de ~0,45 à ~0,59.
+
+**Ce qui garantit qu'elles s'emboîtent toujours** : chaque palier est plus large que ce qu'une porte exige. La règle est `largeur de passage + 2 × dégagement de coin` de mur continu, soit 15 cellules à ×5, et le palier le plus étroit tire 16. Le tirage est donc libre par construction, et un test le vérifie palier par palier plutôt que sur un tirage chanceux. 0 forme sans porte sur 1 200.
 
 ### Deux corrections structurelles, du même passage
 
@@ -239,8 +284,8 @@ Mesure sur 200 formes à ×5, après les correctifs : **0 forme sans porte**, mo
 
 | Mesure | ×1 | **×5** |
 | --- | --- | --- |
-| taille des salles | 4–11 blocs | **20–55** |
-| hauteur sous plafond | 4 | **16** |
+| taille des salles | 4–11 blocs | **16–55** (28 % de petites, 16 % de grandes : paliers) |
+| hauteur sous plafond | 4 | **5** |
 | largeur des couloirs | 1 | **5** |
 | genèse d'une salle (blocs, passages compris) | ~360 | **6 500 à 6 900** (blocs du donjon ÷ salles) |
 | donjon de 28 à 36 salles | 13 584 blocs | **183 000 à 245 000 blocs** |

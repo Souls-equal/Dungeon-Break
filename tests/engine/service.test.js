@@ -127,12 +127,28 @@ test("a player enters: the floor exists before anything is announced", () => {
   assert.ok(FLOOR_BLOCKS.includes(api.cells.get(`${cell.x},${DUNGEON_CONFIG.floorY},${cell.z}`)),
     "the player was told the dungeon was ready while standing over a hole");
   // The pad under the player follows the scale too: the service passing a fixed
-  // radius is how the pad stayed at 5×5 while the rooms grew to 55.
+  // radius is how the pad stayed at 5×5 while the rooms grew to 55. It is clipped
+  // to the entrance's own footprint, so the cells that must carry floor are the
+  // ones the room actually has — a pad spilling through the walls would put a
+  // slab of floor in the joint and in front of the doorway.
   const padRadius = DUNGEON_CONFIG.scale * 2;
-  for (const [dx, dz] of [[0, 0], [padRadius, padRadius], [-padRadius, -padRadius]]) {
-    assert.ok(FLOOR_BLOCKS.includes(api.cells.get(`${cell.x + dx},${DUNGEON_CONFIG.floorY},${cell.z + dz}`)),
-      `the landing pad is missing a cell at ${dx},${dz}`);
+  const entrance = ready.dungeon.manager.getRoom(ready.dungeon.entranceRoomId);
+  let padCells = 0;
+  for (let dx = -padRadius; dx <= padRadius; dx += 1) {
+    for (let dz = -padRadius; dz <= padRadius; dz += 1) {
+      const x = cell.x + dx;
+      const z = cell.z + dz;
+      const localX = x - entrance.origin.x;
+      const localZ = z - entrance.origin.y;
+      const inside = Boolean(entrance.mask.cells[localZ] && entrance.mask.cells[localZ][localX]);
+      const block = api.cells.get(`${x},${DUNGEON_CONFIG.floorY},${z}`);
+      if (inside) {
+        padCells += 1;
+        assert.ok(FLOOR_BLOCKS.includes(block), `the landing pad is missing the room cell ${localX},${localZ}`);
+      }
+    }
   }
+  assert.ok(padCells > 50, `only ${padCells} cells of pad were laid`);
 
   // No lock is requested: `survivalAdventure` already keeps the shell intact.
   assert.equal(api.calls.setCanChangeType.length, 0,
@@ -303,6 +319,20 @@ test("every room of a finished dungeon can be reached on foot from the entrance"
   for (let tick = 0; tick < 1600; tick += 1) {
     stepScheduler();
     service.tick();
+  }
+  // Passages are written one batch at a time (4 000 blocks for a joint at this
+  // scale), so a fixed tick count is a bet on the machine's speed. Wait for the
+  // build to actually finish instead: the service reports it.
+  let stable = 0;
+  let lastPassages = -1;
+  let lastRooms = -1;
+  for (let tick = 0; tick < 6000 && stable < 200; tick += 1) {
+    stepScheduler();
+    service.tick();
+    const built = dungeon.controller.stats.passages;
+    const rooms = dungeon.manager.roomCount;
+    if (built === lastPassages && rooms === lastRooms) stable += 1;
+    else { stable = 0; lastPassages = built; lastRooms = rooms; }
   }
 
   const rooms = dungeon.manager.allRooms();

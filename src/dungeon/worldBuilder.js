@@ -430,11 +430,26 @@ export function createWorldBuilder(options) {
    * hall reads as a tile the player was placed on by mistake. Callers must not
    * pass a radius of their own — that is how the pad stayed at 5×5 when the
    * rooms grew.
+   *
+   * `room` clips the pad to the room's own footprint. Without it the square
+   * spills through the entrance's walls: on a thin shape — the entrance can be a
+   * cross with a seven-cell bar — most of the pad lands outside the hall, and the
+   * player sees a slab of floor lying in the rock, in the corridor, and against
+   * the next room's wall. The landing cell is chosen near the middle of the room
+   * for the same reason, but a room can be thinner than the pad is wide, so the
+   * clip is what actually guarantees it.
    */
-  function layLandingPad(cell, radius = DUNGEON_CONFIG.scale * 2) {
+  function layLandingPad(cell, options = {}) {
+    const radius = options.radius === undefined ? DUNGEON_CONFIG.scale * 2 : options.radius;
+    const room = options.room || null;
     let written = 0;
     for (let dx = -radius; dx <= radius; dx += 1) {
       for (let dz = -radius; dz <= radius; dz += 1) {
+        if (room) {
+          const localX = cell.x + dx - room.origin.x;
+          const localZ = cell.z + dz - room.origin.y;
+          if (!room.mask.cells[localZ] || !room.mask.cells[localZ][localX]) continue;
+        }
         writeBlock(cell.x + dx, floorY, cell.z + dz, BLOCKS.FLOOR);
         written += 1;
       }
