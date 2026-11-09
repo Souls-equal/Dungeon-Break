@@ -390,7 +390,7 @@ test("logical, local and world frames convert back and forth exactly", () => {
 // --------------------------------------------------------------- helpers --
 
 function fakeOpening(fields) {
-  return {
+  const opening = {
     id: "x.o0",
     roomId: "x",
     side: "north",
@@ -400,13 +400,23 @@ function fakeOpening(fields) {
     vectorY: -1,
     width: DUNGEON_CONFIG.minPassageWidth,
     height: DUNGEON_CONFIG.passageHeight,
-    offsetStart: 0,
-    offsetEnd: 0,
     status: OPENING_STATUS.PENDING,
     connectionId: null,
     failures: 0,
     ...fields,
   };
+  // A real opening carries its span (`offsetStart`/`offsetEnd`, along the wall)
+  // *and* a centre. The two must agree: the centre of a three-cell span is its
+  // middle cell, and the corridor across the wall gap starts at the span's first
+  // cell. A fake that gives a centre and leaves the span at 0 is not an opening,
+  // it is a position — so the span is derived here unless the test sets it.
+  if (fields.offsetStart === undefined) {
+    const along = opening.side === "north" || opening.side === "south" ? opening.centerX : opening.centerY;
+    opening.offsetStart = along;
+    opening.offsetEnd = along + opening.width - 1;
+  }
+  if (fields.offsetEnd === undefined) opening.offsetEnd = opening.offsetStart + opening.width - 1;
+  return opening;
 }
 
 /** Every outer-face cell an opening pierces. */

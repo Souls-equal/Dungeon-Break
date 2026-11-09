@@ -19,14 +19,14 @@ import {
 /**
  * How far the fake server keeps chunks loaded around a player.
  *
- * Bigger than the 48 originally used, and deliberately so: at ×3 a room is up to
- * 33 cells across and the masonry between two rooms is 9 cells, so a room built
- * beside a player who never moves can sit beyond the old radius — and then the
+ * Bigger than the 48 originally used, and deliberately so: a room is now up to 55
+ * cells across and the masonry between two rooms is 15 cells, so a room built
+ * beside a player who never moves can sit far beyond the old radius — and then the
  * fake "loses" those writes, which is the fake being wrong, not the builder. The
  * case this number must never hide (a write into an unloaded chunk) is covered
  * directly by `worldBuilder.test`, which can put the boundary anywhere it likes.
  */
-const LOAD_RADIUS = 160;
+const LOAD_RADIUS = 400;
 
 function fakeApi() {
   const cells = new Map();
@@ -126,6 +126,14 @@ test("a player enters: the floor exists before anything is announced", () => {
   const cell = ready.spawn.cell;
   assert.ok(FLOOR_BLOCKS.includes(api.cells.get(`${cell.x},${DUNGEON_CONFIG.floorY},${cell.z}`)),
     "the player was told the dungeon was ready while standing over a hole");
+  // The pad under the player follows the scale too: the service passing a fixed
+  // radius is how the pad stayed at 5×5 while the rooms grew to 55.
+  const padRadius = DUNGEON_CONFIG.scale * 2;
+  for (const [dx, dz] of [[0, 0], [padRadius, padRadius], [-padRadius, -padRadius]]) {
+    assert.ok(FLOOR_BLOCKS.includes(api.cells.get(`${cell.x + dx},${DUNGEON_CONFIG.floorY},${cell.z + dz}`)),
+      `the landing pad is missing a cell at ${dx},${dz}`);
+  }
+
   // No lock is requested: `survivalAdventure` already keeps the shell intact.
   assert.equal(api.calls.setCanChangeType.length, 0,
     "a permission was requested, but nothing is breakable by default");
@@ -287,9 +295,12 @@ test("every room of a finished dungeon can be reached on foot from the entrance"
   runUntil(() => ready, "the entrance to be built");
 
   const dungeon = service.dungeonOf("p1");
-  // Enough ticks for the graph to stop growing and for the audit to finish: the
-  // dungeon is "finished" at a few hundred ticks, not thousands.
-  for (let tick = 0; tick < 800; tick += 1) {
+  // Enough ticks for the graph to stop growing and for the audit to finish. The
+  // bound follows the scale: a room is now up to 55 cells across and costs tens
+  // of thousands of blocks, so the dungeon is "finished" at a few hundred ticks,
+  // and the test must not stop in the middle of the build — it would then check
+  // rooms that are still being written.
+  for (let tick = 0; tick < 1600; tick += 1) {
     stepScheduler();
     service.tick();
   }

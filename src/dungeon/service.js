@@ -205,7 +205,10 @@ export function createDungeonService(options) {
 
     // 3. Wait for the client to load the chunks, then 4. lay the pad.
     scheduleTimeout(() => {
-      dungeon.worldBuilder.layLandingPad(spawn.cell, 2);
+      // No radius here: the pad's size is a length, so it follows the scale
+      // (`scale * 2`, i.e. 21×21 at ×5). Pinning it to 2 left a 5×5 tile in the
+      // middle of a 55-cell hall, which reads as a placement bug.
+      dungeon.worldBuilder.layLandingPad(spawn.cell);
       // 5. Build the entrance, and only then let the player in.
       buildEntrance(dungeon, (result) => {
         if (!result.done) {

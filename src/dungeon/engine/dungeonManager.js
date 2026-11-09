@@ -17,6 +17,8 @@ import { createSpatialIndex } from "./spatialIndex.js";
 import { generateShape } from "./shapes.js";
 import {
   bridgeCells,
+  narrowOpening,
+  spanOverlap,
   canConnectDirectly,
   jointCells,
   OPENING_STATUS,
@@ -24,7 +26,7 @@ import {
   placeRoomForOpening,
 } from "./openings.js";
 import { clearanceMap } from "./geometry.js";
-import { REFUSAL, validateRoom } from "./validator.js";
+import { passageIsWalkable, REFUSAL, validateRoom } from "./validator.js";
 
 export const BUILD_STATE = {
   NOT_STARTED: "not_started",
@@ -275,6 +277,27 @@ export function createDungeonManager(options = {}) {
         }
       }
     }
+    // Two doorways rarely line up cell for cell. When they meet on a few cells,
+    // both are **narrowed to those cells** — otherwise each door keeps a span
+    // that is partly in front of masonry, which the player sees as a hole with a
+    // wall behind it. The narrowing happens before anything is committed, so no
+    // state ever describes a doorway wider than the corridor it opens onto.
+    const overlap = spanOverlap(roomA, openingA, roomB, openingB);
+    if (overlap && overlap.length < openingA.width) {
+      if (overlap.length < DUNGEON_CONFIG.minConnectionOverlap) return null;
+      narrowOpening(roomA, openingA, overlap.from, overlap.to);
+      narrowOpening(roomB, openingB, overlap.from, overlap.to);
+    }
+
+    // A logical connection is not enough: the corridor it describes must be
+    // physically walkable from inside one room to inside the other. This check
+    // was written in Phase 2 and never called at commit time; it is called here
+    // because everything else about a connection is geometry on paper, and a
+    // room whose only door opens onto a wall is built, visible and impossible to
+    // enter. Measured on 95 direct connections: it refuses none today, which is
+    // exactly why it is cheap to keep.
+    if (!passageIsWalkable(roomA, openingA, roomB, openingB)) return null;
+
     const connection = {
       id: nextConnectionId(openingA.id, openingB.id),
       a: { roomId: roomA.id, openingId: openingA.id },
@@ -286,6 +309,11 @@ export function createDungeonManager(options = {}) {
       bridge: bridge || [],
     };
     commitConnection(connection, roomA, openingA, roomB, openingB);
+    // The openings just moved to their narrowed span: their index key is the
+    // centre cell *on the room's face*, so a stale key would leave the other
+    // openings pointing at a door that is no longer there.
+    index.refreshOpenings(roomA);
+    index.refreshOpenings(roomB);
     refreshDepths(entranceRoomId || roomB.id);
     stats.reused += 1;
     stats.loops += 1;

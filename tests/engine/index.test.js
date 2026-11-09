@@ -114,10 +114,15 @@ test("the index forgets a room once it is removed", () => {
   index.remove(victim.id);
   assert.equal(index.size, manager.roomCount - 1);
   assert.equal(index.has(victim.id), false);
-  // Its openings must be gone too: a stale opening index is how a ghost
-  // connection appears.
+  // Its own openings must be gone too: a stale opening index is how a ghost
+  // connection appears. The check is on the *record*, not on "no partner at
+  // all": since wide doorways are matched by overlap, a neighbouring room's
+  // doorway may legitimately be found in the same row — what must never be
+  // returned is the removed room's own opening.
   for (const opening of victim.openings) {
-    assert.equal(index.openingFacing(victim, opening, victim.id), null);
+    const found = index.openingFacing(victim, opening, victim.id);
+    assert.notEqual(found && found.roomId, victim.id,
+      `the index still returns an opening of the removed room ${victim.id}`);
   }
 });
 

@@ -434,6 +434,10 @@ function allFloorCells(room) {
  */
 export function createRoomWriter(writer, options = {}) {
   const batchSize = options.batchSize || DUNGEON_CONFIG.blocksPerBatch;
+  // How a plan is produced, injected. A room plans itself from its mask; a
+  // passage plans itself from the connection that carves it. Both are written in
+  // batches with a cursor, so both go through this one writer.
+  const plan = options.plan || roomBlocks;
   const planned = new Map();
 
   /**
@@ -446,7 +450,7 @@ export function createRoomWriter(writer, options = {}) {
   function writeRoom(room, world, cursor = null, buildOptions = {}) {
     let blocks = planned.get(room.id);
     if (!blocks) {
-      blocks = roomBlocks(room, world, buildOptions);
+      blocks = plan(room, world, buildOptions);
       planned.set(room.id, blocks);
     }
     const startIndex = cursor === null || cursor.index === undefined ? 0 : cursor.index;

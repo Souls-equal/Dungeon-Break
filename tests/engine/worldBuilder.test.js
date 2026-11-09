@@ -193,12 +193,15 @@ test("the landing sequence reads, teleports to the middle of the cell, then wait
     "the player was put on a corner instead of the middle of the floor cell");
 });
 
-test("the landing pad is a floor, never a hole", () => {
+test("the landing pad is a floor, never a hole, and its size follows the scale", () => {
   const api = fakeApi();
   const builder = createWorldBuilder({ api });
-  const written = builder.layLandingPad({ x: 0, z: 0 }, 2);
-  assert.equal(written, 25);
+  const radius = DUNGEON_CONFIG.scale * 2;
+  const written = builder.layLandingPad({ x: 0, z: 0 });
+  assert.equal(written, (radius * 2 + 1) ** 2,
+    "the pad does not grow with the rooms: a 5×5 tile in a 55-cell hall reads as a mistake");
   assert.ok(isFloor(api.cells.get("0,-1000,0")), "the landing pad is not a floor block");
+  assert.ok(isFloor(api.cells.get(`${radius},-1000,${-radius}`)), "the pad is not square around the cell");
 });
 
 test("nothing is locked: the game mode already keeps the shell unbreakable", () => {
