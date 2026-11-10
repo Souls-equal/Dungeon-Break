@@ -39,6 +39,22 @@ export function createDungeonController(options) {
   const builder = options.builder || null;
   const queues = options.queues || null;
   const ownQueues = queues || createQueues(options.budgets || {});
+  /**
+   * How many rooms this dungeon may ever hold.
+   *
+   * The difficulty table states it (`rooms: 48` for Hell) and this is the only
+   * place that can enforce it. Without a cap the dungeon grows for as long as
+   * anything is still pending — measured, a "Very Easy" dungeon (10 rooms) reached
+   * **114 rooms and kept going** — and every room keeps its plan, its openings and
+   * its connections alive. That is the shape `InternalError: out of memory` takes:
+   * not one huge allocation, but a world that never stops growing.
+   *
+   * `null` means no cap, which is what a test that wants an unbounded generator
+   * asks for, explicitly.
+   */
+  const maxRooms = options.maxRooms === undefined
+    ? (Number.isFinite(options.roomTarget) ? options.roomTarget : null)
+    : options.maxRooms;
   const players = new Map();
   const suspended = new Set();
   const inProgress = new Set();
@@ -73,6 +89,9 @@ export function createDungeonController(options) {
     budgetHits: 0,
     generatedDeferred: 0,
     builtDeferred: 0,
+    // Rooms the cap refused to generate. A non-zero value on a finished dungeon is
+    // normal: the frontier still offers doorways once the target is reached.
+    capped: 0,
   };
 
   let elapsedTicks = 0;
@@ -274,14 +293,30 @@ export function createDungeonController(options) {
 
   // ----------------------------------------------------------- generation --
 
+  /** Are we at the room cap? The one check every generation path goes through. */
+  function atRoomCap() {
+    return maxRooms !== null && manager.roomCount >= maxRooms;
+  }
+
   function generate() {
     lastState = CYCLE_STATE.GENERATING;
+    // The cap first, before any work: a dungeon that has reached its target does
+    // not generate, and does not keep a queue of things it will never do.
+    if (atRoomCap()) {
+      stats.capped += 1;
+      ownQueues.clear(QUEUE.GENERATION);
+      ownQueues.clear(QUEUE.DISCOVERY);
+      return;
+    }
     ownQueues.sort(QUEUE.GENERATION, compareDiscovery);
     let created = 0;
     // Bounded by the budget, not by the queue length: a long queue must not turn
     // into a long tick.
     for (let guard = 0; guard < DUNGEON_CONFIG.maxGenerationPerCycle; guard += 1) {
       if (created >= DUNGEON_CONFIG.maxRoomsPerCycle) break;
+      // Checked inside the loop too: one cycle may reach the target and must not
+      // walk past it by `maxRoomsPerCycle` rooms.
+      if (atRoomCap()) break;
       // One room's generation is bounded (a handful of candidate shapes), so this
       // is the right place to stop: at the boundary between two units of work,
       // never inside one.
@@ -528,5 +563,7 @@ export function createDungeonController(options) {
     pendingBuilds() { return ownQueues.snapshot(QUEUE.BUILD); },
     /** The wall-clock budget of a tick, in milliseconds. */
     get tickBudgetMs() { return DUNGEON_CONFIG.tickBudgetMs; },
+    /** The room cap this dungeon enforces, or `null` for none. */
+    get maxRooms() { return maxRooms; },
   };
 }

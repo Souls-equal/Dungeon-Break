@@ -70,35 +70,35 @@ export const CHUNK_RECORD_LIMITS = {
 };
 
 /**
- * Where the anchor of a chunk lives: the lowest cell of the chunk, at an altitude
- * chosen so it can never collide with the structure.
+ * Where the anchor of a chunk lives: the corner of the chunk, **one block above the
+ * floor** — the block a player's feet occupy over the corner cell of the dungeon.
  *
- * The anchor is the corner cell of the chunk, **at the dungeon's floor altitude**.
- * Not below it: a chunk is 32 blocks tall and a player only loads the ones around
- * them, so an anchor under the floor is in a chunk nobody has loaded — and a
- * write into an unloaded chunk is lost without an error. On the floor level the
- * chunk is loaded by anyone standing in it, and the cell is the one a player
- * standing in the corner of a room is on.
+ * Why above the floor and not on it
+ * ---------------------------------
+ * On the floor level the anchor cell is a **structural** cell of the dungeon: any
+ * room whose footprint covers the chunk's corner writes a floor block or a wall
+ * there, and every one of those writes clears the data. Reserving the cell only
+ * helped when the anchor happened to be written first. One block higher the cell
+ * is air — the interior of a room, or the open space of a corridor — so nothing
+ * the builder produces ever lands on it, and the anchor is genuinely alone.
  *
- * That cell may therefore also be a **structural** cell of the dungeon: a room can
- * cover it with a floor block, a wall or a pillar. Whichever of the two writes
- * comes first, the anchor is written **once** — `worldBuilder.writeAnchor` reads
- * the cell first and only writes if the block is not already the anchor, then
- * seals the cell so no later write can land there, and its data is set afterwards.
- * One `setBlock` in the whole lifetime of the chunk is what makes the data survive
- * the "cleared when block changes" rule instead of fighting it.
+ * Why not lower
+ * -------------
+ * A chunk is 32 blocks tall, so `floorY - 1` is very often a **different chunk**:
+ * the chunk below the one the player is standing in, which the server has not
+ * sent, and a write there is lost without an error. One block above the floor is
+ * the same chunk, loaded by the same player, one cell over.
+ *
+ * The anchor is therefore air in a normal dungeon: `writeAnchor` writes it once
+ * (creating the block) and seals the cell. It shows as a single `Polished Diorite`
+ * block floating over the corner of every chunk the dungeon touches — which is
+ * also how `/dbg chunk` and a player can find it.
  */
 export function anchorOf(chunkX, chunkZ, floorY) {
   const size = DUNGEON_CONFIG.chunkSize;
-  // **Not** below the floor: a chunk is 32 blocks tall and a player loads the
-  // ones around them, so an anchor eight blocks under the floor is in a chunk
-  // nobody has loaded — and a write there is lost without an error, which is the
-  // one failure this project keeps finding by hand. The anchor sits on the
-  // dungeon's own floor level, where the floor block of the cell it shares with a
-  // room already is: the block is written once, the data goes on top of it.
   return {
     x: chunkX * size,
-    y: floorY,
+    y: floorY + 1,
     z: chunkZ * size,
   };
 }

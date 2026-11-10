@@ -214,10 +214,14 @@ test("an id that contains the separator does not break the record", () => {
   assert.equal(parsed.record.progress[0].id, id);
 });
 
-test("the anchor is a function of the chunk alone, and never sits below the floor", () => {
+test("the anchor is a function of the chunk alone, and sits one block above the floor", () => {
   for (const [x, z] of [[0, 0], [1, -1], [12, 3], [-40, 7]]) {
     const anchor = anchorOf(x, z, DUNGEON_CONFIG.floorY);
-    assert.equal(anchor.y, DUNGEON_CONFIG.floorY, "the anchor is not on the floor level, so it is in an unloaded chunk");
+    // One above the floor, never on it: on the floor the cell is structural, and
+    // any room covering the chunk's corner would write it and clear the record.
+    assert.equal(anchor.y, DUNGEON_CONFIG.floorY + 1,
+      "the anchor is on the floor level, where every room writes and the record is cleared");
+    assert.ok(anchor.y > DUNGEON_CONFIG.floorY, "the anchor is below the floor, in a chunk nobody loaded");
     assert.equal(anchor.x, x * DUNGEON_CONFIG.chunkSize);
     assert.equal(anchor.z, z * DUNGEON_CONFIG.chunkSize);
     // Asking twice gives the same cell: nothing about it depends on time or order.

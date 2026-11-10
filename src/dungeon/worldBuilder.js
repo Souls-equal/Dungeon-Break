@@ -257,6 +257,12 @@ export function createWorldBuilder(options) {
     state.state = ROOM_BUILD_STATE.BUILT;
     state.pendingAudit = true;
     auditQueue.push(room.id);
+    // The plan goes now. It is every block the room wrote — thousands of objects,
+    // and a dungeon is at most 48 rooms — and nothing reads it after the last
+    // block: the audit recomputes the expected cells from the geometry, and
+    // `reopenDoorways` clears a few cells without it. Keeping one plan per room is
+    // exactly how a dungeon that has stopped growing keeps taking memory.
+    if (state.writer && typeof state.writer.forget === "function") state.writer.forget(room.id);
     return { roomId: room.id, state: state.state, done: true, written: step.written };
   }
 

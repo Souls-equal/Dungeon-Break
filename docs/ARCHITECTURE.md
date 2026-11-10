@@ -132,6 +132,8 @@ Ces points ne sont pas des détails : chacun a orienté une décision d'architec
 
 La documentation officielle ne donne aucun chiffre. La seule mention est indirecte, dans `setCurrency` : « *Persistent currencies count towards db length limits* ». Il existe donc bien une limite, mais sa valeur n'est nulle part dans les pages consultées.
 
+**Mémoire.** `InternalError: out of memory` est l'autre limite, et elle a sa propre cause mesurée : le donjon n'avait **aucun plafond de salles**, et les plans de salles n'étaient jamais libérés. Voir `docs/MEMOIRE.md` : reproduction, liste complète des structures qui grossissent, et correctifs.
+
 **Conséquence, et c'est une contrainte structurante :** le moteur ne doit jamais supposer disposer de beaucoup de place. Il est conçu autour d'un **comptable de budget** : chaque écriture mesure la longueur exacte de la chaîne avant de l'envoyer, et refuse ou compacte au-delà d'un seuil configurable (`dbCharBudget`). Aucune architecture ne dépend d'une limite supposée.
 
 ### 3.3 `getBlockSolidity` ne distingue pas « non chargé » de « plein »
@@ -172,7 +174,7 @@ Le changelog officiel du 18 août 2026 annonce le passage de 64 k à 512 k carac
 
 **Conséquence, révisée.** Une donnée de jeu n'est attachée aux blocs que sous deux conditions, et la seconde est ce qui rend la première honnête :
 
-1. **L'ancre est scellée.** Un bloc par chunk, à son coin et au niveau du sol (`(chunkX × 32, floorY, chunkZ × 32)`, bloc `Polished Diorite`, hors palette de pierre). Il est posé **une fois** ; ensuite le `worldBuilder` refuse toute écriture sur cette cellule (`writeAnchor` / `isSealedAnchor`, garde dans `writeBlock`). Une salle construite par-dessus l'ancre ne peut donc pas l'effacer.
+1. **L'ancre est scellée, et posée hors du sol.** Un bloc par chunk, à son coin, **une case au-dessus du niveau du sol** : `(chunkX × 32, floorY + 1, chunkZ × 32)`, bloc `Polished Diorite`, hors palette de pierre. Au niveau du sol la case est *structurelle* : une salle dont le contour couvre le coin du chunk y écrit un sol ou un mur, et cette écriture efface le record. Une case plus haut, c'est de l'air — aucune salle n'y écrit. (Pas une case plus bas : `floorY - 1` est souvent dans le chunk du dessous, non chargé, où l'écriture est perdue sans erreur.) Le bloc est posé **une fois** ; ensuite le `worldBuilder` refuse toute écriture sur cette cellule (`writeAnchor` / `isSealedAnchor`, garde dans `writeBlock`).
 2. **Ce n'est jamais une source de vérité.** Le donjon est reconstruit depuis sa seed ; les records de chunk ne servent qu'à savoir ce qui était déjà là après un redémarrage, et à relire la progression. Si la donnée a disparu (un bloc cassé, un chunk réinitialisé), le code le dit — `NO_ANCHOR` — au lieu de faire semblant.
 
 L'ancre est au coin du chunk **au niveau `floorY`**, jamais dessous : écrire dans un chunk non chargé perd l'écriture silencieusement, et le sol d'un donjon est justement ce qui est chargé quand le joueur y est. Un chunk dont l'ancre est illisible (`getBlock` → `null`) n'est pas écrit du tout.

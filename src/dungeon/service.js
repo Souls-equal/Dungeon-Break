@@ -95,6 +95,10 @@ export function createDungeonService(options) {
     const controller = createDungeonController({
       manager,
       builder: worldBuilder.asControllerBuilder(),
+      // The difficulty table's room count is a target, not a wish: this is what
+      // stops a "10 rooms" dungeon from growing to 114 and taking the world's
+      // memory with it.
+      maxRooms: difficulty.rooms,
     });
     const dungeon = {
       difficulty,
@@ -663,6 +667,46 @@ export function createDungeonService(options) {
     };
   }
 
+  /**
+   * What the engine is holding, per dungeon, as counters a player can read.
+   *
+   * This is the report for `out of memory`: that error is never one big
+   * allocation, it is a structure that keeps growing. So the numbers here are the
+   * ones that must stay bounded — rooms, openings, connections, corridor cells,
+   * queued work, chunk records — plus the two that say whether the cap is doing
+   * its job (`roomCap`, `capped`). It reads counters and sizes, never the world.
+   */
+  function memoryReport() {
+    const rows = [];
+    for (const dungeon of dungeons.values()) {
+      const rooms = dungeon.manager.allRooms();
+      let openings = 0;
+      for (let index = 0; index < rooms.length; index += 1) openings += rooms[index].openings.length;
+      let audited = 0;
+      let unfinished = 0;
+      for (let index = 0; index < rooms.length; index += 1) {
+        const state = dungeon.worldBuilder.stateOf(rooms[index].id);
+        if (!state) continue;
+        if (state.state === ROOM_BUILD_STATE.BUILT) audited += 1;
+        if (state.state === ROOM_BUILD_STATE.BUILDING || state.state === ROOM_BUILD_STATE.FAILED) unfinished += 1;
+      }
+      rows.push({
+        difficulty: dungeon.difficulty.label,
+        rooms: rooms.length,
+        roomCap: dungeon.controller.maxRooms,
+        capped: dungeon.controller.stats.capped,
+        openings,
+        connections: dungeon.manager.allConnections().length,
+        unfinished,
+        builtRooms: audited,
+        queued: dungeon.controller.pendingBuilds().length,
+        chunks: dungeon.savedChunks.size,
+        chunkRecords: dungeon.chunksSaved,
+      });
+    }
+    return rows;
+  }
+
   function stats() {
     const list = [];
     for (const dungeon of dungeons.values()) {
@@ -698,6 +742,7 @@ export function createDungeonService(options) {
     readChunkAt,
     verifyChunkAt,
     debugChunkReport,
+    memoryReport,
     saveChunk,
     leaveToLobby: leave,
     tick,
