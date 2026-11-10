@@ -330,8 +330,10 @@ test("no block is written into a chunk the player has not loaded", () => {
   // rather than waved through by name, because "off-palette is allowed" is how a
   // texture nobody signed off on gets into a dungeon.
   const CHUNK_SIZE = 32;
+  // One block **above** the floor: the corner cell of the chunk, at the level a
+  // player's feet occupy, where no room ever writes.
   const isAnchorCell = ({ blockName, x, y, z }) => blockName === "Polished Diorite"
-    && y === FLOOR_Y && x % CHUNK_SIZE === 0 && z % CHUNK_SIZE === 0;
+    && y === FLOOR_Y + 1 && x % CHUNK_SIZE === 0 && z % CHUNK_SIZE === 0;
   const offPalette = blocks.filter(({ blockName, x, y, z }) => blockName !== "Air" && blockName !== "Gold Block"
     && !STONE.has(blockName) && !isAnchorCell({ blockName, x, y, z }));
   assert.deepEqual(offPalette.slice(0, 3), [],
@@ -609,4 +611,21 @@ test("the HUD state does not outlive the player", () => {
   for (let tick = 0; tick < 40; tick += 1) context.tick();
   assert.equal(clientOptions.slice(before).filter((entry) => entry.option === "middleTextTop").length, 0,
     "the HUD kept writing for a player who left");
+});
+
+test("/dbg mem reports the counters that must stay bounded", () => {
+  const { context, messages } = createWorld(["player-dbg-mem"]);
+  context.playerCommand("player-dbg-mem", "mem");
+  assert.match(messagesFor(messages, "player-dbg-mem")[0], /no dungeon exists yet/);
+
+  const { context: inDungeon, messages: dungeonMessages } = createWorld(["player-dbg-mem-2"]);
+  startDungeon(inDungeon, "player-dbg-mem-2");
+  tickUntil(inDungeon, () => false, 120);
+  inDungeon.playerCommand("player-dbg-mem-2", "mem");
+  const lines = messagesFor(dungeonMessages, "player-dbg-mem-2").filter((line) => line.startsWith("[dbg]"));
+  assert.ok(lines.length >= 2, `the memory report is too short: ${JSON.stringify(lines)}`);
+  // The cap is always printed, and it is a number: the difficulty still asks for
+  // one, and a missing cap is the bug that let a dungeon grow for ever.
+  assert.match(lines[0], /rooms \d+\/\d+ · capped \d+ · openings \d+ · links \d+/);
+  assert.match(lines[1], /unfinished \d+ · built \d+ · queued \d+ · chunks \d+ · records \d+/);
 });

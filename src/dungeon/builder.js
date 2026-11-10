@@ -480,7 +480,24 @@ export function createRoomWriter(writer, options = {}) {
     planned.delete(`${roomId}:started`);
   }
 
-  return { writeRoom, forget, batchSize };
+  /**
+   * How many plans this writer is still holding, and for which ids.
+   *
+   * A plan is a room's whole block list — several thousand objects for a hall,
+   * and a room is up to 55 cells across. Held for every room ever built, that
+   * list is what makes a dungeon grow in memory long after it has stopped
+   * growing in the world; this is the number that proves it is released.
+   */
+  function heldPlans() {
+    const ids = [];
+    for (const key of planned.keys()) {
+      if (typeof key === "string" && key.endsWith(":started")) continue;
+      ids.push(key);
+    }
+    return ids;
+  }
+
+  return { writeRoom, forget, heldPlans, batchSize };
 }
 
 /**

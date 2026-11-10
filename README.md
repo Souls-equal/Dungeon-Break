@@ -26,6 +26,7 @@ En jeu, dans le chat :
 | `/dbg near [rayon]` | Les salles autour de soi, avec leur état et leurs portes libres |
 | `/dbg short` | La position seule |
 | `/dbg chunk [rayon]` | Les records de chunk autour de soi, **relus depuis les blocs** : plans, progression, graine, tick. Répond à « mon donjon a-t-il survécu » |
+| `/dbg mem` | Ce que le moteur retient, par difficulté : salles / plafond, ouvertures, liens, travail en attente, records. Le rapport pour `out of memory` |
 
 Une capture d'écran + le texte de `/dbg` suffisent pour reproduire exactement la géométrie en local :
 
@@ -109,6 +110,17 @@ Trois règles, et la deuxième est la plus importante :
 **Un garde-temps dans le contrôleur.** `interrupted` est un coupe-circuit du serveur : un tick trop long est tué. Mesuré sur ce dépôt, le pire tick atteignait **164 ms**, dont **147 ms dans une seule génération de salle** — un coût que le budget en blocs ne voyait pas. Le contrôleur porte donc `tickBudgetMs = 40` (sous le tick de 50 ms du serveur) et `tickReserveShare = 0.85` : plus aucune salle ni passage n'est **commencé** après 34 ms, mais l'unité en cours se termine toujours. Résultat mesuré : pire tick **51 ms**, et **aucune salle ni passage perdu** — le travail reporté reste dans les files.
 
 Dans le jeu, `Date.now()` et `api.now()` sont figés pendant le tick, donc ce garde-temps est inerte en production et n'agit que côté hôte : c'est une limite connue, pas une garantie. Le vrai filet en jeu reste le budget d'opérations par tick.
+
+## Mémoire : `InternalError: out of memory`
+
+Cette erreur n'est pas un tick trop long, c'est un **tas épuisé** — et presque jamais une grosse allocation : une structure qui grossit à chaque tick. Deux causes mesurées, corrigées :
+
+- **Aucun plafond de salles.** La table des difficultés annonce 10 salles pour Very Easy et 48 pour Hell, mais ce nombre n'était lu par personne : le générateur produisait tant qu'il restait une porte en attente, et une frontière de portes ne s'épuise pas. Mesuré avant correctif : **Very Easy à 114 salles** et toujours en hausse, tas de 6 → 591 Mo en 3 000 ticks. Le contrôleur reçoit désormais `maxRooms: difficulty.rooms` et s'arrête à la cible (files vidées, `stats.capped` compte les refus).
+- **Plans de salles jamais libérés.** Chaque salle gardait la liste complète de ses blocs pour pouvoir reprendre au curseur : 562 851 blocs retenus sur un donjon de 175 salles. Le plan est libéré dès la salle terminée.
+
+Après correctif, sur 3 000 ticks : Very Easy **10 salles / ~20 Mo stables**, Hell **48 salles / ~150 Mo stables**. La liste complète des structures qui peuvent grossir — index spatial, cellules de couloir, files, état par joueur, journalisation — est dans [`docs/MEMOIRE.md`](docs/MEMOIRE.md).
+
+Limite connue : un joueur qui quitte sans passer par `onPlayerLeave` (crash client) reste enregistré, et le contrôleur découvre des portes autour de son fantôme. Aucun garde-fou aujourd'hui.
 
 ## Documentation Bloxd utilisée
 

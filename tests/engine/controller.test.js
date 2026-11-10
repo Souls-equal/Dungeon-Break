@@ -6,6 +6,8 @@ import { createDungeonManager } from "../../src/dungeon/engine/dungeonManager.js
 import { createDungeonController, CYCLE_STATE } from "../../src/dungeon/engine/controller.js";
 import { OPENING_STATUS } from "../../src/dungeon/engine/openings.js";
 import { QUEUE, compareBuild, compareDiscovery, createQueues } from "../../src/dungeon/engine/queues.js";
+import { createDungeonService } from "../../src/dungeon/service.js";
+import { findDifficulty } from "../../src/dungeon/engine/config.js";
 
 
 /**
@@ -535,6 +537,27 @@ function slowBuilder(ms, blocksPerRoom = 40) {
   };
 }
 
+/**
+ * The smallest API a service can be built on.
+ *
+ * Every cell is "Stone", which is enough for a dungeon to be created and for the
+ * entrance to be planned — the test only asks whether the cap was wired, not
+ * whether the world is built.
+ */
+function memoryApi() {
+  return {
+    setBlock() {},
+    getBlock() { return "Stone"; },
+    setBlockData() {},
+    getBlockData() { return null; },
+    setPosition() {},
+    getPosition() { return [0.5, DUNGEON_CONFIG.floorY + 2, 0.5]; },
+    setCanChangeType() {},
+    sendMessage() {},
+    log() {},
+  };
+}
+
 /** A controller with a clock, so the budget is active. */
 function budgetedController(options) {
   const manager = options.manager;
@@ -611,4 +634,60 @@ test("the tick records its own duration and its worst duration", () => {
   controller.tick();
   assert.ok(controller.stats.tickMs >= 0);
   assert.ok(controller.stats.worstTickMs >= controller.stats.tickMs - 0.001);
+});
+
+// -------------------------------------------------------------- the room cap --
+//
+// The cap is what stops a dungeon from growing for ever. Without it, measured on
+// this engine, a "Very Easy" dungeon (10 rooms) reached 114 rooms and was still
+// going — and every room keeps its plan, its openings and its connections alive.
+// That is the shape an `InternalError: out of memory` takes.
+
+test("a dungeon stops generating at its room target", () => {
+  const manager = grow(4242, 1);
+  const controller = createDungeonController({
+    manager,
+    builder: slowBuilder(0),
+    maxRooms: 6,
+  });
+  const entrance = manager.getRoom(manager.entranceRoomId);
+  controller.upsertPlayer({
+    id: "p1",
+    position: { x: entrance.origin.x + 1, z: entrance.origin.y + 1 },
+  });
+  // Two hundred cycles is far more than the frontier needs to pass six rooms.
+  for (let index = 0; index < 200; index += 1) controller.cycle();
+  assert.ok(manager.roomCount >= 6, `the cap stopped generation before the target: ${manager.roomCount} rooms`);
+  assert.equal(manager.roomCount, 6, `the cap was passed: ${manager.roomCount} rooms for a target of 6`);
+  assert.ok(controller.stats.capped > 0, "the cap never reported itself, so nothing proves it was applied");
+});
+
+test("a dungeon without a cap still grows, and says so", () => {
+  const manager = grow(4242, 1);
+  const controller = createDungeonController({ manager, builder: slowBuilder(0) });
+  assert.equal(controller.maxRooms, null, "a controller without a target invented a cap");
+  const entrance = manager.getRoom(manager.entranceRoomId);
+  controller.upsertPlayer({
+    id: "p1",
+    position: { x: entrance.origin.x + 1, z: entrance.origin.y + 1 },
+  });
+  for (let index = 0; index < 12; index += 1) controller.cycle();
+  assert.ok(manager.roomCount > 1, "an uncapped dungeon generated nothing");
+});
+
+test("the service gives every dungeon the room count of its difficulty", () => {
+  // The number lives in the difficulty table; the controller is the only place
+  // that can enforce it, so the wiring is what this test is about: if the service
+  // stops passing it, every dungeon grows for ever again.
+  const service = createDungeonService({ api: memoryApi() });
+  let dungeon = null;
+  service.enterDifficulty("p1", "Easy", (ready) => { dungeon = ready; });
+  // `enterDifficulty` returns the dungeon immediately; `onReady` waits for the
+  // entrance to be built, which needs ticks. The cap is a property of the dungeon,
+  // not of its readiness.
+  dungeon = [...service.dungeons.values()][0] || dungeon;
+  assert.ok(dungeon, "the dungeon was never created");
+  const easy = findDifficulty("Easy");
+  assert.equal(dungeon.controller.maxRooms, easy.rooms,
+    `the controller of Easy was capped at ${dungeon.controller.maxRooms} instead of ${easy.rooms}`);
 });

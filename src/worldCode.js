@@ -198,6 +198,10 @@ const DEBUG_COMMANDS = {
   // holds it. The question a player actually asks after a crash — "did my dungeon
   // survive" — is answered by reading the block, not by trusting a counter.
   chunk: ["chunk", "chunks", "save"],
+  // What the engine is holding: the counters that must stay bounded. This is the
+  // report for `InternalError: out of memory`, which is a structure that grows,
+  // never a single big allocation.
+  mem: ["mem", "memory", "leak"],
 };
 
 /**
@@ -327,6 +331,30 @@ function debugChunk(playerId, argument) {
   debugSayAll(playerId, lines);
 }
 
+/**
+ * `/dbg mem` — what the engine is holding, dungeon by dungeon.
+ *
+ * `InternalError: out of memory` in Bloxd is not one large allocation; it is a
+ * structure that keeps growing. So this prints the numbers that must stay
+ * bounded, and the two that say whether the room cap is doing its job. A dungeon
+ * whose `rooms` stops at its `cap` and whose heap keeps climbing is a different
+ * bug from one whose `rooms` never stops climbing, and this line is what tells
+ * them apart.
+ */
+function debugMem(playerId) {
+  const rows = service().memoryReport();
+  if (rows.length === 0) {
+    debugSay(playerId, "[dbg] no dungeon exists yet — step on a pad first");
+    return;
+  }
+  const lines = [];
+  for (const row of rows) {
+    lines.push(`[dbg] ${row.difficulty}: rooms ${row.rooms}/${row.roomCap === null ? "∞" : row.roomCap} · capped ${row.capped} · openings ${row.openings} · links ${row.connections}`);
+    lines.push(`[dbg]   unfinished ${row.unfinished} · built ${row.builtRooms} · queued ${row.queued} · chunks ${row.chunks} · records ${row.chunkRecords}`);
+  }
+  debugSayAll(playerId, lines);
+}
+
 function runDebugCommand(playerId, verb, argument) {
   if (verb === "seed") {
     const report = service().debugReport(playerId);
@@ -352,6 +380,10 @@ function runDebugCommand(playerId, verb, argument) {
   }
   if (verb === "chunk") {
     debugChunk(playerId, argument);
+    return;
+  }
+  if (verb === "mem") {
+    debugMem(playerId);
     return;
   }
   if (verb === "hud") {
