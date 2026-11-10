@@ -509,3 +509,106 @@ test("an unfinished room does not starve the rest of the build queue", () => {
     "the passages queued behind an unfinished room were never served");
   assert.ok(built.length > 0, "no room finished at all");
 });
+
+// -------------------------------------------------- the wall-clock budget --
+//
+// Bloxd kills a tick that runs too long — `World code tick: InternalError:
+// interrupted` — so the controller has a budget expressed in milliseconds. These
+// tests make the work *take* time, deterministically, instead of hoping a machine
+// is slow: the builder sleeps, and the assertion is that no second unit of work is
+// started once the budget is spent.
+
+/** A builder whose room costs `ms` of real time, and which counts its calls. */
+function slowBuilder(ms, blocksPerRoom = 40) {
+  const built = [];
+  const until = () => {
+    const start = performance.now();
+    while (performance.now() - start < ms) { /* deliberately slow */ }
+  };
+  return {
+    built,
+    buildRoom(room) {
+      built.push(room.id);
+      until();
+      return { blocks: blocksPerRoom, done: true };
+    },
+  };
+}
+
+/** A controller with a clock, so the budget is active. */
+function budgetedController(options) {
+  const manager = options.manager;
+  const controller = createDungeonController({
+    manager,
+    builder: options.builder,
+    budgets: { generation: 40, build: 40 },
+  });
+  return controller;
+}
+
+test("a tick stops starting new rooms once its time budget is spent", () => {
+  const previous = DUNGEON_CONFIG.tickBudgetMs;
+  DUNGEON_CONFIG.tickBudgetMs = 12;
+  try {
+    const manager = grow(909, 6);
+    const builder = slowBuilder(5);
+    const controller = budgetedController({ manager, builder });
+    const entrance = manager.getRoom(manager.entranceRoomId);
+    controller.upsertPlayer({
+      id: "p1",
+      position: { x: entrance.origin.x + entrance.mask.w / 2, z: entrance.origin.y + entrance.mask.h / 2 },
+    });
+    // One cycle queues what there is to build, then one step drains what it can.
+    controller.cycle();
+    const queued = controller.queues.size("build");
+    assert.ok(queued > 2, `the test needs several queued rooms, got ${queued}`);
+    const before = builder.built.length;
+    controller.buildStep();
+
+    const built = builder.built.length - before;
+    assert.ok(built >= 1, "the tick built nothing at all");
+    assert.ok(built < queued, `the tick built ${built} of ${queued} rooms: the time budget did not stop it`);
+    assert.ok(controller.stats.budgetHits >= 1, "the budget was never reported as hit");
+    assert.ok(controller.stats.builtDeferred >= 1, "the deferred work was not counted");
+    // Deferred, not lost: the rest is still in the queue.
+    assert.equal(controller.queues.size("build"), queued - built);
+  } finally {
+    DUNGEON_CONFIG.tickBudgetMs = previous;
+  }
+});
+
+test("a tick that fits in its budget still builds everything queued", () => {
+  const previous = DUNGEON_CONFIG.tickBudgetMs;
+  DUNGEON_CONFIG.tickBudgetMs = 10_000;
+  try {
+    const manager = grow(909, 6);
+    const builder = slowBuilder(0);
+    const controller = budgetedController({ manager, builder });
+    const entrance = manager.getRoom(manager.entranceRoomId);
+    controller.upsertPlayer({
+      id: "p1",
+      position: { x: entrance.origin.x + entrance.mask.w / 2, z: entrance.origin.y + entrance.mask.h / 2 },
+    });
+    controller.cycle();
+    const queued = controller.queues.size("build");
+    controller.buildStep();
+    assert.equal(controller.stats.budgetHits, 0, "the budget was hit with a ten-second allowance");
+    assert.equal(controller.queues.size("build"), 0, "rooms were left queued although the budget allowed them");
+  } finally {
+    DUNGEON_CONFIG.tickBudgetMs = previous;
+  }
+});
+
+test("the tick records its own duration and its worst duration", () => {
+  const manager = grow(909, 4);
+  const controller = budgetedController({ manager, builder: slowBuilder(2) });
+  const entrance = manager.getRoom(manager.entranceRoomId);
+  controller.upsertPlayer({
+    id: "p1",
+    position: { x: entrance.origin.x + entrance.mask.w / 2, z: entrance.origin.y + entrance.mask.h / 2 },
+  });
+  controller.tick();
+  controller.tick();
+  assert.ok(controller.stats.tickMs >= 0);
+  assert.ok(controller.stats.worstTickMs >= controller.stats.tickMs - 0.001);
+});

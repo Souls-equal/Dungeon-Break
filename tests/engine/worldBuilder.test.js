@@ -292,3 +292,70 @@ test("chunks touched by a room are computed, not guessed", () => {
     assert.ok(Number.isInteger(chunkX) && Number.isInteger(chunkZ));
   }
 });
+
+// ------------------------------------------------------------- the anchors --
+//
+// A chunk's record lives in the data of one block, and the documented rule is that
+// a block change clears that data. So the anchor is **sealed**: written once, and
+// refused by the builder from then on. These tests cover the two ways it could be
+// overwritten — the builder writing a room over it, and a second anchor write.
+
+test("a sealed anchor survives a room built on top of it", () => {
+  const manager = grow(4242, 6);
+  const room = manager.allRooms()[1];
+  const api = fakeApi();
+  const builder = createWorldBuilder({ api, batchSize: 400 });
+  const cell = worldOf(room);
+
+  // A cell the room is about to build on, taken from its own mask rather than
+  // guessed from the origin — an anchor in a wall would prove nothing.
+  let onRoom = null;
+  for (let row = 0; row < room.mask.h && !onRoom; row += 1) {
+    for (let column = 0; column < room.mask.w; column += 1) {
+      if (room.mask.cells[row][column]) { onRoom = { x: cell.x + column, z: cell.z + row }; break; }
+    }
+  }
+  assert.ok(onRoom, "the room has no cells at all");
+
+  // The anchor goes down first — the worst order for the record, and the one a
+  // resumed build produces.
+  assert.equal(builder.writeAnchor(onRoom.x, DUNGEON_CONFIG.floorY, onRoom.z, "Polished Diorite"), true);
+  assert.equal(builder.isSealedAnchor(onRoom.x, DUNGEON_CONFIG.floorY, onRoom.z), true);
+
+  let result = builder.buildBatch(room);
+  let guard = 0;
+  while (!result.done && guard < 100) { result = builder.buildBatch(room); guard += 1; }
+  assert.equal(result.done, true, "the room did not build");
+
+  // The room never writes that cell: the seal is what keeps the record alive.
+  const writes = api.calls.setBlock.filter((call) => call.x === onRoom.x
+    && call.y === DUNGEON_CONFIG.floorY && call.z === onRoom.z);
+  assert.equal(writes.length, 1, `the anchor cell was written ${writes.length} times`);
+  assert.equal(api.getBlock(onRoom.x, DUNGEON_CONFIG.floorY, onRoom.z), "Polished Diorite",
+    "the room overwrote the anchor block, which clears the record it holds");
+  // And the room still built: a sealed cell is skipped, not fatal.
+  assert.ok(api.calls.setBlock.length > 100, "the room wrote almost nothing");
+});
+
+test("a second anchor write is refused, and says so", () => {
+  const api = fakeApi();
+  const builder = createWorldBuilder({ api });
+  assert.equal(builder.writeAnchor(10, DUNGEON_CONFIG.floorY, 10, "Polished Diorite"), true);
+  const before = api.calls.setBlock.length;
+  assert.equal(builder.writeAnchor(10, DUNGEON_CONFIG.floorY, 10, "Polished Diorite"), false,
+    "the second write was accepted, so it would have cleared the data");
+  assert.equal(api.calls.setBlock.length, before, "the second write issued a setBlock anyway");
+  assert.equal(builder.sealedAnchorCount, 1);
+});
+
+test("an anchor already carrying its block is sealed without a write", () => {
+  const api = fakeApi();
+  // The cell already holds the anchor block (a previous session, or a room whose
+  // palette happened to use it). Sealing must not issue a `setBlock`: that write
+  // would be the one that clears the data.
+  api.cells.set(`10,${DUNGEON_CONFIG.floorY},10`, "Polished Diorite");
+  const builder = createWorldBuilder({ api });
+  assert.equal(builder.writeAnchor(10, DUNGEON_CONFIG.floorY, 10, "Polished Diorite"), true);
+  assert.equal(api.calls.setBlock.length, 0, "the anchor was rewritten although it was already the right block");
+  assert.equal(builder.isSealedAnchor(10, DUNGEON_CONFIG.floorY, 10), true);
+});

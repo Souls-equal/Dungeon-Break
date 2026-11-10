@@ -25,6 +25,7 @@ En jeu, dans le chat :
 | `/dbg dungeon` | L'état du donjon entier : salles, liens, boucles, construction, refus du générateur |
 | `/dbg near [rayon]` | Les salles autour de soi, avec leur état et leurs portes libres |
 | `/dbg short` | La position seule |
+| `/dbg chunk [rayon]` | Les records de chunk autour de soi, **relus depuis les blocs** : plans, progression, graine, tick. Répond à « mon donjon a-t-il survécu » |
 
 Une capture d'écran + le texte de `/dbg` suffisent pour reproduire exactement la géométrie en local :
 
@@ -84,6 +85,30 @@ Le donjon est un assemblage de **modules de salles** posés sur un seul niveau. 
 - Chaque donjon reçoit un emplacement horizontal aléatoire dans les bornes `-50000..50000` en X et Z; le sol est à `Y = -1000`. La génération continue jusqu'à la limite de coordonnées configurée, le monde n'étant pas mathématiquement infini.
 
 C'est volontairement une première version : pas encore de mobs, butin, nettoyage après une partie ni contrôle d'accès au donjon. Le délai est configurable via `countdownSeconds` dans `src/worldCode.js`; dimensions des salles, portes, distance de pré-génération et matériaux sont configurés par `DUNGEON_CONFIG` dans `src/dungeon/generator.js`.
+
+## Records de chunk, et ticks qui n'explosent pas
+
+Deux garde-fous, ajoutés après des `World code tick: InternalError: interrupted` en jeu.
+
+**Un record par chunk, dans la data d'un bloc.** `api.setBlockData(x, y, z, objet)` écrit, `api.getBlockData(x, y, z)` relit. Chaque chunk reçoit **une ancre**, à son coin et au niveau du sol — `(chunkX × 32, floorY, chunkZ × 32)`, bloc `Polished Diorite`, volontairement hors palette. Le record tient en un objet plat de chaînes courtes (format v1) :
+
+```
+{ v: 1, id: "<difficulté>", seed, cx, cz, y, tick,
+  plans:    ["room|4211|r0.1", "passage|840|c:r0.1.o2+r0.o1"],
+  progress: ["room|built|4211|r0.1", "passage|building|360|c:r0.1.o2+r0.o1"] }
+```
+
+Les plans disent ce que le chunk contient et combien de blocs chaque partie écrit ; la progression dit où chaque partie en est. L'identifiant est **le dernier champ**, après un séparateur `|`, parce qu'un id de connexion contient déjà des `:` et des `+` — c'est ce qui a cassé la première version du format.
+
+Trois règles, et la deuxième est la plus importante :
+
+1. **L'ancre est scellée.** Le bloc est posé une fois, puis le constructeur refuse toute écriture sur cette cellule. Une salle construite par-dessus ne peut donc pas effacer le record, qui disparaît sinon au premier `setBlock` sur la case.
+2. **Ce n'est pas une source de vérité, c'est un filet de sécurité.** La doc Bloxd est explicite : *« Data is cleared when block changes »*. Le donjon se reconstruit de toute façon depuis sa graine ; le record sert à relire ce qui était déjà là et où la construction en était. Quand la donnée a disparu, le code le dit (`NO_ANCHOR`, `CHUNK_NOT_LOADED`) au lieu de faire semblant.
+3. **Un chunk par tick, et seulement si son ancre est lisible.** Écrire au-delà de ce que le serveur a chargé perd l'écriture sans erreur, donc un chunk dont l'ancre renvoie `null` n'est pas écrit du tout.
+
+**Un garde-temps dans le contrôleur.** `interrupted` est un coupe-circuit du serveur : un tick trop long est tué. Mesuré sur ce dépôt, le pire tick atteignait **164 ms**, dont **147 ms dans une seule génération de salle** — un coût que le budget en blocs ne voyait pas. Le contrôleur porte donc `tickBudgetMs = 40` (sous le tick de 50 ms du serveur) et `tickReserveShare = 0.85` : plus aucune salle ni passage n'est **commencé** après 34 ms, mais l'unité en cours se termine toujours. Résultat mesuré : pire tick **51 ms**, et **aucune salle ni passage perdu** — le travail reporté reste dans les files.
+
+Dans le jeu, `Date.now()` et `api.now()` sont figés pendant le tick, donc ce garde-temps est inerte en production et n'agit que côté hôte : c'est une limite connue, pas une garantie. Le vrai filet en jeu reste le budget d'opérations par tick.
 
 ## Documentation Bloxd utilisée
 

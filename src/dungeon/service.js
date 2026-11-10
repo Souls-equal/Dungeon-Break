@@ -25,6 +25,15 @@ import { createDungeonManager } from "./engine/dungeonManager.js";
 import { createDungeonController } from "./engine/controller.js";
 import { createWorldBuilder, ROOM_BUILD_STATE } from "./worldBuilder.js";
 import {
+  CHUNK_RECORD_VERSION,
+  anchorOf,
+  chunkOfCell,
+  chunkKey,
+  readChunkRecord,
+  verifyChunkRecord,
+  writeChunkRecord,
+} from "./chunkStore.js";
+import {
   describeDungeon,
   describeNearby,
   describePosition,
@@ -99,6 +108,12 @@ export function createDungeonService(options) {
       // only permission ever granted is the ore list, and it is empty for now.
       miningAllowed: false,
       emptyTicks: 0,
+      // Chunks whose record has been written at least once, in write order, so the
+      // save pass can take the least recently written one. A plain `Set` keeps
+      // insertion order; the pass re-inserts to rotate it.
+      savedChunks: new Set(),
+      chunksSaved: 0,
+      chunkSaveFailures: 0,
     };
     dungeons.set(keyOf(difficulty), dungeon);
     return dungeon;
@@ -282,6 +297,17 @@ export function createDungeonService(options) {
       }
       dungeon.emptyTicks = playerCount === 0 ? dungeon.emptyTicks + 1 : 0;
       dungeon.controller.tick();
+      // The safety net, after construction: the chunk record of a room that was
+      // built a moment ago is worth writing, and one chunk per tick is a cost the
+      // tick budget above has already been built to absorb.
+      //
+      // Only once a player is actually in the dungeon, though. A dungeon exists
+      // before anyone lands in it — the entrance is carved, then the player is
+      // teleported, then the chunks load — and a record written in that window
+      // would be a record written into a chunk the server has not sent yet, which
+      // is dropped without an error. The player's presence is what loads the
+      // chunks, so the player's presence is what gates the store.
+      if (playerCount > 0) saveOneChunk(dungeon);
     }
   }
 
@@ -314,6 +340,165 @@ export function createDungeonService(options) {
   }
 
   const dungeonOf = (playerId) => playerDungeons.get(playerId) || null;
+
+  /**
+   * Can the anchor of this chunk land in the world?
+   *
+   * The anchor cell is `(chunkX * size, floorY, chunkZ * size)` — a corner, not the
+   * middle of the chunk, and the corner is exactly what a player standing in the
+   * room may not have loaded. `getBlock` returns `null` for a cell in a chunk the
+   * server has not sent, and that is the condition to test: it is a read of the
+   * anchor itself, not an estimate from a player's distance.
+   */
+  function chunkReachable(chunkX, chunkZ) {
+    const anchor = anchorOf(chunkX, chunkZ, floorY);
+    return api.getBlock(anchor.x, anchor.y, anchor.z) !== null;
+  }
+
+  /**
+   * Every chunk a dungeon touches, with the plans and the progress it holds.
+   *
+   * This is the index the chunk records are written from: `manager.allRooms()` is
+   * the truth, the map is only what has been said to the world so far, and a chunk
+   * that is not in it is stored by the next pass.
+   */
+  function chunkSummary(dungeon) {
+    const records = new Map();
+    for (const room of dungeon.manager.allRooms()) {
+      const chunk = chunkOfCell(room.origin.x, room.origin.y);
+      const key = chunkKey(chunk.x, chunk.z);
+      let entry = records.get(key);
+      if (!entry) {
+        entry = { chunkX: chunk.x, chunkZ: chunk.z, rooms: [], passages: 0 };
+        records.set(key, entry);
+      }
+      entry.rooms.push(room);
+    }
+    for (const connection of dungeon.manager.allConnections()) {
+      const cells = connection.joint.length > 0 ? connection.joint : connection.bridge;
+      if (cells.length === 0) continue;
+      const cell = cells[0];
+      const chunk = chunkOfCell(cell.x, cell.y);
+      const key = chunkKey(chunk.x, chunk.z);
+      let entry = records.get(key);
+      if (!entry) {
+        entry = { chunkX: chunk.x, chunkZ: chunk.z, rooms: [], passages: 0 };
+        records.set(key, entry);
+      }
+      // A passage crosses a chunk that holds no room of its own, so the anchor of
+      // that chunk lands **outside anything the player has loaded** — the player is
+      // in the room, the joint is in the masonry beyond it. A write into an unloaded
+      // chunk is dropped by the server without an error, so that chunk is not
+      // stored at all: an anchor is written only where a block can actually land.
+      if (!chunkReachable(chunk.x, chunk.z)) continue;
+      entry.passages += 1;
+    }
+    return records;
+  }
+
+  /**
+   * Writes the record of one chunk of a dungeon: what it should contain, and how
+   * far each of its parts got.
+   *
+   * The plans come from the builder, which is the only thing that knows how many
+   * blocks a room writes; the progress comes from the same place, because a build
+   * state lives there. Nothing is invented here: a chunk whose rooms are unknown
+   * writes an empty record rather than a guess.
+   */
+  function saveChunk(dungeon, chunkX, chunkZ) {
+    const plans = [];
+    const progress = [];
+    for (const room of dungeon.manager.allRooms()) {
+      const chunk = chunkOfCell(room.origin.x, room.origin.y);
+      if (chunk.x !== chunkX || chunk.z !== chunkZ) continue;
+      const state = dungeon.worldBuilder.stateOf(room.id);
+      plans.push({ kind: "room", id: room.id, blocks: state ? state.total : 0 });
+      progress.push({
+        kind: "room",
+        id: room.id,
+        state: state ? state.state : "not_started",
+        cursor: state && state.cursor ? state.cursor.index : null,
+      });
+    }
+    return writeChunkRecord(api, {
+      dungeonId: keyOf(dungeon.difficulty),
+      seed: dungeon.seed,
+      chunkX,
+      chunkZ,
+      floorY,
+      tick: dungeon.controller.stats.ticks,
+      plans,
+      progress,
+      writeAnchor: dungeon.worldBuilder.writeAnchor,
+    });
+  }
+
+  /**
+   * The persistence pass of one dungeon tick: **one** chunk.
+   *
+   * One chunk per tick, not the whole dungeon, because the point of the store is a
+   * safety net: a room whose record is stale is a room that a resumed build can
+   * redo, and the dungeon is rebuilt from its seed anyway. Writing every chunk on
+   * every tick would put thousands of `setBlockData` calls on the tick path, and
+   * the tick is exactly what Bloxd kills when it runs long.
+   */
+  function saveOneChunk(dungeon) {
+    if (!api.setBlockData) return null;
+    const summary = chunkSummary(dungeon);
+    let chosen = null;
+    for (const [key, entry] of summary) {
+      if (!dungeon.savedChunks.has(key)) { chosen = entry; break; }
+    }
+    if (!chosen) {
+      // Everything has been said once: refresh the stalest, so progress keeps
+      // moving without ever costing more than one write per tick. A `Set` keeps
+      // insertion order, so the first entry is the least recently written.
+      const first = summary.values().next();
+      if (first.done) return null;
+      chosen = first.value;
+      const key = chunkKey(chosen.chunkX, chosen.chunkZ);
+      dungeon.savedChunks.delete(key);
+    }
+    dungeon.savedChunks.add(chunkKey(chosen.chunkX, chosen.chunkZ));
+    const result = saveChunk(dungeon, chosen.chunkX, chosen.chunkZ);
+    if (result.ok) dungeon.chunksSaved += 1;
+    else dungeon.chunkSaveFailures += 1;
+    return result;
+  }
+
+  /**
+   * What the chunk store holds for one player, read back from the world.
+   *
+   * This is the debug command's job and the honest answer to "did the data
+   * survive": it reads the anchor, reads its data, and reports the parsed record
+   * or the reason there is none — never a substitute.
+   */
+  function readChunkAt(playerId, chunkX, chunkZ) {
+    const dungeon = playerDungeons.get(playerId);
+    if (!dungeon) return null;
+    const read = readChunkRecord(api, { chunkX, chunkZ, floorY });
+    return { dungeonId: keyOf(dungeon.difficulty), seed: dungeon.seed, chunkX, chunkZ, read };
+  }
+
+  /** Writes and reads one chunk back, to prove the format in the real world. */
+  function verifyChunkAt(playerId, chunkX, chunkZ) {
+    const dungeon = playerDungeons.get(playerId);
+    if (!dungeon) return null;
+    const read = readChunkRecord(api, { chunkX, chunkZ, floorY });
+    const record = read.ok ? read.record : null;
+    const result = verifyChunkRecord(api, {
+      dungeonId: keyOf(dungeon.difficulty),
+      seed: dungeon.seed,
+      chunkX,
+      chunkZ,
+      floorY,
+      tick: dungeon.controller.stats.ticks,
+      plans: record ? record.plans.map((plan) => ({ kind: plan.kind, id: plan.id, blocks: plan.blocks })) : [],
+      progress: record ? record.progress.map((entry) => ({ kind: entry.kind, id: entry.id, state: entry.state, cursor: entry.cursor })) : [],
+      writeAnchor: dungeon.worldBuilder.writeAnchor,
+    });
+    return { dungeonId: keyOf(dungeon.difficulty), version: CHUNK_RECORD_VERSION, chunkX, chunkZ, ...result };
+  }
 
   /**
    * What a player is standing in, as numbers.
@@ -444,6 +629,40 @@ export function createDungeonService(options) {
     return dungeonLines(report.seed, report.difficulty, report.summary);
   }
 
+  /**
+   * The chunk records around a player, read back from the blocks that hold them.
+   *
+   * The anchor is a corner cell, so the chunk a player stands in is reported first
+   * and then its neighbours up to `radius` — the anchor of the chunk they are in
+   * may be a whole chunk away, and "the record is not where I am" would be a
+   * misleading answer on its own. Reads only: a report never writes a block.
+   */
+  function debugChunkReport(playerId, radius = 1) {
+    const dungeon = playerDungeons.get(playerId);
+    if (!dungeon) return null;
+    const position = api.getPosition(playerId);
+    if (!position) return null;
+    const cell = { x: Math.floor(position[0]), z: Math.floor(position[2]) };
+    const here = chunkOfCell(cell.x, cell.z);
+    const span = Math.max(0, Math.min(3, Math.floor(radius)));
+    const records = [];
+    for (let dz = -span; dz <= span; dz += 1) {
+      for (let dx = -span; dx <= span; dx += 1) {
+        const chunkX = here.x + dx;
+        const chunkZ = here.z + dz;
+        records.push({ chunkX, chunkZ, read: readChunkRecord(api, { chunkX, chunkZ, floorY }) });
+      }
+    }
+    return {
+      cell,
+      chunk: here,
+      radius: span,
+      chunksSaved: dungeon.chunksSaved,
+      chunkSaveFailures: dungeon.chunkSaveFailures,
+      records,
+    };
+  }
+
   function stats() {
     const list = [];
     for (const dungeon of dungeons.values()) {
@@ -453,6 +672,8 @@ export function createDungeonService(options) {
         rooms: dungeon.manager.roomCount,
         connections: dungeon.manager.allConnections().length,
         stats: dungeon.controller.stats,
+        chunksSaved: dungeon.chunksSaved,
+        chunkSaveFailures: dungeon.chunkSaveFailures,
       });
     }
     return list;
@@ -474,6 +695,10 @@ export function createDungeonService(options) {
     debugDungeonLines,
     debugNearby,
     debugNearbyLines,
+    readChunkAt,
+    verifyChunkAt,
+    debugChunkReport,
+    saveChunk,
     leaveToLobby: leave,
     tick,
     dungeonOf,

@@ -65,10 +65,20 @@ export function createDungeonController(options) {
     verified: 0,
     verifyFailures: 0,
     skippedAir: 0,
+    // Wall-clock cost of one tick, and how much work the tick budget refused to
+    // start. `budgetHits` is the number that explains a slow build: work that is
+    // deferred is not lost, it is served by the next tick.
+    tickMs: 0,
+    worstTickMs: 0,
+    budgetHits: 0,
+    generatedDeferred: 0,
+    builtDeferred: 0,
   };
 
   let elapsedTicks = 0;
   let cycleRunning = false;
+  /** End of the current tick's time budget, or `null` when there is no clock. */
+  let deadline = null;
   let lastState = CYCLE_STATE.IDLE;
 
   /** Registers or updates a player. The host calls this from its own callbacks. */
@@ -101,13 +111,49 @@ export function createDungeonController(options) {
   function tick() {
     elapsedTicks += 1;
     stats.ticks += 1;
-    // Construction first: it is what the player is waiting for, and it costs a
-    // bounded number of blocks.
-    const built = buildStep();
-    stats.buildTicks += 1;
-    if (built) lastState = built;
-    if (elapsedTicks % DUNGEON_CONFIG.cycleTicks !== 0) return null;
-    return cycle();
+    const started = nowMs();
+    // The deadline of this tick, shared by construction, discovery and
+    // generation: the three run in the same tick and the world pays for all of
+    // them. `null` when the host has no clock, in which case the three other
+    // budgets are the only limits and nothing changes.
+    deadline = deadlineOf(started);
+    try {
+      // Construction first: it is what the player is waiting for, and it costs a
+      // bounded number of blocks.
+      const built = buildStep();
+      stats.buildTicks += 1;
+      if (built) lastState = built;
+      if (elapsedTicks % DUNGEON_CONFIG.cycleTicks !== 0) return null;
+      return cycle();
+    } finally {
+      const spent = nowMs() - started;
+      stats.tickMs = spent;
+      if (spent > stats.worstTickMs) stats.worstTickMs = spent;
+      deadline = null;
+    }
+  }
+
+  /**
+   * The moment this tick must stop starting work, or `null` when there is no
+   * clock to measure it with.
+   *
+   * The budget is expressed in milliseconds because the constraint Bloxd imposes
+   * is one: a tick that runs too long is killed with
+   * `InternalError: interrupted`, which the player reads in chat. Every other
+   * budget here counts work; this one counts the thing the engine actually
+   * punishes.
+   */
+  function deadlineOf(started) {
+    if (!started) return null;
+    return started + DUNGEON_CONFIG.tickBudgetMs * DUNGEON_CONFIG.tickReserveShare;
+  }
+
+  /** Whether a new unit of work may start in this tick. */
+  function canStartWork() {
+    if (deadline === null) return true;
+    if (nowMs() < deadline) return true;
+    stats.budgetHits += 1;
+    return false;
   }
 
   /**
@@ -146,6 +192,12 @@ export function createDungeonController(options) {
   function buildStep() {
     if (!builder) return null;
     const started = nowMs();
+    // A direct `buildStep` call — the host's own loop, a test, a repair command —
+    // has no deadline of its own, so it takes one for the duration of the call.
+    // Without this the budget only existed for callers that went through `tick()`,
+    // and a host that drives construction itself was unbounded.
+    const outerDeadline = deadline;
+    if (deadline === null) deadline = deadlineOf(started);
     // The audit first: it is a bounded read of one finished room, and doing it
     // before the writes keeps a tick that is out of budget from starving it.
     if (typeof builder.auditRoom === "function") {
@@ -163,6 +215,9 @@ export function createDungeonController(options) {
     } else {
       stats.buildMs += nowMs() - started;
     }
+    // The deadline a caller of `tick()` owns is kept until the tick ends; the one
+    // taken here is dropped so it cannot leak into the next call.
+    if (outerDeadline === null) deadline = null;
     return lastState;
   }
 
@@ -227,6 +282,13 @@ export function createDungeonController(options) {
     // into a long tick.
     for (let guard = 0; guard < DUNGEON_CONFIG.maxGenerationPerCycle; guard += 1) {
       if (created >= DUNGEON_CONFIG.maxRoomsPerCycle) break;
+      // One room's generation is bounded (a handful of candidate shapes), so this
+      // is the right place to stop: at the boundary between two units of work,
+      // never inside one.
+      if (!canStartWork()) {
+        stats.generatedDeferred += 1;
+        break;
+      }
       const entry = ownQueues.take(QUEUE.GENERATION);
       if (!entry) break;
       const room = manager.getRoom(entry.roomId);
@@ -307,9 +369,16 @@ export function createDungeonController(options) {
     for (let guard = 0; guard < budget; guard += 1) {
       // The check happens before taking the entry, so a cycle that ran out of
       // budget leaves the queue intact for the next one.
-      // One more room may take the cycle slightly past the budget: the only way
-      // to stay under it exactly would be to interrupt a room mid-construction,
-      // and a half-built room is worse than a slightly long tick.
+      // Time comes before blocks: a tick that has spent its wall-clock budget
+      // must not start another room, even with blocks left over. The entry stays
+      // in the queue — deferring is free, interrupting a room is not. One more
+      // room may take the cycle slightly past the budget, and that is deliberate:
+      // the only way to stay under it exactly would be to interrupt a room
+      // mid-construction, and a half-built room is worse than a slightly long tick.
+      if (!canStartWork()) {
+        stats.builtDeferred += 1;
+        break;
+      }
       if (written >= DUNGEON_CONFIG.maxBlocksPerTick) break;
       // No single entry may take the tick past the budget plus one batch. A room
       // and a passage are both written through the same batched writer, so the
@@ -457,5 +526,7 @@ export function createDungeonController(options) {
     get state() { return lastState; },
     get busy() { return cycleRunning; },
     pendingBuilds() { return ownQueues.snapshot(QUEUE.BUILD); },
+    /** The wall-clock budget of a tick, in milliseconds. */
+    get tickBudgetMs() { return DUNGEON_CONFIG.tickBudgetMs; },
   };
 }

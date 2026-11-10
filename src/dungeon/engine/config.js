@@ -198,6 +198,26 @@ export const DUNGEON_CONFIG = {
   backlogThreshold: 60,
 
   // -------------------------------------------------------------- budgets ---
+  // Wall-clock ceiling for one tick, in milliseconds.
+  //
+  // This is the only budget expressed in time, and it exists because Bloxd kills
+  // a tick that runs too long: `World code tick: InternalError: interrupted`
+  // after a few seconds, which the player sees in chat as "interrupted". A tick
+  // that generates ten rooms in the far south of a 48-room Hell is the shape that
+  // gets there — measured on this engine, up to 164 ms, and a Bloxd server is
+  // slower than Node.
+  //
+  // The value is deliberately well under any plausible cutoff: the tick is 50 ms
+  // and 50 ms is already the frame every player sees, so a tick that reaches
+  // 40 ms is late whether or not the engine would have killed it. Time is read
+  // through `performance.now()` where the host provides it; where it does not,
+  // this budget is inert and the other budgets are unchanged.
+  tickBudgetMs: 40,
+  // Never start a new unit of work — a discovery, a room, a threshold — once
+  // this share of the budget is spent: what is left is the tail of the work in
+  // progress plus the loop itself. Starting at 85 % would be a tick that always
+  // ends at 100 %.
+  tickReserveShare: 0.85,
   maxRoomsPerCycle: 10,
   maxDiscoveryPerCycle: 40,
   maxGenerationPerCycle: 24,
@@ -248,6 +268,12 @@ export const DUNGEON_CONFIG = {
   // ----------------------------------------------------------- chunk safety --
   chunkWarmupTicks: 3,
   chunkSize: 32,
+  // Chunks whose record is refreshed per dungeon tick — and, above all, the point
+  // of the feature: a **safety net**, not a second construction path. A room whose
+  // progress is not recorded can make a resumed build start from the beginning;
+  // recording one chunk per tick keeps the loss bounded to the last few rooms
+  // instead of the whole dungeon.
+  chunkStorePerTick: 1,
 
   // --------------------------------------------------------- persistence ---
   roomsPerShard: 32,
