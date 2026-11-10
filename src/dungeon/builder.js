@@ -133,7 +133,15 @@ export function passageCellsFor(connection) {
  * passage (two connections sharing a threshold must not fight over it). Both
  * are computed once per dungeon and passed down, never re-derived per room.
  */
-export function dungeonCellIndex(rooms, connections = []) {
+/**
+ * The cells every room of the dungeon writes, as `"x,z"` keys.
+ *
+ * Split out of `dungeonCellIndex` because a passage build needs this and nothing
+ * else: building the whole index — every passage cell of the dungeon, and a map
+ * from every connection to its cells — to answer "is this cell a room's" was 28 MB
+ * of allocation per dungeon, measured on the heap profiler.
+ */
+export function dungeonOwnedCells(rooms) {
   const owned = new Set();
   for (let index = 0; index < rooms.length; index += 1) {
     const room = rooms[index];
@@ -144,6 +152,54 @@ export function dungeonCellIndex(rooms, connections = []) {
       }
     }
   }
+  return owned;
+}
+
+/**
+ * « Cette cellule appartient-elle à une salle ? », sans matérialiser le moins du
+ * monde la liste des cellules.
+ *
+ * `dungeonOwnedCells` construit une chaîne `"x,z"` par cellule de salle — 49 798
+ * pour un Hell de 35 salles — et un profil mémoire l'a chiffré à **19 Mo**
+ * alloués à chaque construction de passage, puisque l'index était reconstruit à
+ * chaque fois. La seule question posée porte sur une cellule du passage en cours,
+ * donc la réponse se calcule depuis les masques : cet objet a la forme d'un `Set`
+ * (`has`) et n'alloue rien.
+ *
+ * L'équivalence avec `dungeonOwnedCells` est vérifiée par un test, cellule par
+ * cellule, sur un vrai donjon : deux façons de répondre à la même question doivent
+ * donner la même réponse, sinon l'une des deux est un bug.
+ */
+export function roomCellLookup(rooms) {
+  const boxes = [];
+  for (let index = 0; index < rooms.length; index += 1) {
+    const room = rooms[index];
+    boxes.push({
+      x0: room.origin.x,
+      z0: room.origin.y,
+      x1: room.origin.x + room.mask.w - 1,
+      z1: room.origin.y + room.mask.h - 1,
+      room,
+    });
+  }
+  return {
+    has(key) {
+      const comma = key.indexOf(",");
+      if (comma < 0) return false;
+      const x = Number(key.slice(0, comma));
+      const z = Number(key.slice(comma + 1));
+      for (let at = 0; at < boxes.length; at += 1) {
+        const box = boxes[at];
+        if (x < box.x0 || x > box.x1 || z < box.z0 || z > box.z1) continue;
+        if (box.room.mask.cells[z - box.z0][x - box.x0]) return true;
+      }
+      return false;
+    },
+  };
+}
+
+export function dungeonCellIndex(rooms, connections = []) {
+  const owned = dungeonOwnedCells(rooms);
   const passages = new Set();
   const perConnection = new Map();
   for (let index = 0; index < connections.length; index += 1) {

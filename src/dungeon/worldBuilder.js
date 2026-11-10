@@ -24,9 +24,10 @@ import {
   BLOCKS,
   BUILD_PHASE,
   createRoomWriter,
-  dungeonCellIndex,
   passageBlocks,
+  passageCellsFor,
   roomBlocks,
+  roomCellLookup,
 } from "./builder.js";
 
 /** States a room's construction goes through, in order. */
@@ -285,7 +286,7 @@ export function createWorldBuilder(options) {
     if (state.state === ROOM_BUILD_STATE.BUILT) {
       return { passageId: connection.id, state: state.state, done: true, written: 0 };
     }
-    const cells = passageBlocksCells(connection, manager);
+    const cells = passageBuildContext(connection, manager);
     if (!cells.loaded) {
       state.state = ROOM_BUILD_STATE.WAITING_FOR_CHUNK;
       return { passageId: connection.id, state: state.state, done: false, written: 0 };
@@ -377,19 +378,45 @@ export function createWorldBuilder(options) {
     return cleared;
   }
 
-  /** The cell index for a connection, and whether its area is loaded. */
-  function passageBlocksCells(connection, manager) {
-    const rooms = manager.allRooms();
-    const index = dungeonCellIndex(rooms, manager.allConnections());
-    const walk = index.perConnection.get(connection.id) || [];
+  /**
+   * What a passage needs from the rest of the dungeon, and whether its cells are
+   * loaded.
+   *
+   * This used to call `dungeonCellIndex` — the index of every room cell and every
+   * passage cell of the whole dungeon — on **every** passage build, twice per
+   * passage. A heap profile put that at **28 MB allocated** for one dungeon: not a
+   * leak, but churn on the tick path, exactly the kind that ends in
+   * `InternalError: out of memory` when the sandbox is narrow.
+   *
+   * `passageBlocks` reads three things from the index, so they are built here, for
+   * this one connection:
+   *   - `owned`: every room cell, as `"x,z"` keys — cells a passage must not
+   *     overwrite. Scanned per call on purpose: a room can be committed while a
+   *     build is in progress, and a cached set would be stale;
+   *   - `perConnection`: the connection's own cells, which it already stores;
+   *   - `passages`: the same cells, which is what the whole-dungeon index would
+   *     return for the connection being carved.
+   */
+  function passageBuildContext(connection, manager) {
+    const own = passageCellsFor(connection);
+    const passages = new Set();
+    for (let at = 0; at < own.length; at += 1) passages.add(`${own[at].x},${own[at].z}`);
     let loaded = true;
-    for (let spot = 0; spot < walk.length; spot += 1) {
-      if (readBlock(walk[spot].x, floorY, walk[spot].z) === null) {
+    for (let spot = 0; spot < own.length; spot += 1) {
+      if (readBlock(own[spot].x, floorY, own[spot].z) === null) {
         loaded = false;
         break;
       }
     }
-    return { index, loaded };
+    return {
+      // `owned` is a **function**, not a set: `passageBlocks` asks it about the
+      // cells of this passage only — a few hundred — so the answer is computed for
+      // those cells instead of materialising every room cell of the dungeon as a
+      // string. `passageBlocks` accepts an object with `has`, which is the one
+      // method it calls.
+      index: { owned: roomCellLookup(manager.allRooms()), passages, perConnection: new Map([[connection.id, own]]) },
+      loaded,
+    };
   }
 
   /**
