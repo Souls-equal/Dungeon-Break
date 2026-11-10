@@ -91,7 +91,7 @@ La documentation est également publiée en Markdown (`/docs/<page>.md`), ce qui
 | `api.getBlockSolidity` | `getBlockSolidity(x, y, z) → boolean` | **Non utilisé pour valider** : la doc dit « *Will be true if the block is unloaded* », donc un chunk non chargé est indiscernable d'un bloc plein. |
 | `api.isBlockInLoadedChunk` | `isBlockInLoadedChunk(x, y, z) → boolean` | Garde avant toute écriture : le constructeur reporte la salle tant que les chunks du volume ne sont pas chargés. |
 | `api.getBlockId` / `blockIdToBlockName` / `blockNameToBlockId` | conversion nom ↔ id numérique | Le constructeur écrit à partir de noms. La doc dit de `getBlockId` : « *Intended only for use in hot code paths* » : optimisation de vérification **possible**, à mesurer en Phase 4, jamais supposée. |
-| `api.getBlockData` / `api.setBlockData` | lecture/écriture de données de bloc | **Jamais utilisés pour persister** : la doc dit « *Data is cleared when block changes* ». |
+| `api.getBlockData` / `api.setBlockData` | lecture/écriture de données de bloc | Un record par chunk, sur une **ancre scellée** (§3.8). Filet de sécurité seulement : la doc dit « *Data is cleared when block changes* ». |
 | `api.getEmptyChunk` | `getEmptyChunk() → GameChunk` (« *32x32x32 ndarray of air* ») | **Inutilisable seul** : la doc renvoie à `resetChunk` pour poser le chunk, et **`resetChunk` n'est pas documenté** dans l'API Reference. Voir §3.10. |
 | `api.getVariation` | `getVariation() → string` | Uniquement pour nommer la clé de persistance si plusieurs variations partagent un lobby. |
 | `api.blockCoordToChunkId`, `api.chunkIdToBotLeftCoord` | conversion position ↔ chunk | Calcul des chunks à surveiller autour d'une salle. |
@@ -150,7 +150,11 @@ Déjà observé et corrigé sur le code existant (`chunkWarmupTicks = 3`, `45d7d
 
 Ni `setTimeout`, ni `setInterval`, ni `Promise`, ni `await`. `api.now()` est figé pendant le tick.
 
-**Conséquence :** une seule horloge, `tick(ms)`, via le scheduler existant. Tous les budgets sont exprimés en **opérations par tick** et en **cycles de ticks**, jamais en millisecondes. C'est aussi ce qui rend les scénarios de charge mesurables : le coût est directement le nombre d'opérations consommées.
+**Conséquence :** une seule horloge, `tick(ms)`, via le scheduler existant. Les budgets ordinaires sont exprimés en **opérations par tick** et en **cycles de ticks** : c'est ce qui rend les scénarios de charge mesurables, le coût étant directement le nombre d'opérations consommées.
+
+**Complément mesuré (interrupted).** Un comptage d'opérations ne protège pas d'un tick trop long : `World code tick: InternalError: interrupted` tue un tick au-delà d'un garde-fou d'environ 10 s, et notre pire tick mesuré atteignait **164 ms** dont **147 ms dans une seule génération de salle**, un coût que le comptage de blocs ne voyait pas. Le contrôleur porte donc, en plus des budgets d'opérations, un **garde-temps à la frontière des unités de travail** : `tickBudgetMs = 40` (sous le tick de 50 ms du serveur) et `tickReserveShare = 0.85`, si bien qu'aucune salle ni aucun passage n'est *commencé* après 34 ms. L'unité en cours se termine toujours : on ne coupe jamais au milieu d'une salle. Le travailreporté (`generatedDeferred` / `builtDeferred`) reste dans les files, et une passe de vérification a montré **0 salle et 0 passage perdus** pour un pire tick ramené à **51 ms**.
+
+`Date.now()` et `api.now()` étant figés pendant le tick, la mesure se fait avec `performance.now()` : côté hôte Node, elle est réelle ; dans le jeu, elle ne mesurerait rien, et le garde-temps y est donc inerte plutôt que nuisible — le vrai filet reste le budget d'opérations. C'est une limite connue, pas une garantie.
 
 ### 3.6 Les natives JavaScript ne sont pas garanties
 
@@ -162,9 +166,18 @@ Le projet s'interdit déjà `await` et les timers natifs. Par prudence, le moteu
 
 Le changelog officiel du 18 août 2026 annonce le passage de 64 k à 512 k caractères. Le moteur est donc écrit en modules séparés sous `src/` et assemblé par `tools/build-world-code.mjs`. **Conséquence de méthode :** le bundle doit rester lisible et modulaire ; on ne compresse pas les identifiants (déjà configuré), et on ne sacrifie pas la clarté à la place.
 
-### 3.8 `setBlockData` ne peut pas servir de stockage
+### 3.8 `setBlockData` n'est pas un stockage, c'est un filet de sécurité
 
-« *Data is cleared when block changes.* » Poser une donnée sur un bloc du donjon serait effacé au premier minage. **Conséquence :** aucune donnée de jeu n'est attachée aux blocs.
+« *Data is cleared when block changes.* » Poser une donnée sur un bloc du donjon n'est donc pas une persistance : un `setBlock` sur la même cellule l'efface, sans erreur et sans trace.
+
+**Conséquence, révisée.** Une donnée de jeu n'est attachée aux blocs que sous deux conditions, et la seconde est ce qui rend la première honnête :
+
+1. **L'ancre est scellée.** Un bloc par chunk, à son coin et au niveau du sol (`(chunkX × 32, floorY, chunkZ × 32)`, bloc `Polished Diorite`, hors palette de pierre). Il est posé **une fois** ; ensuite le `worldBuilder` refuse toute écriture sur cette cellule (`writeAnchor` / `isSealedAnchor`, garde dans `writeBlock`). Une salle construite par-dessus l'ancre ne peut donc pas l'effacer.
+2. **Ce n'est jamais une source de vérité.** Le donjon est reconstruit depuis sa seed ; les records de chunk ne servent qu'à savoir ce qui était déjà là après un redémarrage, et à relire la progression. Si la donnée a disparu (un bloc cassé, un chunk réinitialisé), le code le dit — `NO_ANCHOR` — au lieu de faire semblant.
+
+L'ancre est au coin du chunk **au niveau `floorY`**, jamais dessous : écrire dans un chunk non chargé perd l'écriture silencieusement, et le sol d'un donjon est justement ce qui est chargé quand le joueur y est. Un chunk dont l'ancre est illisible (`getBlock` → `null`) n'est pas écrit du tout.
+
+Le format est vérifié dans les tests contre les deux règles documentées : type `object` pour l'écriture, `any` pour la lecture, et l'effacement au changement de bloc — simulé dans les fausses API, pas contourné.
 
 ### 3.9 Aucun stockage externe documenté
 

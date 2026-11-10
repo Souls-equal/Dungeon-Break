@@ -83,8 +83,50 @@ export function createWorldBuilder(options) {
     }
   }
 
+  /** Anchors already written by this builder: `x,y,z`. Declared before the
+   * function that consults them, because a guard is easier to trust when the set
+   * it reads is right above it. */
+  const sealedAnchors = new Set();
+  const anchorKey = (x, y, z) => `${x},${y},${z}`;
+
+  /**
+   * Writes one block, except where the write would destroy a chunk's record.
+   *
+   * A chunk's data lives on one block — its anchor — and the API clears that data
+   * when the block changes. So the anchor cell is written **once**, before its
+   * data exists, and every later write to it is skipped: the dungeon's structure
+   * is written cell by cell and at most once per cell anyway, so nothing is
+   * actually dropped; this is the guard that makes the promise true even for a
+   * repair pass.
+   */
   function writeBlock(x, y, z, name) {
+    if (isSealedAnchor(x, y, z)) return;
     world.setBlock(x, y, z, name);
+  }
+
+  /**
+   * Writes the anchor of a chunk, once.
+   *
+   * Called by the chunk store when it wants to put a record somewhere: the block
+   * is written here, through the same guard as everything else, and from then on
+   * it is sealed — `writeBlock` will not touch it again, so the data set on it
+   * afterwards is never cleared. A second call for the same cell does nothing and
+   * says so.
+   */
+  function writeAnchor(x, y, z, name) {
+    const key = anchorKey(x, y, z);
+    if (sealedAnchors.has(key)) return false;
+    // The block may already be there because a *room* wrote it (the anchor cell is
+    // a structural cell when a room covers it). Writing it again would clear the
+    // data, so it is left exactly as it is: only the seal is added.
+    const current = readBlock(x, y, z);
+    if (current !== name) world.setBlock(x, y, z, name);
+    sealedAnchors.add(key);
+    return true;
+  }
+
+  function isSealedAnchor(x, y, z) {
+    return sealedAnchors.has(anchorKey(x, y, z));
   }
 
   /**
@@ -558,6 +600,10 @@ export function createWorldBuilder(options) {
     stateOf,
     readBlock,
     writeBlock,
+    writeAnchor,
+    isSealedAnchor,
+    /** How many anchors this builder has sealed, so a caller can report it. */
+    get sealedAnchorCount() { return sealedAnchors.size; },
     get floorY() { return floorY; },
     /** The builder object the controller accepts. */
     asControllerBuilder(buildOptions = {}) {

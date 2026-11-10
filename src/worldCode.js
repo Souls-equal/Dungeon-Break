@@ -194,6 +194,10 @@ const DEBUG_COMMANDS = {
   hud: ["hud", "overlay"],
   // The rooms around the player: distance, build state, free doorways.
   nearby: ["near", "nearby", "around", "rooms"],
+  // The chunk record the player is standing in, read back from the block that
+  // holds it. The question a player actually asks after a crash — "did my dungeon
+  // survive" — is answered by reading the block, not by trusting a counter.
+  chunk: ["chunk", "chunks", "save"],
 };
 
 /**
@@ -288,6 +292,41 @@ function debugSayAll(playerId, lines) {
   for (let index = 0; index < lines.length; index += 1) debugSay(playerId, lines[index]);
 }
 
+/**
+ * `/dbg chunk` — the records around the player, read back from their blocks.
+ *
+ * The anchor of a chunk is a corner cell, so a player in the middle of a chunk may
+ * stand up to a chunk away from it; reporting the chunks **around** the player is
+ * what makes the answer useful. The record itself is read from the block, never
+ * reconstructed from memory: a counter saying "saved" proves nothing if the data
+ * was cleared under it.
+ */
+function debugChunk(playerId, argument) {
+  const radius = argument && /^\d+$/.test(argument.trim()) ? Math.min(3, Number(argument.trim())) : 1;
+  const report = service().debugChunkReport(playerId, radius);
+  if (!report) {
+    debugSay(playerId, "[dbg] you are not in a dungeon — step on a pad first");
+    return;
+  }
+  const lines = [];
+  lines.push(`[dbg] chunks saved ${report.chunksSaved} · failed ${report.chunkSaveFailures} · here ${report.cell.x},${report.cell.z} (chunk ${report.chunk.x},${report.chunk.z})`);
+  for (const entry of report.records) {
+    const at = `chunk ${entry.chunkX},${entry.chunkZ}`;
+    if (!entry.read.ok) {
+      lines.push(`[dbg] ${at}: ${entry.read.code}${entry.read.block ? ` (block ${entry.read.block})` : ""}`);
+      continue;
+    }
+    const record = entry.read.record;
+    const drawn = record.progress.filter((progress) => progress.state === "built").length;
+    lines.push(`[dbg] ${at}: ${record.plans.length} plans, ${drawn}/${record.progress.length} built · seed ${record.seed} · tick ${record.tick}`);
+    for (const progress of record.progress.slice(0, 3)) {
+      lines.push(`[dbg]   ${progress.kind} ${progress.id}: ${progress.state}${progress.cursor === null ? "" : ` @${progress.cursor}`}`);
+    }
+    if (record.progress.length > 3) lines.push(`[dbg]   and ${record.progress.length - 3} more`);
+  }
+  debugSayAll(playerId, lines);
+}
+
 function runDebugCommand(playerId, verb, argument) {
   if (verb === "seed") {
     const report = service().debugReport(playerId);
@@ -309,6 +348,10 @@ function runDebugCommand(playerId, verb, argument) {
     debugSayAll(playerId, lines.length > 0
       ? lines
       : ["[dbg] you are not in a dungeon — step on a pad first"]);
+    return;
+  }
+  if (verb === "chunk") {
+    debugChunk(playerId, argument);
     return;
   }
   if (verb === "hud") {

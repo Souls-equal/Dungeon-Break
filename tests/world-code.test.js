@@ -46,6 +46,11 @@ function createWorld(onlinePlayerIds, options = {}) {
   const messages = [];
   const blocks = [];
   const writes = [];
+  // Block data, with the API's documented rule enforced: "Data is cleared when
+  // block changes". A fake that quietly kept it would hide the one bug the chunk
+  // store is built around.
+  const blockData = new Map();
+  const cellKey = (x, y, z) => `${x},${y},${z}`;
   const positions = [];
   const clientOptions = [];
   const topRightHelpers = [];
@@ -72,6 +77,7 @@ function createWorld(onlinePlayerIds, options = {}) {
       setClientOption: (playerId, option, value) => clientOptions.push({ playerId, option, value }),
       setBlock: (x, y, z, blockName) => {
         writes.push({ x, y, z, blockName });
+        blockData.delete(cellKey(x, y, z));
         if (options.trackLoaded && !nearPlayer(x, z)) {
           violations.push({ x, y, z, blockName, playerZ: playerLocations[onlinePlayerIds[0]]?.[2] });
           return;
@@ -102,6 +108,13 @@ function createWorld(onlinePlayerIds, options = {}) {
         }
         return "Air";
       },
+      setBlockData: (x, y, z, value) => {
+        // The documented type is an object, and the value crosses a serialisation
+        // boundary: a reference kept as-is would let the tests pass on something
+        // the real server could not store.
+        blockData.set(cellKey(x, y, z), JSON.parse(JSON.stringify(value)));
+      },
+      getBlockData: (x, y, z) => (blockData.has(cellKey(x, y, z)) ? blockData.get(cellKey(x, y, z)) : null),
       getPlayerIds: () => onlinePlayerIds,
       now: () => 1710000000000,
       log: (message) => messages.push({ playerId: null, message }),
@@ -113,6 +126,7 @@ function createWorld(onlinePlayerIds, options = {}) {
     messages,
     blocks,
     writes,
+    blockData,
     positions,
     clientOptions,
     topRightHelpers,
@@ -311,10 +325,20 @@ test("no block is written into a chunk the player has not loaded", () => {
   const STONE = new Set([
     "Stone", "Messy Stone", "Smooth Stone", "Stone Bricks", "Cracked Stone Bricks", "Mossy Stone Bricks",
   ]);
-  const offPalette = blocks.filter(({ blockName }) => blockName !== "Air" && blockName !== "Gold Block"
-    && !STONE.has(blockName));
+  // The one block outside the stone palette is the chunk anchor: one per chunk, at
+  // the chunk's own corner, holding that chunk's record. It is checked by position
+  // rather than waved through by name, because "off-palette is allowed" is how a
+  // texture nobody signed off on gets into a dungeon.
+  const CHUNK_SIZE = 32;
+  const isAnchorCell = ({ blockName, x, y, z }) => blockName === "Polished Diorite"
+    && y === FLOOR_Y && x % CHUNK_SIZE === 0 && z % CHUNK_SIZE === 0;
+  const offPalette = blocks.filter(({ blockName, x, y, z }) => blockName !== "Air" && blockName !== "Gold Block"
+    && !STONE.has(blockName) && !isAnchorCell({ blockName, x, y, z }));
   assert.deepEqual(offPalette.slice(0, 3), [],
     "the builder wrote a block that is not part of the stone palette");
+  // And an anchor is never written twice: the second write would clear the data.
+  const anchors = blocks.filter(isAnchorCell).map(({ x, y, z }) => `${x},${y},${z}`);
+  assert.equal(new Set(anchors).size, anchors.length, "an anchor block was written more than once");
   assert.deepEqual(
     violations.map(({ x, z, playerZ }) => `${x},${z} at player z=${playerZ}`),
     [],
@@ -436,6 +460,35 @@ test("/dbg seed is one line, and it is the seed of the dungeon the player is in"
   // name and the difficulty, never from a clock.
   context.playerCommand("player-dbg-seed", "seed");
   assert.equal(messagesFor(messages, "player-dbg-seed").at(-1), lines[0]);
+});
+
+test("/dbg chunk reads the records back from the blocks, and says when there is none", () => {
+  const { context, messages, blockData } = createWorld(["player-dbg-chunk"]);
+  startDungeon(context, "player-dbg-chunk");
+  // Records are written after construction, one per tick, and only once a player is
+  // in the dungeon — so the world has to tick for them to exist.
+  tickUntil(context, () => blockData.size > 0, 600);
+  assert.ok(blockData.size > 0, "no chunk record was ever written, so the test proves nothing");
+
+  context.playerCommand("player-dbg-chunk", "chunk");
+  const said = messagesFor(messages, "player-dbg-chunk");
+  const report = said.filter((line) => line.startsWith("[dbg]"));
+  assert.ok(report.length >= 2, `the chunk report is too short: ${JSON.stringify(said)}`);
+  assert.match(report[0], /chunks saved \d+ · failed 0/, "the report does not count the saves and the failures");
+  // At least one chunk reads back with a plan in it: an anchor with data, parsed.
+  assert.ok(report.some((line) => /\d+ plans/.test(line)), `no record was read back: ${report.join(" | ")}`);
+  // The records really are block data, not a counter: every entry the report reads
+  // is one of the records the world stored.
+  for (const value of blockData.values()) {
+    assert.equal(value.v, 1, "a stored record does not carry its version");
+    assert.equal(Array.isArray(value.plans), true);
+    assert.equal(Array.isArray(value.progress), true);
+  }
+
+  // A player outside a dungeon gets an answer, not silence.
+  const { context: lobby, messages: lobbyMessages } = createWorld(["player-dbg-chunk-lobby"]);
+  lobby.playerCommand("player-dbg-chunk-lobby", "chunk");
+  assert.match(messagesFor(lobbyMessages, "player-dbg-chunk-lobby")[0], /not in a dungeon/);
 });
 
 test("/dbg dungeon describes the whole build in four lines", () => {

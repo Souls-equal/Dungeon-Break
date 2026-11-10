@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { DUNGEON_CONFIG, DIFFICULTIES, findDifficulty } from "../../src/dungeon/engine/config.js";
 import { BLOCKS } from "../../src/dungeon/builder.js";
 import { step as stepScheduler } from "../../src/utils/scheduler.js";
+import { anchorOf, CHUNK_ANCHOR_BLOCK } from "../../src/dungeon/chunkStore.js";
 import {
   LOBBY_POSITION,
   createDungeonService,
@@ -30,7 +31,7 @@ const LOAD_RADIUS = 400;
 
 function fakeApi() {
   const cells = new Map();
-  const calls = { setBlock: [], setPosition: [], sendMessage: [], setCanChangeType: [] };
+  const calls = { setBlock: [], setPosition: [], sendMessage: [], setCanChangeType: [], setBlockData: [] };
   const positions = new Map();
   const loadedRects = [];
   const near = (x, z) => loadedRects.some((rect) => x >= rect.x1 && x <= rect.x2 && z >= rect.z1 && z <= rect.z2);
@@ -383,4 +384,95 @@ test("every room of a finished dungeon can be reached on foot from the entrance"
   });
   assert.deepEqual(unreachable.map((room) => room.id), [],
     "rooms were built that nobody can walk into");
+});
+
+// ------------------------------------------------------ the chunk records --
+//
+// A record lives in the data of one block per chunk, and the documented rule is
+// that a block change clears that data. So the fake API here has `setBlockData`,
+// `getBlockData`, and a `setBlock` that **clears the data of the cell it writes** —
+// the same behaviour as the game. A fake that quietly kept the data would let a
+// builder overwrite the anchor while the tests stayed green.
+
+function chunkAwareApi() {
+  const api = fakeApi();
+  const data = new Map();
+  // Every write, in order, so the test can ask the only question that matters:
+  // was a block written to a cell *after* its data? That is the write that would
+  // clear it.
+  const log = [];
+  const nearEnough = (x, z) => api.getBlock(x, DUNGEON_CONFIG.floorY, z) !== null;
+  api.setBlock = (x, y, z, name) => {
+    api.calls.setBlock.push({ x, y, z, name });
+    log.push({ kind: "block", cell: `${x},${y},${z}`, name });
+    data.delete(`${x},${y},${z}`);
+    if (!nearEnough(x, z)) return;
+    api.cells.set(`${x},${y},${z}`, name);
+  };
+  api.setBlockData = (x, y, z, value) => {
+    api.calls.setBlockData.push({ x, y, z });
+    log.push({ kind: "data", cell: `${x},${y},${z}` });
+    data.set(`${x},${y},${z}`, JSON.parse(JSON.stringify(value)));
+  };
+  api.getBlockData = (x, y, z) => (data.has(`${x},${y},${z}`) ? data.get(`${x},${y},${z}`) : null);
+  api.data = data;
+  api.log = log;
+  /** Did anything overwrite the block of this cell after its data was written? */
+  api.clearedAfterData = (cell) => {
+    const dataIndex = log.findIndex((entry) => entry.kind === "data" && entry.cell === cell);
+    if (dataIndex < 0) return false;
+    return log.slice(dataIndex + 1).some((entry) => entry.kind === "block" && entry.cell === cell);
+  };
+  return api;
+}
+
+test("a dungeon saves its chunks as it builds, one per tick, and reads them back", () => {
+  const api = chunkAwareApi();
+  const service = createDungeonService({ api });
+  let dungeon = null;
+  service.enterDifficulty("p1", "Easy", (ready) => { dungeon = ready; });
+  runUntil(() => dungeon !== null, "the entrance");
+  // The world ticks the service; the scheduler only drives the builder's internal
+  // waits. Both are needed: a test that steps only the scheduler builds the
+  // entrance and then saves nothing, because no tick ever runs.
+  const settle = () => {
+    stepScheduler();
+    service.tick();
+  };
+  for (let index = 0; index < 200; index += 1) {
+    if (dungeon.chunksSaved >= 3) break;
+    settle();
+  }
+
+  assert.equal(dungeon.chunkSaveFailures, 0,
+    `${dungeon.chunkSaveFailures} chunk records failed to write: ${JSON.stringify(dungeon.chunksSaved)}`);
+
+  // One write per tick at most: the store must never become a tick-size problem.
+  const { ticks } = dungeon.controller.stats;
+  assert.ok(dungeon.chunksSaved <= ticks, `${dungeon.chunksSaved} records written in ${ticks} ticks`);
+
+  // A record reads back, with the plans and the progress of its chunk.
+  const first = [...dungeon.savedChunks][0];
+  const [chunkX, chunkZ] = first.split(",").map(Number);
+  const read = service.readChunkAt("p1", chunkX, chunkZ);
+  assert.equal(read.read.ok, true, `the record of chunk ${first} does not read back: ${JSON.stringify(read.read)}`);
+  const anchor = anchorOf(chunkX, chunkZ, DUNGEON_CONFIG.floorY);
+  assert.equal(api.getBlock(anchor.x, anchor.y, anchor.z), CHUNK_ANCHOR_BLOCK);
+  // The anchor's block went down before its data did, and never after: a room that
+  // later covers that cell is refused by the seal. Writing the block afterwards is
+  // the one operation that erases the record, and it must never happen.
+  assert.equal(api.clearedAfterData(`${anchor.x},${anchor.y},${anchor.z}`), false,
+    "a block was written to the anchor after its data, which clears the record");
+
+  // The record names the dungeon and the seed, so a reader knows what it belongs to.
+  assert.equal(read.read.record.id, "lobby|easy");
+  assert.equal(read.read.record.seed, dungeon.seed);
+
+  // And nothing else in the dungeon sits on an anchor cell: every anchor block is
+  // still there, still one write each.
+  for (const key of dungeon.savedChunks) {
+    const [x, z] = key.split(",").map(Number);
+    const at = anchorOf(x, z, DUNGEON_CONFIG.floorY);
+    assert.equal(api.getBlock(at.x, at.y, at.z), CHUNK_ANCHOR_BLOCK, `the anchor of chunk ${key} is gone`);
+  }
 });
