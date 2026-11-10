@@ -35,6 +35,48 @@ Le donjon ne s'arrêtait **jamais** de grandir, et le tas avec lui. Sur `Hell` a
 un monde qui garde ses blocs, le processus Node mourait en `JavaScript heap out
 of memory` vers 4 000 ticks.
 
+## La troisième cause, trouvée au profil mémoire
+
+Une fois les deux premières corrigées, le donjon ne grandissait plus — mais un
+`Hell` de 48 salles retenait quand même **101 Mo**. Le graphe est petit (6,7 Mo
+pour 35 salles et leurs connexions), donc la mémoire était ailleurs : dans les
+**allocations de passage**.
+
+Un profil mémoire (`node --heap-prof`) a désigné une seule ligne :
+
+```
+28,3 Mo  dungeonCellIndex  builder.js:135
+```
+
+`buildPassage` appelait `dungeonCellIndex` — l'index de **toutes** les cellules de
+salle et de **toutes** les cellules de passage du donjon — à chaque construction
+de passage, **deux fois par passage** : une fois pour le test de chargement, une
+fois pour le plan. Le commentaire disait « recalculé à chaque fois » ; personne
+n'avait mesuré ce que coûtait un recalcul de cette taille.
+
+Corrigé en deux temps, chacun mesuré :
+
+1. Ne construire que ce que `passageBlocks` lit vraiment : les cellules du
+   passage, et l'ensemble des cellules de salle. **28,3 Mo → 19,1 Mo.**
+2. Ne plus matérialiser l'ensemble des cellules de salle du tout : la seule
+   question posée est « cette cellule est-elle une salle ? », et elle porte sur les
+   quelques centaines de cellules du passage en cours. `roomCellLookup` y répond
+   depuis les masques, sans une seule chaîne allouée. **19,1 Mo → 0,2 Mo.**
+
+Résultat sur le même donjon, tout le reste identique :
+
+| | avant | après |
+| --- | --- | --- |
+| tas retenu (Hell, 35 salles) | 63 Mo | **10 Mo** |
+| tas retenu (Hell, 48 salles) | 104,6 Mo | **11,4 Mo** |
+| p99 d'un tick | 16,7 ms | **7,4 ms** |
+| moyenne d'un tick | 0,51 ms | **0,39 ms** |
+| blocs écrits, salles finies, échecs d'audit | 212 468 / 48 / 0 | **212 468 / 48 / 0** |
+
+Le monde est byte pour byte le même. Un test vérifie que `roomCellLookup` répond
+exactement comme l'ensemble complet, cellule par cellule, sur un vrai donjon —
+deux façons de répondre à la même question doivent donner la même réponse.
+
 ## Causes trouvées, par ordre d'impact
 
 ### 1. Aucun plafond de salles — **la cause principale, corrigée**
@@ -51,8 +93,9 @@ plan et ses blocs.
 files de découverte/génération sont vidées (`stats.capped` compte les refus).
 
 Mesure après correction, même faux monde : Very Easy **10 salles**, tas stable
-autour de 20 Mo ; Hell **48 salles**, tas stable autour de 150 Mo, sur 3 000
-ticks — plus aucune croissance.
+autour de 20 Mo ; Hell **48 salles**, sur 3 000 ticks — plus aucune croissance.
+Le niveau absolu du tas a ensuite baissé encore avec le correctif d'allocation
+ci-dessous (voir « La troisième cause »).
 
 ### 2. Les plans de salles jamais libérés — corrigé
 

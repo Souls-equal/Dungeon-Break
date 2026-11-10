@@ -11,10 +11,12 @@ import {
   createRoomWriter,
   doorwaySet,
   dungeonCellIndex,
+  dungeonOwnedCells,
   padCell,
   passageBlocks,
   passageCellsFor,
   roomBlocks,
+  roomCellLookup,
   STONE_PALETTE,
 } from "../../src/dungeon/builder.js";
 
@@ -427,5 +429,57 @@ test("a player walks under five blocks of air, whatever the room is", () => {
       assert.ok(block.phase === BUILD_PHASE.WALL || block.phase === BUILD_PHASE.PAD,
         `${room.id}: ${block.name} was written at head height ${level}`);
     }
+  }
+});
+
+// --------------------------------------------- the cell lookup, and its cost --
+//
+// A passage build used to rebuild the whole dungeon's cell index — and then, once
+// that was fixed, it still materialised every room cell as a string — on every
+// passage, twice per passage. The heap profiler put those at 28 MB and 19 MB of
+// churn for one 35-room dungeon, which is what `InternalError: out of memory`
+// looks like from the inside. These two tests pin the cheap answer to the
+// expensive one.
+
+test("the cell lookup answers exactly like the full set of room cells", () => {
+  const manager = grow(2424, 12);
+  const rooms = manager.allRooms();
+  const owned = dungeonOwnedCells(rooms);
+  const lookup = roomCellLookup(rooms);
+
+  // Every cell the set holds.
+  let checked = 0;
+  for (const key of owned) {
+    assert.equal(lookup.has(key), true, `the lookup missed the room cell ${key}`);
+    checked += 1;
+  }
+  assert.ok(checked > 500, `the test only checked ${checked} cells`);
+
+  // And cells it does not hold, around and between the rooms: the lookup must not
+  // answer `true` for everything that falls in a bounding box.
+  let outside = 0;
+  for (const room of rooms) {
+    for (const [dx, dz] of [[-1, 0], [room.mask.w, 0], [0, -1], [0, room.mask.h], [-1, -1]]) {
+      const key = `${room.origin.x + dx},${room.origin.y + dz}`;
+      assert.equal(lookup.has(key), owned.has(key), `the lookup disagrees with the set on ${key}`);
+      outside += 1;
+    }
+  }
+  assert.ok(outside > 0);
+  // A malformed key answers false rather than throwing: it is called from a build.
+  assert.equal(lookup.has("nonsense"), false);
+});
+
+test("a passage build does not need the whole dungeon index", () => {
+  // The context a passage build uses carries the connection's own cells and a
+  // lookup for room cells — not an index over every passage of the dungeon.
+  const manager = grow(2424, 8);
+  const connection = manager.allConnections()[0];
+  assert.ok(connection, "the dungeon has no connection to test with");
+  const own = passageCellsFor(connection);
+  const lookup = roomCellLookup(manager.allRooms());
+  for (const cell of own) {
+    const key = `${cell.x},${cell.z}`;
+    assert.equal(typeof lookup.has(key), "boolean");
   }
 });

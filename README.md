@@ -118,7 +118,9 @@ Cette erreur n'est pas un tick trop long, c'est un **tas épuisé** — et presq
 - **Aucun plafond de salles.** La table des difficultés annonce 10 salles pour Very Easy et 48 pour Hell, mais ce nombre n'était lu par personne : le générateur produisait tant qu'il restait une porte en attente, et une frontière de portes ne s'épuise pas. Mesuré avant correctif : **Very Easy à 114 salles** et toujours en hausse, tas de 6 → 591 Mo en 3 000 ticks. Le contrôleur reçoit désormais `maxRooms: difficulty.rooms` et s'arrête à la cible (files vidées, `stats.capped` compte les refus).
 - **Plans de salles jamais libérés.** Chaque salle gardait la liste complète de ses blocs pour pouvoir reprendre au curseur : 562 851 blocs retenus sur un donjon de 175 salles. Le plan est libéré dès la salle terminée.
 
-Après correctif, sur 3 000 ticks : Very Easy **10 salles / ~20 Mo stables**, Hell **48 salles / ~150 Mo stables**. La liste complète des structures qui peuvent grossir — index spatial, cellules de couloir, files, état par joueur, journalisation — est dans [`docs/MEMOIRE.md`](docs/MEMOIRE.md).
+Troisième cause, trouvée au profil mémoire : `dungeonCellIndex` reconstruisait l'index de **tout** le donjon à chaque construction de passage — deux fois par passage — soit 28 Mo d'allocation par donjon. Le contexte d'un passage ne construit plus que ce dont il a besoin, et répond à « cette cellule est-elle une salle ? » depuis les masques, sans matérialiser une seule chaîne.
+
+Après correctifs, sur 3 000 ticks : Very Easy **10 salles / ~10 Mo**, Hell **48 salles / ~11 Mo retenus**, p99 de tick **7,4 ms**, et le monde construit est identique bloc pour bloc. La liste complète des structures qui peuvent grossir — index spatial, cellules de couloir, files, état par joueur, journalisation — est dans [`docs/MEMOIRE.md`](docs/MEMOIRE.md).
 
 Limite connue : un joueur qui quitte sans passer par `onPlayerLeave` (crash client) reste enregistré, et le contrôleur découvre des portes autour de son fantôme. Aucun garde-fou aujourd'hui.
 
