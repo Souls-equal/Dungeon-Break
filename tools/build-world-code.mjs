@@ -20,8 +20,20 @@ const CALLBACKS = [
   "onPlayerJoin",
   "onPlayerLeave",
   "onRespawnRequest",
+  "onPlayerClick",
+  "onPlayerKilledMob",
+  "onMobDespawned",
   "tick",
 ];
+
+/**
+ * Items the code gives out, checked against the game's own list.
+ *
+ * `giveItem` takes an `ItemName`, and a name the game does not know does not throw: it does
+ * nothing. A chest that silently gives nothing is the kind of bug that only shows up in
+ * game, so the name is checked here, against the ship's own list when it is available.
+ */
+const GIVEN_ITEMS = ["Wooden Key", "Stone Key", "Iron Key", "Gold Key", "Diamond Key"];
 /**
  * Names that must survive minification, because they are read from outside the
  * bundle: the template table a player edits, and the level table a report prints.
@@ -44,6 +56,26 @@ function validate(code) {
   for (const name of ANCHORED_GLOBALS) {
     if (!code.includes(name)) {
       throw new Error(`A name that must stay reachable was renamed during bundling: ${name}`);
+    }
+  }
+
+  // Every item this code hands out must exist in the game.
+  let itemNames = null;
+  try {
+    itemNames = new Set(
+      fs.readFileSync(path.join(ROOT, "src", "data", "item-names.txt"), "utf8")
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean),
+    );
+  } catch (_) {
+    // The list is a copy of the ship's; without it this check is skipped, not failed.
+  }
+  if (itemNames) {
+    for (const item of GIVEN_ITEMS) {
+      if (!itemNames.has(item)) {
+        throw new Error(`Item given by the code is not in the game's item list: ${item}`);
+      }
     }
   }
 

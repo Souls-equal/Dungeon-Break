@@ -198,6 +198,29 @@ export const DUNGEON_CONFIG = {
   // once a room is done it is remembered, which makes the repeat nearly free.
   mobRetryTicks: 40,
 
+  // ------------------------------------------------------------------ chests ---
+  // A chest in a dungeon room gives a **Key**. The rarity is drawn per difficulty, so a
+  // Deep room is worth opening and a Very Easy one is not a shortcut to a Diamond Key.
+  //
+  // A chest is opened **once**. The code cannot empty the chest itself (the room is a
+  // copy, and nothing is written into it), so the proof is the same one the cleared rooms
+  // use: `setBlockData` on the chest's own block. Data is cleared when a block changes, so
+  // a room copied again — or a new entry, which draws a new place — starts with its chests
+  // full. Within one run, walking back to a chest finds it marked.
+
+  // Where a room template may hold chests, in chunk-local coordinates: the middle band of
+  // the room, away from the walls. A chest outside this box is decoration, not loot.
+  chestBox: { minX: 3, maxX: 28, minY: 2, maxY: 12, minZ: 3, maxZ: 28 },
+  // Levels of the room read per column, from `chestBox.minY` upwards, when a report goes
+  // looking for chests. The scan walks **every** column of the box: a chest is where a
+  // builder put it, and a sampled grid is a grid that misses it. That is thousands of
+  // reads, so it is a `/dbg` tool — the click path never scans.
+  chestScanHeights: 10,
+  // Every key is its **own item** in the game (`Wooden Key` … `Diamond Key`), not one
+  // `Key` with a label: the ship's item list has all five and no plain `Key`. So a chest
+  // gives `"<label> Key"`, and `tools/build-world-code.mjs` checks those names against the
+  // list it ships with.
+
   // Chat message shown once when the catalogue has no template for a level.
   missingTemplatesMessage:
     "This level has no room templates yet. Fill ROOM_TEMPLATES in src/dungeon/templates.js.",
@@ -268,6 +291,45 @@ export function mobRosterFor(difficulty) {
       damage: mob.damage === undefined ? 1 : mob.damage,
       speed: mob.speed === undefined ? 1 : mob.speed,
     }));
+}
+
+/*
+ * What a dungeon chest can give, rarest last.
+ *
+ * `weight` is *not* a per-level number: it is the shape of the curve, and the level
+ * decides how far along it the draw lands. A level's rarity is `chestRarity` (0 = a Very
+ * Easy chest, 1 = a Hell chest), and each key's chance is
+ *
+ *     weight[level] × (1 - rarity) + weight[0] × rarity
+ *
+ * i.e. a blend of the Very Easy row and the Hell row. That keeps every key possible
+ * everywhere — a Wooden Key at the bottom of Hell is a bad roll, not an impossibility —
+ * while making the rare end commoner the deeper the level.
+ */
+export const CHEST_KEYS = [
+  { key: "Wooden Key", label: "Wooden", rarity: "common", veryEasy: 60, hell: 8 },
+  { key: "Stone Key", label: "Stone", rarity: "uncommon", veryEasy: 24, hell: 16 },
+  { key: "Iron Key", label: "Iron", rarity: "rare", veryEasy: 10, hell: 22 },
+  { key: "Gold Key", label: "Gold", rarity: "epic", veryEasy: 5, hell: 26 },
+  { key: "Diamond Key", label: "Diamond", rarity: "legendary", veryEasy: 1, hell: 28 },
+];
+
+/**
+ * The keys a level can give, with the weight each one has there.
+ *
+ * Weights are relative: the draw normalises them, so a level's row always sums below 100
+ * and no rounding can ever make the last key impossible.
+ */
+export function chestKeysFor(difficulty) {
+  const rank = DIFFICULTIES.findIndex((entry) => entry.id === difficulty.id);
+  const steps = Math.max(1, DIFFICULTIES.length - 1);
+  const rarity = (rank < 0 ? 0 : rank) / steps;
+  return CHEST_KEYS.map((entry) => ({
+    key: entry.key,
+    label: entry.label,
+    rarity: entry.rarity,
+    weight: entry.veryEasy * (1 - rarity) + entry.hell * rarity,
+  }));
 }
 
 /**

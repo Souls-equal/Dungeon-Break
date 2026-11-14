@@ -21,8 +21,9 @@ import {
   setTimeout as scheduleTimeout,
   step as stepScheduler,
 } from "./utils/scheduler.js";
-import { DIFFICULTIES, difficultyForPadBlock } from "./dungeon/config.js";
+import { DIFFICULTIES, DUNGEON_CONFIG, difficultyForPadBlock } from "./dungeon/config.js";
 import { LOBBY_POSITION, createDungeonService } from "./dungeon/service.js";
+import { findRoomChests, isChestBlock } from "./dungeon/loot.js";
 
 const LOBBY_CONFIG = {
   countdownSeconds: 10,
@@ -204,6 +205,7 @@ const DEBUG_COMMANDS = {
   mem: ["mem", "memory", "leak"],
   seed: ["seed", "seedonly"],
   level: ["level", "dungeon", "dgn"],
+  chests: ["chests", "chest", "loot", "keys"],
 };
 
 function debugSay(playerId, message) {
@@ -260,6 +262,31 @@ function runDebugCommand(playerId, verb) {
   const report = service().reportOf(playerId);
   if (!report) {
     debugSay(playerId, "[dbg] you are not in a dungeon — step on a pad first");
+    return;
+  }
+  if (verb === "chests") {
+    const dungeon = service().dungeonOf(playerId);
+    if (!dungeon) {
+      debugSay(playerId, "[dbg] you are not in a dungeon — step on a pad first");
+      return;
+    }
+    const level = service().levelStateOf(playerId);
+    const position = report.position;
+    const centre = { x: Math.floor(position[0] / DUNGEON_CONFIG.chunkSize), z: Math.floor(position[2] / DUNGEON_CONFIG.chunkSize) };
+    let found = 0;
+    let incomplete = 0;
+    const rooms = [];
+    for (let dx = -1; dx <= 1; dx += 1) {
+      for (let dz = -1; dz <= 1; dz += 1) {
+        const scan = findRoomChests(api, level, centre.x + dx, centre.z + dz);
+        found += scan.chests.length;
+        if (!scan.complete) incomplete += 1;
+        rooms.push(`${centre.x + dx},${centre.z + dz}: ${scan.chests.length}${scan.complete ? "" : " (chunk not sent)"}`);
+      }
+    }
+    debugSay(playerId, `[dbg] chests · ${found} in 9 rooms · ${incomplete} room(s) unreadable`);
+    debugSay(playerId, `[dbg] ${rooms.join(" · ")}`);
+    debugSay(playerId, "[dbg] a chest outside the scan box is not loot — see `chestBox` in config.js");
     return;
   }
   if (verb === "seed") {
@@ -421,6 +448,32 @@ onPlayerJoin = (playerId) => {
 onPlayerLeave = (playerId) => {
   stopLobbyCountdown(playerId);
   service().leave(playerId);
+};
+
+/**
+ * A player clicked a block. In a dungeon, a click on a chest pays a key out once.
+ *
+ * The documented signature is `(playerId, wasAltClick, x, y, z, block, targetEId)`, and the
+ * coordinates are the block that was clicked — the only position used here. Asking
+ * `getPosition` would answer where the player stands *now*, a different block and sometimes
+ * a different room.
+ *
+ * A click outside a dungeon, or on anything that is not a chest of it, is left to the game.
+ * Clicks on entities are ignored: a chest is a block, and an armour stand that happens to
+ * be in front of one must not pay twice.
+ */
+onPlayerClick = (playerId, wasAltClick, x, y, z, block, targetEId) => {
+  if (targetEId) return;
+  if (!isChestBlock(block)) return;
+  try {
+    service().clickPosition(playerId, [x, y, z]);
+  } catch (error) {
+    try {
+      api.log(`[Dungeon] chest failed: ${error && error.message ? error.message : error}`);
+    } catch (_) {
+      // Nothing left to do.
+    }
+  }
 };
 
 /**
