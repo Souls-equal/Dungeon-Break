@@ -99,12 +99,13 @@ Tous les textes visibles par les joueurs sont en anglais.
 
 - **Grille de chunks.** Les `viewChunks: 1` chunk autour de chaque joueur (3×3, soit 96 blocs de côté) sont mis en file, du plus proche au plus loin. Le joueur est toujours au milieu d'un anneau complet, donc le bord du monde bâti n'est jamais en vue.
 - **Une sonde par chunk candidat.** Un `getBlock` sur le Bedrock du chunk répond à tout : pas envoyé → il est demandé et prêt **2 ticks** plus tard ; déjà bâti → on passe ; vide → il est mis en file.
-- **Une copie par tick et par niveau.** La copie elle-même se fait en moins d'un tick ; elle n'est jamais doublée dans un tick.
+- **Une copie par tick et par donjon.** La copie elle-même se fait en moins d'un tick ; elle n'est jamais doublée dans un tick.
 - **Un scan toutes les 4 ticks**, borné à 8 nouvelles salles par scan. Un joueur immobile dont les salles sont faites ne coûte aucune lecture.
 - **Rien n'est écrit dans un chunk.** Le moteur ne connaît que `copyChunk` et des lectures : c'est ce qui rend les salles sûres à construire à la main.
 - **Une salle est reconnue par son Bedrock**, pas par un compteur : le tick suivant la copie, la sonde relit la destination et c'est le monde qui confirme. `/dbg mem` sépare les salles vues (`rooms`), celles en vol (`in flight`) et les chunks en cours de chargement.
 - **Entrée.** Demande des modèles, téléportation au centre du chunk d'entrée, `chunkLoadTicks: 2`, copie de la salle d'entrée (si elle n'y est pas déjà), tirage de l'atterrissage, puis le joueur y est posé. La gravité est coupée pendant ces ticks, ce qui remplace la boîte de murs de l'ancien moteur. Un sol qui ne vient pas est réessayé `entryMaxTicks` fois, puis c'est un message — jamais un joueur dans le vide.
-- **Atterrissage tiré au hasard.** Chaque entrée donne une colonne différente (deux joueurs sur la même plaque ne se croisent pas), à `landingMargin` cellules des murs, avec la hauteur du sol **de la salle qui a réellement été copiée** — pas celle du premier modèle de la liste. Les deux cases au-dessus doivent être vides, sinon un autre tirage ; après `landingDraws`, le centre de la salle. Un joueur ne peut donc pas apparaître dans un mur.
+- **Un donjon par entrée, à une place tirée au hasard.** Chaque entrée tire son origine `x, z` en chunks dans `-3125..3124` (**±100 000 blocs**, `y` reste la couche de la difficulté), à au moins `spawnSeparation: 20 000` blocs de toute autre entrée vivante (`spawnDraws: 24` essais, la plus éloignée l'emporte). Quitter libère la place. Deux joueurs ne peuvent donc pas se croiser, et rien n'est écrit dans les chunks : c'est le jeu qui vide la carte quand le propriétaire active le réglage. `/dbg` affiche l'origine, `/dbg mem` celle de chaque donjon.
+- **Atterrissage tiré au hasard.** Chaque entrée donne une colonne différente, à `landingMargin` cellules des murs, avec la hauteur du sol **de la salle qui a réellement été copiée** — pas celle du premier modèle de la liste. Les deux cases au-dessus doivent être vides, sinon un autre tirage ; après `landingDraws`, le centre de la salle. Un joueur ne peut donc pas apparaître dans un mur.
 
 ## Sources et version compacte
 
@@ -123,7 +124,7 @@ src/worldCode.js           lobby, pads, /dbg
 - `npm run build` régénère le fichier compact.
 - `npm run watch` le régénère à chaque sauvegarde dans `src/`.
 - `npm run check` vérifie que le bundle est à jour, valide les syntaxes, et refuse un bundle où `copyChunk` ou la table des modèles ont disparu au minification.
-- `npm test` lance les 64 tests : moteur, configuration, et le bundle réel exécuté dans un `vm` contre un faux serveur qui applique les règles de Bloxd.
+- `npm test` lance les 70 tests : moteur, configuration, et le bundle réel exécuté dans un `vm` contre un faux serveur qui applique les règles de Bloxd.
 
 Le workflow GitHub vérifie la version générée sur les Pull Requests et resynchronise `world-code/` après un merge dans `main`.
 

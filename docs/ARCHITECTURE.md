@@ -1,6 +1,6 @@
 # Architecture — génération par copies de chunks
 
-**Statut : livré.** 4 modules, 58 tests verts, bundle de 17 k caractères sur les 512 k autorisés.
+**Statut : livré.** 4 modules, 70 tests verts, bundle de 21 k caractères sur les 512 k autorisés.
 
 Ce document remplace l'architecture par ouvertures des Phases 0 à 4, supprimée avec son moteur. Il décrit ce qui existe, pas ce qui est prévu : toute divergence entre ce texte et le code est un défaut du texte.
 
@@ -52,7 +52,7 @@ Aucun de ces fichiers ne construit de géométrie, et **aucun n'écrit un bloc**
 1. **Une sonde par chunk à copier** (`probeChunk`) : un `getBlock` au centre du chunk destination (local 16,16), sur la première couche puis sur la dernière. Trois réponses, et c'est toute la mécanique de chargement : `null` → le chunk n'est pas envoyé, et cette lecture **est** la demande ; Bedrock → la salle est déjà là ; autre chose (Air, terre, pierre) → le chunk est là et ce n'est pas une salle, donc la copie se fait.
 2. **Un scan toutes les 4 ticks** (`scanTicks`). Pour chaque joueur du niveau, les `viewChunks: 1` chunks autour du sien sont examinés, du plus proche au plus loin, et **8 au plus** sont mis en file (`maxPlannedPerScan`).
 3. **Un chunk demandé n'est copié qu'à `tick + chunkLoadTicks: 2`.** C'est la mesure faite en jeu : deux ticks après le `getBlock`, le chunk existe et accepte une copie.
-4. **Une copie par niveau et par tick**, sans réglage : `placeOne` n'est appelé qu'une fois par niveau et par tick, et une copie se termine en moins d'un tick.
+4. **Une copie par entrée et par tick**, sans réglage : `placeOne` n'est appelé qu'une fois par entrée et par tick, et une copie se termine en moins d'un tick.
 5. **La copie est relue au tick suivant**, jamais dans le tick où elle est faite : une salle comptée est une salle que le monde montre. Une salle toujours invisible après `chunkLoadTicks` est une salle ratée : elle est comptée en échec et le scan suivant la remet en file.
 
 Il n'y a **aucun état intermédiaire** : une salle est là, ou elle n'est pas là — et c'est son Bedrock qui le dit.
@@ -77,23 +77,50 @@ Deux conséquences, et ce sont les deux plus gros bugs du moteur précédent qui
 - **Deux niveaux ne peuvent jamais se rencontrer.** Une salle remplit tout son chunk ; avec deux chunks d'écart vertical, deux salles ne se superposent jamais, quelle que soit la distance horizontale parcourue. L'ancien moteur posait deux donjons dans la même bande `Y = −1000` et devait espérer qu'ils ne se croisent pas.
 - **Le repère du joueur ne dépend plus de son altitude.** Un chunk est sur *sa* couche par construction : le joueur peut sauter, tomber ou être téléporté, la salle reste sur le plan du niveau.
 
+## 5bis. Un donjon par entrée, et une origine tirée à chaque fois
+
+Deux joueurs ne doivent **jamais** se croiser. Ce n'est pas une question de chance : c'est une
+contrainte du moteur, et elle tient en une décision.
+
+**Chaque entrée tire sa propre place.** Le premier état du moteur était un donjon par
+difficulté, construit à une origine fixe : la deuxième personne à prendre la même plaque
+arrivait dans les salles de la première. Il n'y a plus d'état par difficulté mais **un état par
+entrée** (`states`, une `Map` par `entryId`), et `claimOrigin` tire `x` et `z` en chunks dans
+`spawnChunkMin..spawnChunkMax` — soit **−3125..3124 chunks, ±100 000 blocs**, la plage demandée
+par le propriétaire du projet, `y` restant la couche de la difficulté.
+
+Le tirage n'est pas aveugle : une origine est acceptée si sa distance de Chebyshev, en chunks,
+à **toutes** les origines vivantes est au moins `ceil(spawnSeparation / 32) = 625` chunks
+(`spawnSeparation: 20 000` blocs). Sinon `spawnDraws: 24` essais, et la plus éloignée l'emporte.
+Deux donjons actifs sont donc à 20 000 blocs l'un de l'autre au minimum, et les joueurs ne
+peuvent pas se rencontrer à pied.
+
+**Quitter libère la place.** `leave` détruit l'état de l'entrée ; le tirage suivant peut
+réutiliser cette zone. Un donjon abandonné ne consomme donc ni mémoire ni espace, et rien n'est
+écrit dans les chunks — le nettoyage de la carte est un réglage du jeu, pas du code.
+
+**Ce qui reste partagé** : `disabled`, la liste des modèles illisibles. C'est une propriété du
+monde, pas d'un donjon : une salle qu'aucune lecture n'atteint est illisible pour tout le monde.
+
 ## 6. Entrer dans un niveau
 
 L'ordre est imposé par la plateforme, et il est respecté pas à pas :
 
 1. `warmTemplates` — une lecture par modèle, ce qui demande au serveur d'envoyer ces chunks.
-2. Gravité coupée (`gravityMultiplier: 0`), joueur téléporté **dans le chunk vide** de l'entrée. C'est le `setPosition` qui charge ce chunk.
-3. `chunkLoadTicks: 2` ticks plus tard, le chunk existe et accepte une copie.
-4. **La salle d'entrée est copiée** si elle n'est pas déjà là — c'est la sonde qui tranche, pas un compteur : re-rentrer dans un niveau ne reconstruit rien.
-5. Un tick plus tard, l'atterrissage est **tiré** et le sol sous la position est relu. S'il est là, le joueur y est posé. Sinon la copie est retentée, `entryMaxTicks: 4` fois au total, puis le joueur est renvoyé au lobby avec la raison.
+2. `claimOrigin` — la place de cette entrée : un nouveau tirage (`newOrigin`) à chaque descente, et l'ancien état est libéré.
+3. Gravité coupée (`gravityMultiplier: 0`), joueur téléporté **dans le chunk vide** de l'entrée. C'est le `setPosition` qui charge ce chunk.
+4. `chunkLoadTicks: 2` ticks plus tard, le chunk existe et accepte une copie.
+5. **La salle d'entrée est copiée** dans le chunk de cette entrée. C'est la sonde qui tranche, pas un compteur : si une salle y est déjà, rien n'est recopié.
+6. Un tick plus tard, l'atterrissage est **tiré** et le sol sous la position est relu. S'il est là, le joueur y est posé. Sinon la copie est retentée, `entryMaxTicks: 4` fois au total, puis le joueur est renvoyé au lobby avec la raison.
 
 **L'atterrissage est tiré au hasard, et sa hauteur est celle de la salle copiée.** Deux bugs étaient ici, et ils expliquent un joueur dans le sol :
 
 - la hauteur du sol venait du **premier modèle de la liste**, alors que `templateFor` tire une salle par chunk : l'entrée prend souvent une autre salle, avec un sol à une autre hauteur (2 pour l'une, 7 pour l'autre — et 7 est la bonne sur ce monde). La hauteur est maintenant lue dans `level.entrance`, la salle qui a réellement été copiée ;
-- la position était fixe, au centre de la salle : deux joueurs sur la même plaque apparaissaient l'un sur l'autre. Elle est maintenant tirée dans `landingMargin = 4` cellules, donc jamais contre les murs, et les deux cases au-dessus de la colonne doivent être vides — sinon un autre tirage. Un joueur ne peut donc pas apparaître dans un mur, et deux joueurs n'apparaissent pas au même endroit.
+- la position était fixe, au centre de la salle : deux joueurs sur la même plaque apparaissaient l'un sur l'autre. Elle est maintenant tirée dans `landingMargin = 4` cellules, donc jamais contre les murs, et les deux cases au-dessus de la colonne doivent être vides — sinon un autre tirage. Un joueur ne peut donc pas apparaître dans un mur. Deux joueurs, eux, ne se croisent plus du tout : chacun a son propre donjon (§5bis).
 
 La colonne est lue **dans le modèle**, pas dans la destination : au moment du tirage, la destination n'est pas encore copiée, donc elle ne contient que de l'Air. La copie conserve la disposition verticale, donc la hauteur lue dans la salle est exacte à l'arrivée.
-6. Les salles alentour sont mises en file.
+
+7. Les salles alentour sont mises en file, autour de l'origine de cette entrée.
 
 Rien n'est annoncé avant que le sol existe, et aucune plaque n'est posée : celle qui mène au niveau suivant est dans la salle.
 
@@ -103,7 +130,7 @@ Rien n'est annoncé avant que le sol existe, et aucune plaque n'est posée : cel
 | --- | --- | --- |
 | `getBlock` sur le Bedrock d'un chunk | avant chaque copie, puis au tick suivant | « je suppose que le chunk est chargé », et « je suppose que la copie a réussi » |
 | `getBlock(src)` sur un modèle | avant chaque copie | suppose que `copyChunk` lit un chunk chargé — faux, et silencieux |
-| `getBlock` en colonne | une fois par niveau | une constante « hauteur du sol » fausse pour un modèle sur dix |
+| `getBlock` en colonne | une fois par entrée | une constante « hauteur du sol » fausse pour un modèle sur dix |
 
 **Le moteur n'écrit jamais un bloc, nulle part.** C'est la contrainte que le propriétaire du projet a posée, et elle simplifie tout : aucune case d'une salle n'est réservée, aucun témoin, aucune plaque, aucune réparation. Les seules opérations autorisées dans un chunk sont `copyChunk` et des lectures.
 
@@ -127,6 +154,7 @@ Aucune de ces lectures n'est sur le chemin chaud : un scan lit un bloc par chunk
 | `level.ready` / `level.placingSince` | l'anneau du scan | une entrée par chunk demandé ou copié, supprimée dès qu'elle a servi |
 | `disabled` | une par salle | une salle illisible est désactivée une fois |
 | `playerDungeons` | un par joueur | supprimé par `onPlayerLeave` |
+| `states` (une par entrée) | une `Map` de chunks par entrée | l'état entier est détruit par `release`, donc aucune origine ne survit à un départ |
 
 Aucune de ces structures ne dépend du nombre de salles construites.
 
@@ -158,10 +186,10 @@ C'est la réponse à un vrai rapport de bug : « The room could not be built » 
 
 ## 11. Tests
 
-`npm test` — 64 tests.
+`npm test` — 70 tests.
 
 - `tests/dungeon/config.test.js` — une couche par difficulté, deux chunks d'écart ; un pad = une difficulté ; Hell est le dernier ; le tirage de salle est stable et étalé ; les huit niveaux tirent dans la même liste ; les salles d'un niveau passent avant les communes ; une salle malformée est ignorée sans casser le niveau ; **la conversion chunk → bloc, y compris sur les coordonnées négatives** ; les 15 salles livrées occupent 15 chunks distincts ; une salle ne porte aucune propriété.
-- `tests/dungeon/loader.test.js` — un faux serveur où **`copyChunk` depuis un chunk non chargé ne fait rien**, où une copie dans un chunk non envoyé est ignorée, et où **un `getBlock` de chunk non envoyé déclenche l'envoi, deux ticks plus tard** : une salle est une seule copie, la sonde distingue « pas envoyé » / « vide » / « salle déjà là », **et seul le Bedrock compte** : du terrain ordinaire à la même profondeur ne passe pas pour une salle, une salle du redémarrage précédent n'est pas recopiée, une copie est confirmée au tick suivant et jamais dans le sien, la file est bornée, une salle illisible est désactivée puis retirée de la file, **aucun bloc n'est écrit nulle part**, la hauteur de sol est lue et non configurée, un niveau vide ne coûte rien.
+- `tests/dungeon/loader.test.js` — un état par entrée : chaque entrée tire sa propre place dans le carré configuré, deux entrées vivantes restent à `spawnSeparation` l'une de l'autre, une place n'est tirée qu'une fois, `newOrigin` en donne une autre, un départ la rend et ne laisse rien en mémoire, deux joueurs de la même difficulté ne partagent ni place ni plan ; et un faux serveur où **`copyChunk` depuis un chunk non chargé ne fait rien**, où une copie dans un chunk non envoyé est ignorée, et où **un `getBlock` de chunk non envoyé déclenche l'envoi, deux ticks plus tard** : une salle est une seule copie, la sonde distingue « pas envoyé » / « vide » / « salle déjà là », **et seul le Bedrock compte** : du terrain ordinaire à la même profondeur ne passe pas pour une salle, une salle du redémarrage précédent n'est pas recopiée, une copie est confirmée au tick suivant et jamais dans le sien, la file est bornée, une salle illisible est désactivée puis retirée de la file, **aucun bloc n'est écrit nulle part**, la hauteur de sol est lue et non configurée, un niveau vide ne coûte rien.
 - `tests/world-code.test.js` — le bundle réel, dans un contexte `vm`, sur un faux serveur qui compte chaque `setBlock` comme une violation : compte à rebours, entrée, atterrissage sur le sol, gravité coupée puis rendue, une plaque Concrete construite dans la salle qui mène au niveau suivant, ordre des copies, joueur qui tombe et qui est reposé, aucun bloc écrit par le code, `/dbg level` qui dit pourquoi une entrée a échoué, commandes `/dbg`.
 
 Ce qui n'est **pas** testé, faute de pouvoir l'être hors du jeu : le délai exact au bout duquel un chunk lu devient écrivable — `chunkLoadTicks: 2` vient de la mesure faite **en jeu** par le propriétaire du projet, pas d'une simulation. Le coût d'une copie, lui, est connu : moins d'un tick.

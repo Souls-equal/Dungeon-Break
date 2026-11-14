@@ -43,43 +43,103 @@ export function chunkOfWorld(x, z) {
 
 export function createLoader({ api, log }) {
   const say = log || (() => {});
-  /** Per level state, created on first use and never rebuilt. */
-  const levels = new Map();
-  function levelState(difficulty) {
-    let level = levels.get(difficulty.id);
-    if (!level) {
-      level = {
-        difficulty,
-        /** Ticks this level has been running, for the load and verify delays. */
-        tick: 0,
-        templates: templatesFor(difficulty, say),
-        /** Templates whose source chunk cannot be read: never retried. */
-        disabled: new Set(),
-        /** Template id → how many times its source block read as `null`. */
-        templateAttempts: new Map(),
-        /** chunkX|chunkZ → "queued" | "placing" | "placed". Bounded to the view. */
-        planned: new Map(),
-        /** chunkX|chunkZ → first tick a copy into it may land. Bounded to the view. */
-        ready: new Map(),
-        /** chunkX|chunkZ → tick of the copy, until a probe sees the room. */
-        placingSince: new Map(),
-        /** Ordered work: the next chunk to copy. */
-        queue: [],
-        /** Rooms the world itself showed as built, this session. */
-        placed: 0,
-        failures: 0,
-        ticksSinceScan: DUNGEON_CONFIG.scanTicks,
-        /** The template the entrance chunk got, copied once. */
-        entrance: null,
-        /** Landing positions already handed out, "x,z", for this level's life. */
-        landings: new Set(),
-        /** Levels the shipped templates were already requested for. */
-        warmed: false,
-        warnedMissing: false,
-      };
-      levels.set(difficulty.id, level);
+  /**
+   * One state per **entry**, not per level.
+   *
+   * A dungeon is built at a place drawn for the player who enters it, so two players
+   * in the same difficulty are in two different dungeons: their plans, their queues
+   * and their copies are separate. The key is the entry id — a player id, or
+   * `"-" + difficulty.id` for a level driven without players — and `claimOrigin`
+   * prefers the player's own previous state when it draws.
+   *
+   * What is shared by all entries of a difficulty: the templates (one list) and the
+   * templates found unreadable (disabled for the session, which is a fact about the
+   * template, not about a dungeon).
+   */
+  const states = new Map();
+  /** difficulty.id → where the last entry of that difficulty was built. */
+  const lastOrigins = new Map();
+  /** Entry ids made of a player: the ones `release` can give back. */
+  const entryOf = (id) => String(id === undefined || id === null ? "-" : id);
+
+  function newState(difficulty, entryId) {
+    return {
+      entryId,
+      difficulty,
+      /** Ticks this dungeon has been running, for the load and verify delays. */
+      tick: 0,
+      templates: templatesFor(difficulty, say),
+      /** Templates whose source chunk cannot be read: never retried, session-wide. */
+      disabled: disabledTemplates(difficulty),
+      /** Template id → how many times its source block read as `null`. */
+      templateAttempts: new Map(),
+      /** chunkX|chunkZ → "queued" | "placing" | "placed". Bounded to the view. */
+      planned: new Map(),
+      /** chunkX|chunkZ → first tick a copy into it may land. Bounded to the view. */
+      ready: new Map(),
+      /** chunkX|chunkZ → tick of the copy, until a probe sees the room. */
+      placingSince: new Map(),
+      /** Ordered work: the next chunk to copy. */
+      queue: [],
+      /** Rooms the world itself showed as built, this dungeon. */
+      placed: 0,
+      failures: 0,
+      ticksSinceScan: DUNGEON_CONFIG.scanTicks,
+      /** Where this dungeon is built. Every entry draws a new place. */
+      origin: null,
+      /** The template the entrance chunk got, copied once. */
+      entrance: null,
+      /** Landing positions already handed out, "x,z", for this dungeon's life. */
+      landings: new Set(),
+      /** Was this difficulty's template set already requested? */
+      warmed: false,
+    };
+  }
+
+  /**
+   * The state a call is about.
+   *
+   * With an entry id it is **that entry's** dungeon, created on demand. Without one
+   * the callers that predate per-entry dungeons get the most recent entry of the
+   * difficulty — which is what a report, a rescue or a manual entry mean.
+   */
+  function levelState(difficulty, entryId) {
+    const id = entryOf(entryId === undefined ? null : entryId);
+    if (entryId !== undefined && entryId !== null) {
+      let state = states.get(id);
+      if (!state || state.difficulty.id !== difficulty.id) {
+        state = newState(difficulty, id);
+        states.set(id, state);
+      }
+      return state;
     }
-    return level;
+    if (lastOrigins.has(difficulty.id)) return lastOrigins.get(difficulty.id);
+    const state = newState(difficulty, "-" + difficulty.id);
+    states.set(state.entryId, state);
+    lastOrigins.set(difficulty.id, state);
+    return state;
+  }
+
+  /** Remembers which entry a difficulty is currently being played in. */
+  function remember(difficulty, state) {
+    lastOrigins.set(difficulty.id, state);
+  }
+
+  /**
+   * Templates a difficulty may no longer use, session-wide.
+   *
+   * A template that cannot be read is not a property of one dungeon: it is a
+   * coordinate, and every entry of the level would spend its copies on the same
+   * silence. Disabling it once is the whole point.
+   */
+  const disabledByDifficulty = new Map();
+  function disabledTemplates(difficulty) {
+    let set = disabledByDifficulty.get(difficulty.id);
+    if (!set) {
+      set = new Set();
+      disabledByDifficulty.set(difficulty.id, set);
+    }
+    return set;
   }
 
   /** Templates of a level that are still usable. */
@@ -91,6 +151,98 @@ export function createLoader({ api, log }) {
   /** The template a chunk of a level gets, or null when none is usable. */
   function templateAt(level, chunkX, chunkZ) {
     return templateFor(usableTemplates(level), level.difficulty, chunkX, chunkZ);
+  }
+
+  /** A chunk coordinate drawn inside the square every entry builds in. */
+  function drawOrigin() {
+    const span = DUNGEON_CONFIG.spawnChunkMax - DUNGEON_CONFIG.spawnChunkMin + 1;
+    return {
+      x: DUNGEON_CONFIG.spawnChunkMin + Math.floor(Math.random() * span),
+      z: DUNGEON_CONFIG.spawnChunkMin + Math.floor(Math.random() * span),
+    };
+  }
+
+  /**
+   * Gives a dungeon a place, and keeps it away from the other dungeons.
+   *
+   * **Every entry draws a new place.** That is what makes two players certain not to
+   * meet: the square is 200 000 blocks across and a view is 96 blocks wide, so the
+   * only way to meet is to draw the same spot twice — which is checked, not hoped.
+   *
+   * The check is against the origins of every dungeon that exists right now, and the
+   * distance is measured between chunk coordinates: cheap, and never less than the
+   * block distance. A dungeon that already has a place keeps it — calling this twice
+   * must not move a player's rooms. A fresh place is asked for by `newOrigin`.
+   *
+   * `spawnSeparation` is a floor, not a theorem: past a few hundred simultaneous
+   * players the draws run out and the farthest candidate wins, because a player
+   * waiting in the air is worse than two dungeons that are merely far apart. The
+   * clean-up is the game's own, as the owner of the project put it: the map clears
+   * itself.
+   */
+  function claimOrigin(difficulty, entryId) {
+    const state = levelState(difficulty, entryId);
+    if (state.origin) return state.origin;
+
+    const separationChunks = Math.ceil(DUNGEON_CONFIG.spawnSeparation / SIZE);
+    // Every dungeon that exists right now. A dungeon whose player left was released
+    // and is not in this list, so its place may be drawn again — which is what keeps
+    // the square usable after a few hundred entries.
+    const others = [];
+    for (const other of states.values()) {
+      if (other === state || !other.origin) continue;
+      others.push(other.origin);
+    }
+
+    let best = null;
+    let bestDistance = -1;
+    for (let draw = 0; draw < DUNGEON_CONFIG.spawnDraws; draw += 1) {
+      const candidate = drawOrigin();
+      let nearest = Infinity;
+      for (const other of others) {
+        nearest = Math.min(nearest, Math.max(Math.abs(other.x - candidate.x), Math.abs(other.z - candidate.z)));
+      }
+      if (nearest >= separationChunks) {
+        best = candidate;
+        break;
+      }
+      if (nearest > bestDistance) {
+        best = candidate;
+        bestDistance = nearest;
+      }
+    }
+    state.origin = best;
+    remember(difficulty, state);
+    return best;
+  }
+
+  /** Has this dungeon already got a place? Calling it twice must not draw again. */
+  function hasOrigin(difficulty, entryId) {
+    return Boolean(levelState(difficulty, entryId).origin);
+  }
+
+  /**
+   * Gives a dungeon a new place on request.
+   *
+   * Used by an entry that wants a fresh dungeon for the same player — the pad to the
+   * same difficulty, or a re-entry after leaving. Nothing is deleted: the old rooms
+   * stay where they are and are never visited again.
+   */
+  function newOrigin(difficulty, entryId) {
+    const state = levelState(difficulty, entryId);
+    state.origin = null;
+    state.landings.clear();
+    state.entrance = null;
+    return claimOrigin(difficulty, entryId);
+  }
+
+  /** Forgets a dungeon entirely: what a player leaving gives up. */
+  function release(difficulty, entryId) {
+    const id = entryOf(entryId);
+    const state = states.get(id);
+    if (!state) return;
+    states.delete(id);
+    if (lastOrigins.get(difficulty.id) === state) lastOrigins.delete(difficulty.id);
   }
 
   /**
@@ -195,6 +347,8 @@ export function createLoader({ api, log }) {
   function floorLocalYAt(baseX, baseY, baseZ, localX, localZ) {
     for (let cell = 0; cell < DUNGEON_CONFIG.floorProbeMaxCells; cell += 1) {
       const name = readCell(baseX + localX, baseY + cell, baseZ + localZ);
+      // `null` is "the chunk is not sent", not "there is no floor": a room whose
+      // columns are still loading must not be read as a room without a floor.
       if (name === null) return null;
       if (name === "Air" || name === DUNGEON_CONFIG.solidBlock) continue;
       return cell;
@@ -233,17 +387,19 @@ export function createLoader({ api, log }) {
    * `null` means the entrance room cannot be read at all: the level cannot be built,
    * and the caller says so instead of dropping the player into the void.
    */
-  function landingPosition(difficulty) {
-    const level = levelState(difficulty);
-    const template = level.entrance || templateAt(level, DUNGEON_CONFIG.originChunkX, DUNGEON_CONFIG.originChunkZ);
+  function landingPosition(difficulty, entryId) {
+    const level = levelState(difficulty, entryId);
+    const origin = level.origin;
+    if (!origin) return null;
+    const template = level.entrance || templateAt(level, origin.x, origin.z);
     if (!template) return null;
 
     const sourceX = Math.floor(template.src[0] / SIZE) * SIZE;
     const sourceY = Math.floor(template.src[1] / SIZE) * SIZE;
     const sourceZ = Math.floor(template.src[2] / SIZE) * SIZE;
-    const toX = DUNGEON_CONFIG.originChunkX * SIZE;
+    const toX = origin.x * SIZE;
     const toY = floorOfLayer(difficulty);
-    const toZ = DUNGEON_CONFIG.originChunkZ * SIZE;
+    const toZ = origin.z * SIZE;
     const [centreX, centreZ] = DUNGEON_CONFIG.probeLocalXZ;
     const margin = DUNGEON_CONFIG.landingMargin;
     const span = SIZE - margin * 2;
@@ -394,8 +550,8 @@ export function createLoader({ api, log }) {
    * Doing it when a level starts gives the first copies something to read, which is
    * the only reason this exists — the loading itself is not special-cased anywhere.
    */
-  function warmTemplates(difficulty) {
-    const level = levelState(difficulty);
+  function warmTemplates(difficulty, entryId) {
+    const level = levelState(difficulty, entryId);
     if (level.warmed) return 0;
     level.warmed = true;
     const seen = new Set();
@@ -418,16 +574,18 @@ export function createLoader({ api, log }) {
    * special is only that it happens before the rest, and that the player's landing
    * depends on it.
    */
-  function placeEntrance(difficulty) {
-    const level = levelState(difficulty);
-    const template = templateAt(level, DUNGEON_CONFIG.originChunkX, DUNGEON_CONFIG.originChunkZ)
+  function placeEntrance(difficulty, entryId) {
+    const level = levelState(difficulty, entryId);
+    const origin = level.origin;
+    if (!origin) return null;
+    const template = templateAt(level, origin.x, origin.z)
       || usableTemplates(level)[0];
     if (!template) return null;
     // Which room ended up in the entrance chunk: the landing reads its floor height,
     // and it is the draw's choice, not the catalogue's first entry.
     level.entrance = template;
-    const originX = DUNGEON_CONFIG.originChunkX;
-    const originZ = DUNGEON_CONFIG.originChunkZ;
+    const originX = origin.x;
+    const originZ = origin.z;
     const key = chunkKey(originX, originZ);
     // A player who dies, leaves and comes back must not trigger a second copy of the
     // same room, and neither must a restart: the room's own Bedrock answers for it.
@@ -558,8 +716,8 @@ export function createLoader({ api, log }) {
    * already a room is a level to reset, and a floor that cannot be found is a room
    * with no floor to land on.
    */
-  function entranceFailureMessage(difficulty) {
-    const info = explainEntrance(difficulty);
+  function entranceFailureMessage(difficulty, entryId) {
+    const info = explainEntrance(difficulty, entryId);
     if (info.templateIndex === null) return "This level has no readable room template.";
     if (info.templateSource === null) {
       return `Room #${info.templateIndex} is not loaded: check its chunk ${info.templateChunk.join(",")}.`;
@@ -621,8 +779,8 @@ export function createLoader({ api, log }) {
    * at all, and costs nothing — no scan, no copy, no read.
    */
   function tick(chunksByLevel) {
-    for (const { difficulty, chunks } of chunksByLevel) {
-      const level = levelState(difficulty);
+    for (const { difficulty, entryId, chunks } of chunksByLevel) {
+      const level = levelState(difficulty, entryId);
       if (level.templates.length === 0 || usableTemplates(level).length === 0) continue;
       if (chunks.length === 0) continue;
 
@@ -651,15 +809,15 @@ export function createLoader({ api, log }) {
    * engine does and names the case — it is a diagnostic, so it reads and writes
    * nothing beyond the probe.
    */
-  function explainEntrance(difficulty) {
-    const level = levelState(difficulty);
-    const chunkX = DUNGEON_CONFIG.originChunkX;
-    const chunkZ = DUNGEON_CONFIG.originChunkZ;
+  function explainEntrance(difficulty, entryId) {
+    const level = levelState(difficulty, entryId);
+    const chunkX = level.origin ? level.origin.x : null;
+    const chunkZ = level.origin ? level.origin.z : null;
     const chunkY = difficulty.chunkY;
     const [localX, localZ] = DUNGEON_CONFIG.probeLocalXZ;
-    const probe = probeChunk(chunkX, chunkY, chunkZ);
-    const bottom = readCell(chunkX * SIZE + localX, chunkY * SIZE, chunkZ * SIZE + localZ);
-    const top = readCell(chunkX * SIZE + localX, chunkY * SIZE + SIZE - 1, chunkZ * SIZE + localZ);
+    const probe = chunkX === null ? { loaded: false, occupied: false } : probeChunk(chunkX, chunkY, chunkZ);
+    const bottom = chunkX === null ? null : readCell(chunkX * SIZE + localX, chunkY * SIZE, chunkZ * SIZE + localZ);
+    const top = chunkX === null ? null : readCell(chunkX * SIZE + localX, chunkY * SIZE + SIZE - 1, chunkZ * SIZE + localZ);
     const template = level.entrance || usableTemplates(level)[0];
     return {
       chunkX,
@@ -695,8 +853,8 @@ export function createLoader({ api, log }) {
    * it: rooms found by their Bedrock, plus those still in flight. `placed` is the
    * total the world confirmed, `inFlight` those copied but not seen yet.
    */
-  function statsOf(difficulty) {
-    const level = levelState(difficulty);
+  function statsOf(difficulty, entryId) {
+    const level = levelState(difficulty, entryId);
     let placedInView = 0;
     let inFlight = 0;
     for (const state of level.planned.values()) {
@@ -723,6 +881,10 @@ export function createLoader({ api, log }) {
     floorLocalYAt,
     isPlaced,
     probeChunk,
+    claimOrigin,
+    hasOrigin,
+    newOrigin,
+    release,
     explainEntrance,
     entranceFailureMessage,
     planAround,
@@ -731,6 +893,6 @@ export function createLoader({ api, log }) {
     warmTemplates,
     tick,
     statsOf,
-    get levels() { return levels; },
+    get states() { return states; },
   };
 }

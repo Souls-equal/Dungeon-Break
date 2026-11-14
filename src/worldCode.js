@@ -242,7 +242,9 @@ function runDebugCommand(playerId, verb) {
     for (const row of rows) {
       debugSay(
         playerId,
-        `[dbg] ${row.difficulty} · layer ${row.chunkY} · templates ${row.templates} (off ${row.disabled})`,
+        `[dbg] ${row.difficulty} · layer ${row.chunkY} · room origin`
+          + ` ${row.origin ? row.origin.x + "," + row.origin.z : "none"}`
+          + ` · templates ${row.templates} (off ${row.disabled})`,
       );
       debugSay(
         playerId,
@@ -265,7 +267,8 @@ function runDebugCommand(playerId, verb) {
   debugSayAll(playerId, [
     `[dbg] ${report.difficulty.label} · layer ${report.chunkY} · tick ${report.ticks}`,
     `[dbg] you ${report.position.map((value) => Math.round(value * 10) / 10).join(", ")}`
-      + ` · chunk ${report.chunk.x},${report.chunk.z}`,
+      + ` · chunk ${report.chunk.x},${report.chunk.z}`
+      + ` · origin ${report.origin ? report.origin.x + "," + report.origin.z : "none"}`,
     `[dbg] rooms planned ${report.planned} · queued ${report.queued} · placed ${report.placed}`
       + ` · templates ${report.templates} (off ${report.disabled})`,
     `[dbg] room example chunk ${report.exampleChunk ? report.exampleChunk.join(",") : "none"} — /dbg templates`,

@@ -90,9 +90,26 @@ export const DUNGEON_CONFIG = {
   firstLayerChunkY: -32,
   layerStrideChunks: 2,
 
-  // The dungeon starts at this chunk coordinate. Nothing else is built there.
-  originChunkX: 0,
-  originChunkZ: 0,
+  // ------------------------------------------------------------ where it is ---
+  // **Every entry draws a new place.** A level is built around a chunk coordinate
+  // drawn at random in this square, so two players who start at the same moment are
+  // a hundred thousand blocks apart, and a player who comes back does not find the
+  // ruins of their previous run.
+  //
+  // In chunks: -3125..3124 is blocks -100 000..99 999. Half a chunk of margin is
+  // enough — every chunk of the view is at least one chunk inside the square.
+  spawnChunkMin: -3125,
+  spawnChunkMax: 3124,
+
+  // How far two entries of the same level are kept apart, in blocks. Each entry costs
+  // one line in a map while its player is in the level, so this is a floor and not a
+  // guarantee for a thousand players — but it is what makes "they will not meet"
+  // true in practice, and it is checked before anything is copied.
+  spawnSeparation: 20_000,
+
+  // Draws tried to find a free square. After that, the level is built anyway: a
+  // player waiting in the air is worse than two dungeons that are merely far apart.
+  spawnDraws: 24,
 
   // How many ticks the entrance may wait for its floor before the player is sent
   // back to the lobby with a message.

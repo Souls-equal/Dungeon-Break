@@ -65,31 +65,38 @@ function createWorld(onlinePlayerIds, options = {}) {
   const key = (x, y, z) => `${Math.floor(x)}|${Math.floor(y)}|${Math.floor(z)}`;
 
   // A room: floor at local y 2, four walls, and a ceiling.
-  const base = [Math.floor(TEST_SRC[0] / SIZE) * SIZE, Math.floor(TEST_SRC[1] / SIZE) * SIZE, Math.floor(TEST_SRC[2] / SIZE) * SIZE];
+  //
+  // `TEST_TEMPLATES` gives a `src` in block coordinates, which the engine floors to
+  // the chunk it copies — so every template in the test table gets a room built at
+  // that same block origin. The engine picks one of them at random for a room, and a
+  // table whose other entries are empty is a table of rooms with no floor.
   const floorY = 2;
-  for (let x = 0; x < SIZE; x += 1) {
-    for (let z = 0; z < SIZE; z += 1) {
-      template.set(key(base[0] + x, base[1] + floorY, base[2] + z), "Stone Bricks");
-      template.set(key(base[0] + x, base[1] + floorY + 5, base[2] + z), "Smooth Stone");
-    }
-  }
-  for (let y = 0; y <= floorY + 1; y += 1) {
+  for (const entry of TEST_TEMPLATES) {
+    const base = entry.src.map((value) => Math.floor(value / SIZE) * SIZE);
     for (let x = 0; x < SIZE; x += 1) {
-      for (const z of [0, SIZE - 1]) {
-        // A door in the middle of each face, so a room is a room and not a box.
-        if (z === 0 && x >= 13 && x <= 18 && y <= floorY + 1) continue;
-        template.set(key(base[0] + x, base[1] + y, base[2] + z), "Stone");
-      }
-      for (const xx of [0, SIZE - 1]) {
-        template.set(key(base[0] + xx, base[1] + y, base[2] + x), "Stone");
+      for (let z = 0; z < SIZE; z += 1) {
+        template.set(key(base[0] + x, base[1] + floorY, base[2] + z), "Stone Bricks");
+        template.set(key(base[0] + x, base[1] + floorY + 5, base[2] + z), "Smooth Stone");
       }
     }
-  }
-  // Bedrock under the floor and over the ceiling: the record a built room carries.
-  for (let x = 0; x < SIZE; x += 1) {
-    for (let z = 0; z < SIZE; z += 1) {
-      template.set(key(base[0] + x, base[1] + floorY - 1, base[2] + z), "Bedrock");
-      template.set(key(base[0] + x, base[1] + SIZE - 1, base[2] + z), "Bedrock");
+    for (let y = 0; y <= floorY + 1; y += 1) {
+      for (let x = 0; x < SIZE; x += 1) {
+        for (const z of [0, SIZE - 1]) {
+          // A door in the middle of each face, so a room is a room and not a box.
+          if (z === 0 && x >= 13 && x <= 18 && y <= floorY + 1) continue;
+          template.set(key(base[0] + x, base[1] + y, base[2] + z), "Stone");
+        }
+        for (const xx of [0, SIZE - 1]) {
+          template.set(key(base[0] + xx, base[1] + y, base[2] + x), "Stone");
+        }
+      }
+    }
+    // Bedrock under the floor and over the ceiling: the record a built room carries.
+    for (let x = 0; x < SIZE; x += 1) {
+      for (let z = 0; z < SIZE; z += 1) {
+        template.set(key(base[0] + x, base[1] + floorY - 1, base[2] + z), "Bedrock");
+        template.set(key(base[0] + x, base[1] + SIZE - 1, base[2] + z), "Bedrock");
+      }
     }
   }
 
@@ -203,6 +210,16 @@ function tickUntil(world, predicate, limit = 4000) {
   return predicate();
 }
 
+/** The place this player's dungeon was built at, read from the world code itself. */
+function originOf(world, playerId = "p1") {
+  // The `/dbg` report is the only public door to it, so read it where it is printed.
+  const before = world.messages.length;
+  world.context.playerCommand(playerId, "level");
+  const lines = world.messages.slice(before).map((entry) => entry.message).join("\n");
+  const match = lines.match(/origin (-?\d+),(-?\d+)/);
+  return match ? { x: Number(match[1]), z: Number(match[2]) } : null;
+}
+
 const said = (world, playerId) => world.messages
   .filter((entry) => entry.playerId === playerId)
   .map((entry) => entry.message);
@@ -282,9 +299,12 @@ test("a level is one chunk copy, and the player lands on its floor", () => {
     tickUntil(world, () => said(world, "p1").includes("Level: Very Easy"), 400);
 
     // The rooms around the entrance follow within a few ticks; what matters is that
-    // the first copy, the one the player lands on, is the entrance's chunk.
+    // the first copy, the one the player lands on, is the entrance's chunk — which is
+    // at the place this entry drew.
     assert.ok(world.copies.length >= 1, "nothing was copied");
-    assert.deepEqual(world.copies[0].to, [0, VERY_EASY.chunkY * SIZE, 0],
+    const origin = originOf(world);
+    assert.ok(origin, "no place was drawn for the dungeon");
+    assert.deepEqual(world.copies[0].to, [origin.x * SIZE, VERY_EASY.chunkY * SIZE, origin.z * SIZE],
       `the first copy is not the entrance: ${JSON.stringify(world.copies[0])}`);
     const landing = world.positions.at(-1).position;
     // Two blocks above the floor block the template has at local y 2.
@@ -292,14 +312,14 @@ test("a level is one chunk copy, and the player lands on its floor", () => {
     assert.equal(Math.abs(landing[0] % 1), 0.5, "the player is not in the middle of a cell on x");
     assert.equal(Math.abs(landing[2] % 1), 0.5, "the player is not in the middle of a cell on z");
     // Away from the room's walls, whatever the draw.
-    const localX = Math.floor(landing[0]);
-    const localZ = Math.floor(landing[2]);
+    const localX = Math.floor(landing[0]) - origin.x * SIZE;
+    const localZ = Math.floor(landing[2]) - origin.z * SIZE;
     assert.ok(localX >= DUNGEON_CONFIG.landingMargin && localX < SIZE - DUNGEON_CONFIG.landingMargin,
       `the player lands in the wall at x ${localX}`);
     assert.ok(localZ >= DUNGEON_CONFIG.landingMargin && localZ < SIZE - DUNGEON_CONFIG.landingMargin,
       `the player lands in the wall at z ${localZ}`);
     // And the floor is really there, read from the world and not from a tally.
-    assert.equal(world.blockAt(localX, landing[1] - DUNGEON_CONFIG.spawnAboveFloor, localZ),
+    assert.equal(world.blockAt(Math.floor(landing[0]), landing[1] - DUNGEON_CONFIG.spawnAboveFloor, Math.floor(landing[2])),
       "Stone Bricks");
     assert.ok(said(world, "p1").includes("Level: Very Easy"));
   }
@@ -328,7 +348,7 @@ test("the world code writes no block into a room", () => {
 test("a Concrete pad built into a room leads to the next level", () => {
   const world = createWorld(["p1"]);
   startDungeon(world, "p1");
-  tickUntil(world, () => world.positions.length >= 2, 200);
+  tickUntil(world, () => said(world, "p1").includes("Level: Very Easy"), 400);
   const landing = world.positions.at(-1).position;
 
   // The pad is part of the room: it is in the template, and stepping on it is all
@@ -344,6 +364,11 @@ test("a Concrete pad built into a room leads to the next level", () => {
   const last = world.positions.at(-1).position;
   // The wait place is inside the easy level's chunk, which is what loads it.
   assert.equal(Math.floor(last[1] / SIZE), findDifficulty("easy").chunkY);
+  // And it is a place of its own: the new level drew a square, so the player does not
+  // rebuild in the rooms they just left.
+  const next = originOf(world);
+  assert.ok(next, "the next level has no place");
+  assert.notDeepEqual(next, { x: Math.floor(landing[0] / SIZE), z: Math.floor(landing[2] / SIZE) });
 });
 
 test("a room is never copied from an unloaded template, and that is said once", () => {
@@ -374,18 +399,28 @@ test("a level with no template at all is a message, not a fall", () => {
 test("walking around copies the rooms the player can see, one per tick", () => {
   const world = createWorld(["p1"]);
   startDungeon(world, "p1");
-  tickUntil(world, () => world.positions.length >= 2, 200);
-  const landing = world.positions.at(-1).position;
+  tickUntil(world, () => said(world, "p1").includes("Level: Very Easy"), 400);
 
+  const origin = originOf(world);
+  assert.ok(origin, "no place was drawn for the dungeon");
+  const landing = world.positions.at(-1).position;
   world.tick(5);
-  const entranceCopies = world.copies.filter((copy) => copy.to[0] === 0 && copy.to[2] === 0);
+  const entranceCopies = world.copies.filter(
+    (copy) => copy.to[0] === origin.x * SIZE && copy.to[2] === origin.z * SIZE,
+  );
   assert.equal(entranceCopies.length, 1, "the entrance was not copied exactly once");
   assert.ok(world.copies.length > 1, "the rooms around the player were not queued at all");
 
+  // Walking away from the entrance asks for rooms that are not built yet, so this is
+  // where the per-tick budget shows: the rooms that are out of view are the ones the
+  // scan picks up, one copy at a time.
   const before = world.copies.length;
-  world.tick(60);
+  world.movePlayer("p1", [landing[0] + 4 * SIZE, landing[1], landing[2] + 4 * SIZE]);
+  world.tick(1);
+  assert.ok(world.copies.length - before <= 1, `${world.copies.length - before} copies in one tick`);
+  world.tick(59);
   const after = world.copies.length - before;
-  assert.ok(after > 0, "no room was built around a player standing in the dungeon");
+  assert.ok(after > 0, "no room was built around a player who walked into the dungeon");
   // One copy per tick is the whole budget; sixty ticks cannot produce more.
   assert.ok(after <= 60, `${after} copies in 60 ticks, which is more than the budget`);
 
@@ -394,20 +429,23 @@ test("walking around copies the rooms the player can see, one per tick", () => {
     assert.equal(Math.floor(copy.to[1] / SIZE), VERY_EASY.chunkY,
       `a copy landed on chunk layer ${Math.floor(copy.to[1] / SIZE)}`);
   }
-  void landing;
 });
 
 test("the rooms the player walks towards are copied before the far ones", () => {
   const world = createWorld(["p1"]);
   startDungeon(world, "p1");
-  tickUntil(world, () => world.positions.length >= 2, 200);
+  tickUntil(world, () => said(world, "p1").includes("Level: Very Easy"), 400);
+  const origin = originOf(world);
+  assert.ok(origin, "no place was drawn for the dungeon");
   world.tick(30);
-  // The entrance is at chunk 0,0; the first copies are the ones next to it.
-  const first = world.copies.slice(0, 5).map((copy) => `${Math.floor(copy.to[0] / SIZE)},${Math.floor(copy.to[2] / SIZE)}`);
-  assert.equal(first[0], "0,0", "the first room copied is not the one the player is in");
-  for (const position of first.slice(1)) {
-    const [x, z] = position.split(",").map(Number);
-    assert.ok(Math.abs(x) + Math.abs(z) <= 2, `room ${position} was copied before the near ones`);
+  // The entrance is where this entry drew; the first copies are the ones next to it.
+  const first = world.copies.slice(0, 5).map((copy) => [
+    Math.floor(copy.to[0] / SIZE) - origin.x,
+    Math.floor(copy.to[2] / SIZE) - origin.z,
+  ]);
+  assert.deepEqual(first[0], [0, 0], "the first room copied is not the one the player is in");
+  for (const [x, z] of first.slice(1)) {
+    assert.ok(Math.abs(x) + Math.abs(z) <= 2, `room ${x},${z} from the entrance was copied before the near ones`);
   }
 });
 
@@ -425,10 +463,15 @@ test("a player who drops out of the world is put back on a floor", () => {
   world.tick(2);
   const rescued = world.positions.at(-1).position;
   assert.equal(rescued[1], landing[1], "the player was left falling");
-  assert.ok(rescued[0] >= DUNGEON_CONFIG.landingMargin && rescued[0] < SIZE - DUNGEON_CONFIG.landingMargin,
-    `the rescue position x ${rescued[0]} is against a wall`);
-  assert.ok(rescued[2] >= DUNGEON_CONFIG.landingMargin && rescued[2] < SIZE - DUNGEON_CONFIG.landingMargin,
-    `the rescue position z ${rescued[2]} is against a wall`);
+  // The rescue happens inside the room, so its local column is what has to be away
+  // from the walls — a random place in the world is no reason to skip that.
+  const origin = originOf(world);
+  const localX = Math.floor(rescued[0]) - origin.x * SIZE;
+  const localZ = Math.floor(rescued[2]) - origin.z * SIZE;
+  assert.ok(localX >= DUNGEON_CONFIG.landingMargin && localX < SIZE - DUNGEON_CONFIG.landingMargin,
+    `the rescue position x ${localX} in the room is against a wall`);
+  assert.ok(localZ >= DUNGEON_CONFIG.landingMargin && localZ < SIZE - DUNGEON_CONFIG.landingMargin,
+    `the rescue position z ${localZ} in the room is against a wall`);
 });
 
 test("leaving the game puts the player back in the lobby", () => {
@@ -502,7 +545,9 @@ test("/dbg mem reports the counters that must stay bounded", () => {
   world.context.playerCommand("p1", "mem");
   const lines = world.messages.slice(before).map((entry) => entry.message);
   const header = lines.find((message) => /layer/.test(message));
-  assert.match(header, /Very Easy · layer -32 · templates \d+/);
+  // The header names the level and the place this entry drew, because two players on
+  // the same level no longer share either.
+  assert.match(header, /Very Easy · layer -32 · room origin -?\d+,-?\d+ · templates \d+/);
   assert.match(lines.join("\n"), /queued \d+ · planned \d+ · rooms \d+ \(\d+ in flight\)/);
   assert.match(lines.join("\n"), /placed \d+ · loading \d+ · failed \d+/);
 });
