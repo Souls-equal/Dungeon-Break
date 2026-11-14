@@ -1,6 +1,6 @@
 # Architecture — génération par copies de chunks
 
-**Statut : livré.** 4 modules, 76 tests verts, bundle de 21 k caractères sur les 512 k autorisés.
+**Statut : livré.** 4 modules, 78 tests verts, bundle de 21 k caractères sur les 512 k autorisés.
 
 Ce document remplace l'architecture par ouvertures des Phases 0 à 4, supprimée avec son moteur. Il décrit ce qui existe, pas ce qui est prévu : toute divergence entre ce texte et le code est un défaut du texte.
 
@@ -115,7 +115,16 @@ L'ordre est imposé par la plateforme, et il est respecté pas à pas :
 
 Maintenant l'ordre est : **copier, puis lire**. `landingPosition` lit la colonne de la salle dans **le chunk de destination** (`origin.x, origin.y, origin.z`) — la copie conserve la disposition locale, donc c'est le bloc que le joueur aura sous les pieds — et la hauteur est la coordonnée absolue de ce bloc, jamais une addition. La vérification qui suit relit le bloc sous la position que le serveur a acceptée (`getPosition`), et le joueur reçoit `Landed at y … · floor block at y …` : deux nombres à recopier dans un rapport de bug.
 
-**La position est tirée au hasard**, dans `landingMargin = 4` cellules, donc jamais contre les murs, et les deux cases au-dessus de la colonne doivent être vides — sinon un autre tirage. Un joueur ne peut donc pas apparaître dans un mur, et deux joueurs ne se croisent plus du tout : chacun a son propre donjon (§5bis).
+**La position est ensuite testée là où le joueur sera**, et c'est ce qui remplace toute théorie sur la hauteur. Le propriétaire du projet a décrit la recherche, et elle est implémentée telle quelle :
+
+1. la colonne est tirée au hasard dans `landingMargin = 4` cellules — jamais contre les murs ;
+2. le moteur teste la case du milieu, puis **le tour** (les 8 cases autour), en demandant au monde si la case **et celle au-dessus** sont de l'Air : ce sont les deux cases qu'occupe un joueur debout ;
+3. si rien ne passe, la position monte de **+1** et la recherche recommence, `landingSearchLift: 2` fois ;
+4. si tout est bloqué, une **autre colonne est tirée dans le même chunk** et la recherche repart, `landingSearchTries: 3` fois.
+
+Si rien ne marche, `landingPosition` répond `null` et le joueur reçoit un message : il n'est jamais posé dans la pierre. La hauteur de départ est `spawnAboveFloor = 7`, la valeur mesurée en jeu (2 dans l'ancien moteur) plus les 5 blocs que le propriétaire a demandés — c'est un point de départ, la recherche corrige à partir de là.
+
+Un joueur ne peut donc pas apparaître dans un mur, ni dans le sol, et deux joueurs ne se croisent plus du tout : chacun a son propre donjon (§5bis).
 
 7. Les salles alentour sont mises en file, autour de l'origine de cette entrée.
 
@@ -214,7 +223,7 @@ C'est la réponse à un vrai rapport de bug : « The room could not be built » 
 
 ## 11. Tests
 
-`npm test` — 76 tests.
+`npm test` — 78 tests.
 
 - `tests/dungeon/config.test.js` — une difficulté est un ordre et ne porte **aucune** hauteur ; la plage verticale tirée commence au-dessus de `y = 0` et couvre bien 1 000 à 100 000 blocs ; un pad = une difficulté ; Hell est le dernier ; le tirage de salle est stable et étalé ; les huit niveaux tirent dans la même liste ; les salles d'un niveau passent avant les communes ; une salle malformée est ignorée sans casser le niveau ; **la conversion chunk → bloc, y compris sur les coordonnées négatives** ; les 15 salles livrées occupent 15 chunks distincts ; une salle ne porte aucune propriété.
 - `tests/dungeon/loader.test.js` — un état par entrée : chaque entrée tire sa propre place dans le carré configuré, deux entrées vivantes restent à `spawnSeparation` l'une de l'autre, une place n'est tirée qu'une fois, `newOrigin` en donne une autre, un départ la rend et ne laisse rien en mémoire, deux joueurs de la même difficulté ne partagent ni place ni plan ; et un faux serveur où **`copyChunk` depuis un chunk non chargé ne fait rien**, où une copie dans un chunk non envoyé est ignorée, et où **un `getBlock` de chunk non envoyé déclenche l'envoi, deux ticks plus tard** : une salle est une seule copie, la sonde distingue « pas envoyé » / « vide » / « salle déjà là », **et seul le Bedrock compte** : du terrain ordinaire à la même profondeur ne passe pas pour une salle, une salle du redémarrage précédent n'est pas recopiée, une copie est confirmée au tick suivant et jamais dans le sien, la file est bornée, une salle illisible est désactivée puis retirée de la file, **aucun bloc n'est écrit nulle part**, la hauteur de sol est lue et non configurée, un niveau vide ne coûte rien.

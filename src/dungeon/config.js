@@ -128,14 +128,31 @@ export const DUNGEON_CONFIG = {
   // looks for a pair of empty cells anyway, so a wall or a pillar inside the margin
   // costs one more draw rather than a player stuck in stone.
   landingMargin: 4,
-  landingDraws: 12,
-  // Cells above the floor block that must be free. A body is two cells tall, and a
-  // room may have a low ceiling: one free cell is not enough to stand up in.
+  // Cells that must be free to stand in. A body is two cells tall, so the cell of the
+  // position and the one above it: one free cell is not enough to stand up in.
   landingFreeCells: 2,
-  // How far above the floor block the player is placed. Same value as the previous
-  // engine, which was verified in game: the position is the body's centre, so the
-  // feet sit on the block below.
-  spawnAboveFloor: 2,
+  // How far above the floor block the player is placed, added to every landing.
+  //
+  // The engine first used 2, which was measured for the previous engine and is 5 cells
+  // short in this world: the player came out inside the floor every time. 7 is the
+  // measured value plus the correction the owner reported, and the search below
+  // (`landingSearchTries` / `landingSearchLift`) finishes the job from there — the
+  // number is where the search starts, not where it stops.
+  spawnAboveFloor: 7,
+
+  // ---------------------------------------------------------- the landing search --
+  // A landing is not taken on trust any more: it is **tested where the player will be**.
+  //
+  // The search starts on the middle cell of the drawn landing, then visits the ring of
+  // cells around it, and asks the world one question: is this cell, and the one above
+  // it, free? Those are the two cells a standing player occupies. Nothing is inferred
+  // from the floor: the block the player will be in is read, and that is the answer.
+  //
+  // If no cell of the +0 level works, the search lifts the whole landing by one block
+  // and tries again, `landingSearchLift` times. If every level is blocked, the landing
+  // is drawn again — same chunk, another column — `landingSearchTries` times.
+  landingSearchLift: 2,
+  landingSearchTries: 3,
 
   // ---------------------------------------------------------------- refresh --
   // How many `getBlock` reads the floor probe is allowed when a level starts.
