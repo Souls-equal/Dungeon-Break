@@ -280,7 +280,7 @@ function runDebugCommand(playerId, verb) {
       + ` · Bedrock ${report.entrance.bottomName || "unreadable"} / ${report.entrance.topName || "unreadable"}`,
     `[dbg] room #${report.entrance.templateIndex === null ? "-" : report.entrance.templateIndex}`
       + ` · ${report.entrance.templateSource || "unreadable"}`
-      + ` · floor local y ${report.entrance.floorLocalY === null ? "unknown" : report.entrance.floorLocalY}`
+      + ` · floor block y ${report.entrance.floorBlockY === null ? "unknown" : report.entrance.floorBlockY}`
       + ` · failed ${report.entrance.failures}`,
   ]);
 }

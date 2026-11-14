@@ -130,69 +130,77 @@ export function createDungeonService(options) {
       // abandoned here rather than in each step below.
       if (!playerDungeons.has(playerId)) return;
 
-      // The landing is drawn from the room that was copied into the entrance chunk,
-      // so the height is the room's own floor and the cell is one no wall occupies.
-      const landing = loader.landingPosition(difficulty, playerId);
-      if (!landing) {
-        // No template could be read: its chunk is not loaded, so a copy from it
-        // would do nothing and there is no floor to stand on. Saying so is the only
-        // honest answer — and `/dbg templates` says which chunk to fix.
-        api.setClientOptions(playerId, { gravityMultiplier: 1 });
-        leave(playerId);
-        api.sendMessage(
-          playerId,
-          "The room templates are not loaded, so this level cannot be built. Type /dbg templates.",
-        );
-        return;
-      }
-
-      // The entrance room, first and alone: everything else is planned around it.
-      // The probe inside only copies where no room is, so re-entering a level does
-      // not rebuild what is already standing.
+      // **The room first, the landing after.** This order is the whole fix: the
+      // landing is read in the room that has been copied, so it cannot describe a room
+      // the player is not in. The old order drew the landing from the template and
+      // then checked the destination through that same drawing — a wrong answer was
+      // checked against itself, and the player ended up inside the floor with no
+      // message.
+      //
+      // `placeEntrance` records the room it copied, so a retry copies the same one and
+      // `landingPosition` reads that room's floor, in the entrance chunk.
       loader.placeEntrance(difficulty, playerId);
 
-      // The floor is read back rather than assumed: a copy that did not land is a
-      // message, not a player falling through the world. `placeEntrance` is called
-      // again on each attempt, which copies again only if the room is still missing.
       const waitForFloor = (attemptsLeft) => {
         scheduleTimeout(() => {
           if (!playerDungeons.has(playerId)) return;
           const record = playerDungeons.get(playerId);
           if (record && record.difficulty.id !== difficulty.id) return;
 
-          // The floor block the drawn landing stands on: the position is
-          // `spawnAboveFloor` cells above it, so one cell below the position would be
-          // the air above the floor and every copy would look like a failure.
-          const under = api.getBlock(
-            Math.floor(landing[0]),
-            Math.floor(landing[1]) - DUNGEON_CONFIG.spawnAboveFloor,
-            Math.floor(landing[2]),
-          );
+          const landing = loader.landingPosition(difficulty, playerId);
+          if (!landing) {
+            // Nothing could be read in the entrance chunk: no floor, no room. Saying
+            // so is the only honest answer, and `/dbg` names the chunk to fix.
+            if (attemptsLeft > 0) {
+              loader.placeEntrance(difficulty, playerId);
+              waitForFloor(attemptsLeft - 1);
+              return;
+            }
+            api.setClientOptions(playerId, { gravityMultiplier: 1 });
+            api.sendMessage(
+              playerId,
+              `The room could not be built. ${loader.entranceFailureMessage(difficulty, playerId)} `
+                + "You have been returned to the lobby.",
+            );
+            leave(playerId);
+            log(`entrance copy failed for ${playerId} on ${difficulty.label}`);
+            return;
+          }
+
+          // The player is placed first, then the block under them is read: the check
+          // is about the position the world accepted, not about the arithmetic that
+          // produced it.
+          api.setPosition(playerId, landing);
+          const standing = api.getPosition(playerId) || landing;
+          const floorY = Math.floor(standing[1]) - DUNGEON_CONFIG.spawnAboveFloor;
+          const under = api.getBlock(Math.floor(standing[0]), floorY, Math.floor(standing[2]));
           if (under === null || under === "Air") {
             if (attemptsLeft > 0) {
               loader.placeEntrance(difficulty, playerId);
               waitForFloor(attemptsLeft - 1);
               return;
             }
+            api.setClientOptions(playerId, { gravityMultiplier: 1 });
             api.sendMessage(
               playerId,
               `The room could not be built. ${loader.entranceFailureMessage(difficulty, playerId)} `
                 + "You have been returned to the lobby.",
             );
-            api.setClientOptions(playerId, { gravityMultiplier: 1 });
             leave(playerId);
             log(`entrance copy failed for ${playerId} on ${difficulty.label}`);
             return;
           }
 
-          api.setPosition(playerId, landing);
           api.setClientOptions(playerId, { gravityMultiplier: 1 });
           const state = playerDungeons.get(playerId);
           if (state) {
             state.landed = true;
             state.position = landing;
           }
+          // The landing and the floor block, in the message a player reads: a player
+          // inside a floor is a bug report with two numbers in it.
           api.sendMessage(playerId, `Level: ${difficulty.label}`);
+          api.sendMessage(playerId, `Landed at y ${landing[1]} · floor block at y ${floorY}`);
           // The rooms around the player are planned from here, once: the next scan
           // (a few ticks later) would do the same, but the player would spend those
           // ticks staring at the edge of a single room.

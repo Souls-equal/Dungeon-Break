@@ -159,6 +159,16 @@ function createTestLoader(server, templates, difficulty = VERY_EASY, entryId = "
   return { loader, level, entryId };
 }
 
+/**
+ * Wipes what the loader remembers about the entrance chunk, so `placeEntrance` copies
+ * again — the state a fresh level is in, and the state a test needs when it swaps the
+ * room under the entrance between two runs.
+ */
+function forgetEntrance(level) {
+  level.entrance = null;
+  level.planned.delete(`${TEST_ORIGIN.x}|${TEST_ORIGIN.z}`);
+}
+
 /** Marks a chunk as requested and ready now, as a scan or the entrance does. */
 function readyNow(level, chunkX, chunkZ) {
   level.ready.set(`${chunkX}|${chunkZ}`, level.tick);
@@ -463,22 +473,34 @@ test("the queue and the plan stay bounded as a player walks away", () => {
   assert.ok(level.queue.length <= DUNGEON_CONFIG.maxQueued, "the queue grew past its ceiling");
 });
 
-test("the landing height comes from the entrance room, not from another room", () => {
-  // The same room, built twice at two heights: the entrance chunk takes the higher
-  // one, which is the case that mattered — the floor read from the catalogue's first
-  // room puts the player three cells inside this one.
-  for (const floorY of [2, 5]) {
+test("the landing height comes from the room that is really in the entrance chunk", () => {
+  // Two rooms of different heights. The landing must stand on the floor of whichever one
+  // was copied into the entrance chunk — never on the catalogue's first entry, which is
+  // the bug that put a player five cells inside a room. One world per run, because a
+  // second room in the same entrance chunk would be found there and not copied.
+  for (const [index, floorY, src] of [[0, 2, TEMPLATE_A], [1, 5, TEMPLATE_B]]) {
+    const templates = [
+      { index: 0, src: TEMPLATE_A },
+      { index: 1, src: TEMPLATE_B },
+    ];
     const server = createServer();
-    server.addTemplate(TEMPLATE_A, { floorY });
-    const { loader, level, entryId } = createTestLoader(server, ROOMS);
+    server.addTemplate(TEMPLATE_A, { floorY: 2 });
+    server.addTemplate(TEMPLATE_B, { floorY: 5 });
+    const { loader, level, entryId } = createTestLoader(server, templates);
     loader.warmTemplates(VERY_EASY, entryId);
+    // The entry teleports into the chunk first, and that teleport is what loads both
+    // the destination and the template's own chunk.
+    server.api.setPosition("player", [src[0], floorOfLayer(TEST_ORIGIN.y), src[2]]);
     for (let tick = 0; tick < 5; tick += 1) server.advance();
+    // A level with the two rooms, and the one under test forced by making it the only
+    // room the draw can pick: `placeEntrance` draws per chunk, and overriding its result
+    // would be testing the override, not the engine.
+    level.templates = [templates[index]];
     loader.placeEntrance(VERY_EASY, entryId);
-    // Whatever room the draw chose, the landing reads that room's floor.
-    assert.equal(level.entrance.index, level.templates[0].index);
+    for (let tick = 0; tick < 3; tick += 1) server.advance();
     const landing = loader.landingPosition(VERY_EASY, entryId);
     assert.equal(landing[1], floorOfLayer(TEST_ORIGIN.y) + floorY + DUNGEON_CONFIG.spawnAboveFloor,
-      `the landing is not above the floor (local y ${floorY}) of the room that was copied`);
+      `the landing is not above the floor (local y ${floorY}) of the room in the entrance chunk`);
   }
 });
 
@@ -512,23 +534,53 @@ test("a landing is drawn inside the room, away from the walls", () => {
   assert.equal(level.landings.size, seen.size);
 });
 
-test("a drawn landing never lands in a pillar", () => {
+test("the landing is read in the entrance chunk, not in the template's own chunk", () => {
+  // A table that names a chunk which does not hold the room — the one thing a hand-made
+  // coordinate can get wrong. The landing follows **the copy**: the block that lands in
+  // the entrance chunk is the one the player stands on, so the read happens there. The
+  // old code read the template's chunk and then wrote the height it guessed, and the
+  // check that followed was computed from the same guess.
   const server = createServer();
-  server.addTemplate(TEMPLATE_A, { floorY: 2 });
-  const { loader, entryId } = createTestLoader(server, ROOMS);
+  // The room is built in chunk 2, the table says chunk 0: the copy takes the chunk the
+  // table names, which is empty.
+  server.addTemplate([0, 64, 0], { floorY: 2 });
+  const templates = [{ index: 0, src: [0, 0, 0] }];
+  const { loader, level, entryId } = createTestLoader(server, templates);
   loader.warmTemplates(VERY_EASY, entryId);
   server.api.setPosition("player", [16, floorOfLayer(TEST_ORIGIN.y), 16]);
   for (let tick = 0; tick < 5; tick += 1) server.advance();
   loader.placeEntrance(VERY_EASY, entryId);
 
+  // The entrance chunk is empty, so there is no floor to land on — and the engine says
+  // so instead of inventing a height from a room that is not there.
+  assert.equal(level.entrance.index, 0);
+  assert.equal(loader.landingPosition(VERY_EASY, entryId), null,
+    "a landing was drawn in a chunk that holds no room");
+});
+
+test("a drawn landing never lands in a pillar", () => {
+  const server = createServer();
+  server.addTemplate(TEMPLATE_A, { floorY: 2 });
+  const { loader, entryId } = createTestLoader(server, ROOMS);
+  loader.warmTemplates(VERY_EASY, entryId);
+  for (let tick = 0; tick < 5; tick += 1) server.advance();
+  // The entry puts the player in the chunk first; that teleport is what loads it.
+  server.api.setPosition("player", [16, floorOfLayer(TEST_ORIGIN.y), 16]);
+  loader.placeEntrance(VERY_EASY, entryId);
+
   // A room full of pillars: the two cells a body needs are filled everywhere in the
   // room the entrance chunk got. The engine must fall back to the middle column
   // rather than hand out a column inside stone. This is the "spawn in a wall" case.
+  //
+  // The pillars are written **in the destination**, where the landing is read now: the
+  // copy has already brought the room there, so this is the room the player is in.
   for (let localX = 0; localX < SIZE; localX += 1) {
     for (let localZ = 0; localZ < SIZE; localZ += 1) {
       for (let up = 1; up <= 2; up += 1) {
-        server.templateBlocks.set(
-          `${TEMPLATE_A[0] + localX},${TEMPLATE_A[1] + 2 + up},${TEMPLATE_A[2] + localZ}`,
+        // The destination of the copy, not the template: `built` is the room's own
+        // chunk, and the room the player is in is the copy.
+        server.world.set(
+          `${TEST_ORIGIN.x * SIZE + localX},${floorOfLayer(TEST_ORIGIN.y) + 2 + up},${TEST_ORIGIN.z * SIZE + localZ}`,
           "Stone",
         );
       }
@@ -673,6 +725,7 @@ test("the rooms around an entry are copied on the layer the entry drew", () => {
   level.origin = { x: 0, y: 700, z: 0 };
   server.api.setPosition("player", [16, floorOfLayer(level.origin.y), 16]);
   loader.warmTemplates(VERY_EASY, entryId);
+  loader.placeEntrance(VERY_EASY, entryId);
   loader.planAround(level, 0, 0);
   for (let tick = 0; tick < 30; tick += 1) {
     server.advance();
