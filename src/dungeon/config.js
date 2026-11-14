@@ -19,17 +19,17 @@ export const DUNGEON_CONFIG = {
   chunkSize: 32,
 
   // Chunks generated around each player, in every horizontal direction.
-  // 2 means 5x5 = 25 rooms, 160 blocks across: big enough that a player never
-  // sees the edge, small enough that a level costs 25 chunk copies in total.
-  viewChunks: 2,
+  // 1 means 3x3 = 9 rooms, 96 blocks across: the player stands in the middle of a
+  // full ring, so the edge of the built area is never in view. Every chunk of the
+  // ring is probed on the tick the level starts, all at once.
+  viewChunks: 1,
 
-  // Ticks to wait after the player is teleported into an empty chunk, before the
-  // entrance room is copied and the player is put on its floor.
+  // Ticks between a `getBlock` made in a far chunk and that chunk being ready.
   //
-  // Measured on the previous engine, and kept as is: a chunk created by the read
-  // that teleported the player does not accept writes for another tick or two, and
-  // a copy inside that window is dropped. It is the only wait in the whole engine.
-  chunkWarmupTicks: 3,
+  // Measured in game: two ticks after the read, the chunk is there and accepts a
+  // `copyChunk` into it. It replaces a fixed warm-up that guessed the same delay
+  // for every chunk, and it is counted from the read the probe itself performs.
+  chunkLoadTicks: 2,
 
   // One chunk copied per tick, per level — a copy is one API call but writes
   // 32 768 blocks server-side, so it is never doubled. At 20 ticks per second, that
@@ -53,20 +53,30 @@ export const DUNGEON_CONFIG = {
   // before it is disabled for the session.
   //
   // Not one: a read of a far-away chunk is how the server is told to send it, and
-  // that takes a tick or two. Not infinite either: a chunk that is truly not
+  // that takes `chunkLoadTicks`. Not infinite either: a chunk that is truly not
   // loaded would otherwise cost one read per copy, for ever, and look like a
   // generator that does nothing.
   templateReadAttempts: 4,
 
   // **Nothing is ever written into a room.** A room is a hand-built chunk, and the
-  // engine only ever copies it: no record block, no pad, no marker, no repair. The
-  // single exception is the lobby, which belongs to the world rather than to a
-  // dungeon, and where nothing is written either.
+  // engine only ever copies it: no record block, no pad, no marker, no repair.
   //
-  // The consequence is stated plainly rather than hidden: after a restart, or when
-  // a player walks back to a room built in a previous session, the world cannot be
-  // asked whether that room is there. The level therefore keeps its own memory of
-  // what it copied, for the session, and `/dbg mem` reports it as unconfirmed.
+  // This does not blind the engine, because a room carries its own record in its
+  // **Bedrock**: the block every room has on its first and its last layer, floor
+  // and ceiling, like the Nether. A chunk that reads `null` there is not sent yet,
+  // and a chunk that reads Bedrock already holds a room — which is how the engine
+  // recognises a room it copied in a previous session.
+  solidBlock: "Bedrock",
+
+  // Layers hosting that Bedrock, in chunk-local Y: the first and the last. The
+  // probe tries the bottom one first and falls back to the top one for a room
+  // built without its floor.
+  probeLocalYs: [0, 31],
+
+  // The probe reads one cell per candidate chunk, but only four cells across the
+  // chunk: the block is the same everywhere on a layer, and a room is free to keep
+  // its centre open.
+  probeLocalXZ: [[16, 16], [8, 8], [24, 24], [4, 4]],
 
   // ------------------------------------------------- destination placement ---
   // Each difficulty gets its own horizontal band of chunk layers, two chunks
@@ -81,6 +91,15 @@ export const DUNGEON_CONFIG = {
   // The dungeon starts at this chunk coordinate. Nothing else is built there.
   originChunkX: 0,
   originChunkZ: 0,
+
+  // How many ticks the entrance may wait for its floor before the player is sent
+  // back to the lobby with a message.
+  //
+  // One is normally enough — the copy lands within the tick it is made — but the
+  // destination has to have been sent first, and a player teleported into a chunk
+  // that the server is still creating is a real case. Waiting is bounded and said
+  // out loud, rather than retried for ever.
+  entryMaxTicks: 4,
 
   // ---------------------------------------------------------------- landing --
   // Where the player lands in a room, in chunk-local cells: the middle of the
