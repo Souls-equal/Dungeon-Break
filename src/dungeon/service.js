@@ -196,6 +196,8 @@ export function createDungeonService(options) {
           if (state) {
             state.landed = true;
             state.position = landing;
+            // The one height every room of this run uses for its mobs.
+            state.spawnY = landing[1];
           }
           // The landing and the floor block, in the message a player reads: a player
           // inside a floor is a bug report with two numbers in it.
@@ -205,6 +207,15 @@ export function createDungeonService(options) {
           // (a few ticks later) would do the same, but the player would spend those
           // ticks staring at the edge of a single room.
           loader.planAround(level, origin.x, origin.z);
+          // **The room the player landed in is clear, before anything reads it.** The
+          // owner's rule, and the reason a run never starts in a fight.
+          const entrance = chunkOfWorld(landing[0], landing[2]);
+          loader.markRoomClear(level, entrance.x, entrance.z);
+          // Its neighbours are where the first mobs are. Asking here, and not on the next
+          // tick, is what keeps the entrance clear from the first frame — the tick would
+          // otherwise see the player in a room it has never read.
+          if (state) state.room = `${entrance.x}|${entrance.z}`;
+          loader.enterRoom(level, entrance.x, entrance.z, landing[1]);
           if (onReady) onReady(difficulty, landing);
         }, 1);
       };
@@ -229,6 +240,13 @@ export function createDungeonService(options) {
   function stopBuilding(playerId) {
     const dungeon = dungeonOf(playerId);
     if (!dungeon) return false;
+    // The mobs of a dungeon belong to it: killing them before the level is released is
+    // what keeps a lobby player from being chased by the last room they abandoned.
+    try {
+      loader.forgetMobs(loader.levelState(dungeon.difficulty, playerId));
+    } catch (_) {
+      // A mob the game already removed is not a reason to fail a stop.
+    }
     loader.release(dungeon.difficulty, playerId);
     playerDungeons.delete(playerId);
     return true;
@@ -295,6 +313,56 @@ export function createDungeonService(options) {
     return true;
   }
 
+  /**
+   * The player is in a room: the rooms around it are filled, the others emptied.
+   *
+   * Called on every room change and, now and then, while the player stays in one — a
+   * neighbouring room is often copied a few ticks after the entrance, and a player who
+   * stands still never "enters" another room.
+   *
+   * The height is the one the player **was spawned at**, kept for the whole run: not a
+   * floor search, and not their live Y either — a jumping player must not move the mobs'
+   * floor. That landing was verified, so it is a height a mob can stand at; the owner's
+   * rule, and the reason no floor is searched a second time.
+   */
+  function enterRoomIfBuilt(dungeon, playerId, chunkX, chunkZ) {
+    if (dungeon.spawnY === undefined) return;
+    const level = loader.levelState(dungeon.difficulty, playerId);
+    if (!level.origin) return;
+    loader.enterRoom(level, chunkX, chunkZ, dungeon.spawnY);
+  }
+
+  /**
+   * A player killed a mob. The last one of a room clears it, for good.
+   *
+   * The record lives in the room, not in this process: `markRoomClear` writes the corner
+   * block of the room, so the next visit — this run or the next one — reads "clear" from
+   * the world and never spawns there again.
+   */
+  function mobKilled(playerId, mobId) {
+    const dungeon = dungeonOf(playerId);
+    if (!dungeon) return null;
+    const level = loader.levelState(dungeon.difficulty, playerId);
+    const cleared = loader.mobKilled(level, mobId);
+    if (!cleared) return null;
+    api.sendMessage(playerId, "CLEAR — nothing left in this room.");
+    return cleared;
+  }
+
+  /**
+   * A mob the game removed on its own: forgotten, but the room is not counted as won.
+   *
+   * The callback names the mob and nobody else, so every dungeon is asked. There are as
+   * many dungeons as players, so this is a handful of list lookups at worst.
+   */
+  function mobGone(mobId) {
+    let found = false;
+    for (const [playerId, dungeon] of playerDungeons) {
+      if (loader.mobGone(loader.levelState(dungeon.difficulty, playerId), mobId)) found = true;
+    }
+    return found;
+  }
+
   /** One tick: where every player is, then one room copied per level. */
   function tick() {
     ticks += 1;
@@ -305,6 +373,16 @@ export function createDungeonService(options) {
       dungeon.position = position;
       if (rescueIfFallen(playerId, dungeon, position)) continue;
       const chunk = chunkOfWorld(position[0], position[2]);
+      // A room change is what asks for the four rooms around: once per room entered, not
+      // once per tick, or the mobs would be spawned again every 20th of a second. A room
+      // the player stays in is re-read now and then, because a room copied after the
+      // entrance was not there when the first check ran.
+      const roomKey = `${chunk.x}|${chunk.z}`;
+      const entered = dungeon.room !== roomKey;
+      if (entered) dungeon.room = roomKey;
+      if (entered || ticks % DUNGEON_CONFIG.mobRetryTicks === 0) {
+        enterRoomIfBuilt(dungeon, playerId, chunk.x, chunk.z);
+      }
       // Grouped by **entry**, not by difficulty: two players in the same difficulty
       // are in two dungeons a hundred thousand blocks apart, and each has its own
       // queue and its own one-copy-per-tick budget.
@@ -346,6 +424,7 @@ export function createDungeonService(options) {
       exampleChunk: template ? template.chunk : null,
       origin: level.origin,
       entrance: loader.explainEntrance(dungeon.difficulty, playerId),
+      mobs: loader.mobReport(dungeon.difficulty, playerId),
       ticks,
     };
   }
@@ -399,6 +478,8 @@ export function createDungeonService(options) {
     leaveToLobby: leave,
     teleportToSpawn,
     stopBuilding,
+    mobKilled,
+    mobGone,
     tick,
     dungeonOf,
     inDungeon,

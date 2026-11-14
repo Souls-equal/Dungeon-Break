@@ -162,6 +162,44 @@ export const DUNGEON_CONFIG = {
   // setting that would silently be wrong for one template out of ten.
   floorProbeMaxCells: 32,
 
+  // ------------------------------------------------------------------- mobs ---
+  // A level is a **series of rooms to clear**. The player lands in one, the four
+  // rooms around it hold mobs, and a room with no mob left is *clear* — a fact
+  // written into the room's own corner block with `setBlockData`, so a cleared room
+  // stays cleared after a restart and is never spawned twice.
+  //
+  // **No block is written**: `setBlockData` stores data about an existing block, it
+  // does not change it. That is the one exception to "nothing is written", and it is
+  // the owner's own design: the record lives in the room, not in our memory.
+  mobRoomsAround: [[1, 0], [-1, 0], [0, 1], [0, -1]],
+
+  // The corner of the chunk that holds the record, in chunk-local coordinates, on the
+  // room's own floor layer: `[0, 0, 0]` is the block just **above** the corner floor cell
+  // — a cell of the room's air, which exists the moment the room does. Data is cleared
+  // when the block changes, so a room copied over starts un-cleared; a room written for
+  // the first time reads nothing at all.
+  //
+  // Above the floor rather than on the Bedrock: the Bedrock under a room is *replaced* by
+  // every copy, which is the case where data is reliably lost. The air beside the player
+  // is the one cell of a room nothing ever writes.
+  mobClearCell: [0, 0, 0],
+
+  // Mob types a room can hold, picked at random per mob. `Draugr Zombie` is the
+  // documented hostile zombie, and the only name this code relies on. `Zombie` is listed
+  // as documented, but the game's variation table does not offer it, so it is a **bet**
+  // rather than a fact: a type the game refuses is dropped for the session (see
+  // `refusedMobs` in the loader) instead of being retried for every slot of every room.
+  mobTypes: ["Draugr Zombie", "Zombie"],
+
+  // Cells of a room that are never used for a mob: the walls, as for the player.
+  mobSpawnMargin: 2,
+  // Cells tried per room before giving up on the rest of the count.
+  mobSpawnTries: 40,
+  // A room copied two ticks after the entrance still has to be populated, and a player
+  // who stands still never "enters" a new room. So the room is re-read now and then:
+  // once a room is done it is remembered, which makes the repeat nearly free.
+  mobRetryTicks: 40,
+
   // Chat message shown once when the catalogue has no template for a level.
   missingTemplatesMessage:
     "This level has no room templates yet. Fill ROOM_TEMPLATES in src/dungeon/templates.js.",
@@ -187,6 +225,30 @@ export const DIFFICULTIES = [
   { id: "ultraInsane", label: "Ultra Insane", padBlock: "Gray Concrete", fromLobby: false },
   { id: "hell", label: "Hell", padBlock: "Black Concrete", fromLobby: false },
 ];
+
+/**
+ * How hard the mobs of each level are.
+ *
+ * One row per difficulty, applied to the **base** stats the game reports for the mob
+ * type — never to a number written here, so a mob stays a mob: the multiplier is what
+ * makes Hell's Draugr a different problem from Very Easy's. `count` is the number of
+ * mobs a room holds.
+ */
+export const MOB_TUNING = {
+  veryEasy: { count: 2, health: 1, damage: 1, speed: 1 },
+  easy: { count: 2, health: 1.2, damage: 1.1, speed: 1.05 },
+  medium: { count: 3, health: 1.5, damage: 1.25, speed: 1.1 },
+  normal: { count: 3, health: 2, damage: 1.5, speed: 1.15 },
+  hard: { count: 4, health: 2.5, damage: 1.75, speed: 1.2 },
+  insane: { count: 4, health: 3, damage: 2, speed: 1.3 },
+  ultraInsane: { count: 5, health: 4, damage: 2.5, speed: 1.4 },
+  hell: { count: 5, health: 5, damage: 3, speed: 1.5 },
+};
+
+/** The mob settings of a difficulty: always defined, so nothing reads `undefined`. */
+export function mobTuningFor(difficulty) {
+  return MOB_TUNING[difficulty.id] || MOB_TUNING.veryEasy;
+}
 
 /** Concrete blocks that are pads, spelled the way Bloxd reports them. */
 const BLOCK_ALIASES = {

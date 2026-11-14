@@ -278,6 +278,9 @@ function runDebugCommand(playerId, verb) {
       + ` · ${report.entrance.loaded ? "loaded" : "NOT loaded"}`
       + ` · ${report.entrance.occupied ? "a room is there" : "empty"}`
       + ` · Bedrock ${report.entrance.bottomName || "unreadable"} / ${report.entrance.topName || "unreadable"}`,
+    `[dbg] mobs · ${report.mobs.mobs} alive in ${report.mobs.rooms} room(s)`
+      + ` · ${report.mobs.cleared} room(s) written clear`
+      + (report.mobs.types.length > 0 ? ` · refused ${report.mobs.types.join("; ")}` : ""),
     `[dbg] room #${report.entrance.templateIndex === null ? "-" : report.entrance.templateIndex}`
       + ` · ${report.entrance.templateSource || "unreadable"}`
       + ` · floor block y ${report.entrance.floorBlockY === null ? "unknown" : report.entrance.floorBlockY}`
@@ -418,6 +421,40 @@ onPlayerJoin = (playerId) => {
 onPlayerLeave = (playerId) => {
   stopLobbyCountdown(playerId);
   service().leave(playerId);
+};
+
+/**
+ * A mob of a dungeon died.
+ *
+ * The count is the dungeon's, not the room's: `mobKilled` knows which room the mob was
+ * tracked in, and clears it only when it was the last one. A mob killed outside a
+ * dungeon — there are none, but a stale id could drift in — is ignored.
+ */
+onPlayerKilledMob = (playerId, mobId) => {
+  try {
+    service().mobKilled(playerId, mobId);
+  } catch (error) {
+    // A death that cannot be filed must not break the tick that follows it.
+    try {
+      api.log(`[Dungeon] mob kill failed: ${error && error.message ? error.message : error}`);
+    } catch (_) {
+      // Nothing left to do.
+    }
+  }
+};
+
+/**
+ * A mob the game removed by itself — too far from any player, or too many for the lobby.
+ *
+ * Forgotten, and **not** counted as a kill: a room is only clear when the player cleared
+ * it, otherwise a mob wandering off would hand out the reward for free.
+ */
+onMobDespawned = (mobId) => {
+  try {
+    service().mobGone(mobId);
+  } catch (_) {
+    // Nothing to report and nothing to fix.
+  }
 };
 
 onRespawnRequest = (playerId) => {
