@@ -58,22 +58,15 @@ export const DUNGEON_CONFIG = {
   // generator that does nothing.
   templateReadAttempts: 4,
 
-  // Ticks a copy may wait for its verification before the chunk is forgotten.
-  // Covers the case where the destination chunk is still unloaded: the room is
-  // ahead of the player, and a later scan will queue it again if it is really
-  // missing.
-  verifyMaxTicks: 40,
-
-  // A room's record is one block **of its own ceiling**, in the middle of the room:
-  // `(chunkX * 32 + 16, layer + 31, chunkZ * 32 + 16)`. It is written right after
-  // the copy and read back to know whether the room is there.
+  // **Nothing is ever written into a room.** A room is a hand-built chunk, and the
+  // engine only ever copies it: no record block, no pad, no marker, no repair. The
+  // single exception is the lobby, which belongs to the world rather than to a
+  // dungeon, and where nothing is written either.
   //
-  // On the ceiling, and not on the floor or in a wall corner, for one reason: the
-  // templates are built by hand, so this engine must not require a particular cell
-  // of them to be solid or empty. The ceiling is the one layer a room has by
-  // definition, and the middle of it is the cell a player can never reach.
-  surfaceBlock: "Polished Diorite",
-  surfaceLocalXZ: 16,
+  // The consequence is stated plainly rather than hidden: after a restart, or when
+  // a player walks back to a room built in a previous session, the world cannot be
+  // asked whether that room is there. The level therefore keeps its own memory of
+  // what it copied, for the session, and `/dbg mem` reports it as unconfirmed.
 
   // ------------------------------------------------- destination placement ---
   // Each difficulty gets its own horizontal band of chunk layers, two chunks
