@@ -370,34 +370,32 @@ export function createLoader({ api, log }) {
     return null;
   }
 
-  /** Is this cell something a body can occupy? Unknown cells count as free. */
-  function isFreeCell(x, y, z) {
-    const name = readCell(x, y, z);
-    return name === null || name === "Air";
+  /** Is this cell Air? A cell that cannot be read is not free, and not a yes. */
+  function isAirCell(x, y, z) {
+    return readCell(x, y, z) === "Air";
   }
 
   /**
-   * Where a player lands in the entrance room, read **in the room that was copied**.
+   * Where a player lands in the entrance room, **tested where the player will be**.
    *
-   * The height used to be computed from the template and then trusted: the landing was
-   * `originBottom + floorCell`, and the check that followed read the block under that
-   * same computed position. A landing that was wrong was therefore the coordinate the
-   * copy was checked at, and a wrong answer confirmed itself — which is how a player
-   * ends up inside the floor with no message.
+   * The height is no longer inferred from the floor. The previous versions computed a
+   * number from the template and then trusted it — measured, corrected, recomputed from
+   * the copy, and the player still came out inside the block. What this does instead is
+   * the one thing that needs no theory: it asks the world whether the cell the player
+   * would occupy is free, and moves the landing until it is.
    *
-   * What this does instead is the only thing a copy allows: the copy keeps the room's
-   * local layout, so the floor of the destination is the floor of the template read
-   * **at the destination's own chunk** — `origin.x, origin.y, origin.z`, the chunk the
-   * entrance was copied into. Reading the template's own chunk would be reading a
-   * different block whenever the template is not built where its `src` says, which is
-   * the one thing about the tables a human can get wrong.
+   * The sequence, and it is the owner's:
    *
-   * Position: drawn at random inside `landingMargin`, which keeps it away from the
-   * room's own walls. A pillar, a step or a low ceiling inside the margin make the draw
-   * fail — the engine checks the two cells a body needs and draws again. After
-   * `landingDraws`, the middle column is used: the one place a room is built around.
+   *   1. the landing is drawn inside `landingMargin`, on the floor of the room that was
+   *      copied, `spawnAboveFloor` cells above it;
+   *   2. the middle cell is tested, then the ring of cells around it — the two cells a
+   *      standing player occupies (this one and the one above) must both be Air;
+   *   3. if nothing in that ring works, the whole landing is lifted one block and the
+   *      test runs again, `landingSearchLift` times;
+   *   4. if every level is blocked, another column is drawn in the same chunk and the
+   *      search starts over, `landingSearchTries` times.
    *
-   * `null` means the destination cannot be read at all: the level cannot be built, and
+   * `null` means the entrance chunk cannot be read at all: the level cannot be built, and
    * the caller says so instead of dropping the player into the void.
    */
   function landingPosition(difficulty, entryId) {
@@ -409,58 +407,77 @@ export function createLoader({ api, log }) {
     const template = level.entrance;
     if (!template) return null;
 
-    // The floor is read where the copy put the room: this chunk, this layer.
     const baseX = origin.x * SIZE;
     const baseY = floorOfLayer(origin.y);
     const baseZ = origin.z * SIZE;
     const [centreX, centreZ] = DUNGEON_CONFIG.probeLocalXZ;
     const margin = DUNGEON_CONFIG.landingMargin;
     const span = SIZE - margin * 2;
-    // A level that has handed out every column it draws from — hundreds of entries,
-    // or a player who keeps falling out of the world — starts over rather than
-    // repeating one cell for ever.
+    // A level that has handed out every column it draws from — hundreds of entries, or a
+    // player who keeps falling out of the world — starts over rather than repeating one
+    // cell for ever.
     if (level.landings.size >= span * span) level.landings.clear();
 
-    /** The landing for a column, or null when the copied room has no room to stand there. */
-    const landingAt = (localX, localZ) => {
-      const floorY = floorBlockYAt(baseX, baseY, baseZ, localX, localZ);
-      if (floorY === null) return null;
-      for (let up = 1; up <= DUNGEON_CONFIG.landingFreeCells; up += 1) {
-        if (!isFreeCell(baseX + localX, floorY + up, baseZ + localZ)) return null;
+    /** Is this cell free to stand in? The cell and the one above it, both Air. */
+    const isFree = (x, y, z) => {
+      for (let up = 0; up < DUNGEON_CONFIG.landingFreeCells; up += 1) {
+        if (!isAirCell(x, y + up, z)) return false;
       }
-      return [baseX + localX + 0.5, floorY + DUNGEON_CONFIG.spawnAboveFloor, baseZ + localZ + 0.5];
+      return true;
     };
 
-    for (let draw = 0; draw < DUNGEON_CONFIG.landingDraws; draw += 1) {
-      const localX = margin + Math.floor(Math.random() * span);
+    /**
+     * The first free cell of a ring around `(localX, localZ)`, at `y`.
+     *
+     * The middle first, then the eight cells around it — the owner's order, and it means
+     * a working landing is never moved for the fun of it. A cell outside the margin is
+     * skipped: those are the room's own walls, and a cell there is a cell inside a wall.
+     */
+    const freeAround = (localX, localZ, y) => {
+      for (let dx = 0; dx <= 1; dx += 1) {
+        for (let dz = 0; dz <= 1; dz += 1) {
+          for (const [sx, sz] of [[dx, dz], [-dx, dz], [dx, -dz], [-dx, -dz]]) {
+            const x = localX + sx;
+            const z = localZ + sz;
+            if (x < margin || x >= SIZE - margin || z < margin || z >= SIZE - margin) continue;
+            if (isFree(baseX + x, y, baseZ + z)) return [x, z];
+          }
+        }
+      }
+      return null;
+    };
+
+    // `landingSearchTries` columns, drawn the same way every time: random inside the
+    // margin, never the pads' own cell, never a column already handed out this session.
+    for (let attempt = 0; attempt < DUNGEON_CONFIG.landingSearchTries; attempt += 1) {
+      let localX = margin + Math.floor(Math.random() * span);
       const localZ = margin + Math.floor(Math.random() * span);
-      // The pads live at the centre: never land on one, or the player is sent to the
-      // next difficulty before they have seen the room.
-      if (localX === centreX && localZ === centreZ) continue;
+      // The pads live at the centre: never land on one, or the player is sent to the next
+      // difficulty before they have seen the room. One step aside is enough, and it costs
+      // no attempt — a draw spent to be thrown away is a chance the player does not get.
+      if (localX === centreX && localZ === centreZ) {
+        localX = localX === margin ? margin + 1 : localX - 1;
+      }
       const key = `${localX},${localZ}`;
-      // A different column per player and per entry: two players who take the same
-      // pad must not appear on top of each other.
       if (level.landings.has(key)) continue;
-      const landing = landingAt(localX, localZ);
-      if (!landing) continue;
-      level.landings.add(key);
-      return landing;
+
+      const floorY = floorBlockYAt(baseX, baseY, baseZ, localX, localZ);
+      if (floorY === null) return null;
+      const landingY = floorY + DUNGEON_CONFIG.spawnAboveFloor;
+
+      // The landing as drawn, then the same landing lifted a block at a time: a room whose
+      // floor is one cell too high is a room whose player stands one cell higher.
+      for (let lift = 0; lift <= DUNGEON_CONFIG.landingSearchLift; lift += 1) {
+        const spot = freeAround(localX, localZ, landingY + lift);
+        if (!spot) continue;
+        level.landings.add(key);
+        return [baseX + spot[0] + 0.5, landingY + lift, baseZ + spot[1] + 0.5];
+      }
     }
 
-    // Every draw hit a wall, a pillar or the pad — a room built of pillars, which is
-    // not what a room is for. Rather than refuse the level, put the player at the
-    // room's own centre: it is the cell a room is built around, and if it is blocked
-    // by stone the room is not a room. The two cells above are then not checked, which
-    // is the only place in this engine where the answer is "best effort" — and the
-    // player sees it in the message only if there is no floor at all.
-    const middleFloor = floorBlockYAt(baseX, baseY, baseZ, centreX, centreZ);
-    if (middleFloor === null) return null;
-    level.landings.add(`${centreX},${centreZ}`);
-    return [
-      baseX + centreX + 0.5,
-      middleFloor + DUNGEON_CONFIG.spawnAboveFloor,
-      baseZ + centreZ + 0.5,
-    ];
+    // Nothing worked anywhere: say so rather than place a player in stone. The caller
+    // turns this into a message, and the block it names is the one to look at.
+    return null;
   }
 
   /**

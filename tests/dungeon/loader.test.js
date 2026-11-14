@@ -558,7 +558,7 @@ test("the landing is read in the entrance chunk, not in the template's own chunk
     "a landing was drawn in a chunk that holds no room");
 });
 
-test("a drawn landing never lands in a pillar", () => {
+test("the landing is tested where the player will be, cell by cell", () => {
   const server = createServer();
   server.addTemplate(TEMPLATE_A, { floorY: 2 });
   const { loader, entryId } = createTestLoader(server, ROOMS);
@@ -567,30 +567,70 @@ test("a drawn landing never lands in a pillar", () => {
   // The entry puts the player in the chunk first; that teleport is what loads it.
   server.api.setPosition("player", [16, floorOfLayer(TEST_ORIGIN.y), 16]);
   loader.placeEntrance(VERY_EASY, entryId);
+  const landing = loader.landingPosition(VERY_EASY, entryId);
+  assert.ok(landing, "no landing was drawn in an empty room");
 
-  // A room full of pillars: the two cells a body needs are filled everywhere in the
-  // room the entrance chunk got. The engine must fall back to the middle column
-  // rather than hand out a column inside stone. This is the "spawn in a wall" case.
-  //
-  // The pillars are written **in the destination**, where the landing is read now: the
-  // copy has already brought the room there, so this is the room the player is in.
+  // The two cells a player occupies are the cells the engine asked about: the position
+  // itself, and the one above. This is the rule the owner asked for, and it replaces
+  // trusting a height computed from the floor.
+  const x = Math.floor(landing[0]);
+  const y = Math.floor(landing[1]);
+  const z = Math.floor(landing[2]);
+  const read = (dy) => server.api.getBlock(x, y + dy, z);
+  assert.equal(read(0), "Air", "the landing cell is not free");
+  assert.equal(read(1), "Air", "the cell above the landing is not free");
+  // And it stands on the floor the search started from: `spawnAboveFloor` above the block
+  // the column found, which is the floor of the room that was copied.
+  assert.equal(y, floorOfLayer(TEST_ORIGIN.y) + 2 + DUNGEON_CONFIG.spawnAboveFloor,
+    `the landing is at y ${y}, not above the floor of the room in the entrance chunk`);
+});
+
+test("a room whose landing is blocked is searched cell by cell, then lifted", () => {
+  const server = createServer();
+  server.addTemplate(TEMPLATE_A, { floorY: 2 });
+  const { loader, entryId } = createTestLoader(server, ROOMS);
+  loader.warmTemplates(VERY_EASY, entryId);
+  for (let tick = 0; tick < 5; tick += 1) server.advance();
+  server.api.setPosition("player", [16, floorOfLayer(TEST_ORIGIN.y), 16]);
+  loader.placeEntrance(VERY_EASY, entryId);
+
+  // Every cell of the room is filled at the landing height: the whole ring is blocked,
+  // so the search lifts. The room is a box, so the lift is what has to work.
+  const landingY = floorOfLayer(TEST_ORIGIN.y) + 2 + DUNGEON_CONFIG.spawnAboveFloor;
   for (let localX = 0; localX < SIZE; localX += 1) {
     for (let localZ = 0; localZ < SIZE; localZ += 1) {
-      for (let up = 1; up <= 2; up += 1) {
-        // The destination of the copy, not the template: `built` is the room's own
-        // chunk, and the room the player is in is the copy.
+      for (let up = 0; up <= DUNGEON_CONFIG.landingSearchLift; up += 1) {
         server.world.set(
-          `${TEST_ORIGIN.x * SIZE + localX},${floorOfLayer(TEST_ORIGIN.y) + 2 + up},${TEST_ORIGIN.z * SIZE + localZ}`,
+          `${TEST_ORIGIN.x * SIZE + localX},${landingY + up},${TEST_ORIGIN.z * SIZE + localZ}`,
           "Stone",
         );
       }
     }
   }
   const landing = loader.landingPosition(VERY_EASY, entryId);
-  const originX = TEST_ORIGIN.x * SIZE;
-  const originZ = TEST_ORIGIN.z * SIZE;
-  assert.equal(landing[0], originX + 16.5, "the fallback is not the room's middle column");
-  assert.equal(landing[2], originZ + 16.5);
+  assert.equal(landing, null, "a landing was handed out inside a room full of stone");
+});
+
+test("a blocked cell is walked around before the landing is lifted", () => {
+  const server = createServer();
+  server.addTemplate(TEMPLATE_A, { floorY: 2 });
+  const { loader, level, entryId } = createTestLoader(server, ROOMS);
+  loader.warmTemplates(VERY_EASY, entryId);
+  for (let tick = 0; tick < 5; tick += 1) server.advance();
+  server.api.setPosition("player", [16, floorOfLayer(TEST_ORIGIN.y), 16]);
+  loader.placeEntrance(VERY_EASY, entryId);
+
+  // One blocked column, right beside the drawn one: the ring must find a free cell at the
+  // same height rather than lift the player for nothing.
+  const landingY = floorOfLayer(TEST_ORIGIN.y) + 2 + DUNGEON_CONFIG.spawnAboveFloor;
+  server.world.set(`${TEST_ORIGIN.x * SIZE + 16},${landingY},${TEST_ORIGIN.z * SIZE + 16}`, "Stone");
+  const landing = loader.landingPosition(VERY_EASY, entryId);
+  assert.ok(landing, "no landing was found beside one blocked column");
+  assert.equal(landing[1], landingY, "the landing was lifted although a cell beside it was free");
+  assert.notEqual(`${Math.floor(landing[0])},${Math.floor(landing[2])}`,
+    `${TEST_ORIGIN.x * SIZE + 16},${TEST_ORIGIN.z * SIZE + 16}`,
+    "the landing stayed on the blocked cell");
+  assert.ok(level.landings.size >= 1);
 });
 
 test("without a readable template there is no landing position, and no invention", () => {
