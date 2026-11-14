@@ -281,12 +281,12 @@ export function createDungeonService(options) {
         const block = api.getBlock(template.src[0], template.src[1], template.src[2]);
         rows.push({
           difficulty: difficulty.label,
-          id: template.id,
+          index: template.index,
           src: template.src,
           faces: template.faces,
           loaded: block !== null && block !== undefined,
           block,
-          disabled: level.disabled.has(template.id),
+          disabled: level.disabled.has(template.index),
         });
       }
     }

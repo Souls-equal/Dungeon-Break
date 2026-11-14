@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { DUNGEON_CONFIG, findDifficulty, floorOfLayer } from "../../src/dungeon/config.js";
-import { createLoader, chunkOfWorld, markerCellOf } from "../../src/dungeon/loader.js";
+import { createLoader, chunkOfWorld, surfaceCellOf } from "../../src/dungeon/loader.js";
 import { reset as resetScheduler } from "../../src/utils/scheduler.js";
 
 const SIZE = DUNGEON_CONFIG.chunkSize;
@@ -105,6 +105,7 @@ function createServer(options = {}) {
   return {
     api,
     world,
+    templateBlocks,
     calls,
     loadedChunks,
     /** One server tick: delayed chunk loads complete here. */
@@ -128,8 +129,13 @@ function createServer(options = {}) {
           }
         }
       }
-      // The record block, in the solid low corner the loader reads.
-      templateBlocks.set(cellKey(base[0], base[1], base[2]), DUNGEON_CONFIG.markerBlock);
+      // A ceiling: the engine writes its own record block there, so a template no
+      // longer has to reserve a corner for it.
+      for (let x = 0; x < SIZE; x += 1) {
+        for (let z = 0; z < SIZE; z += 1) {
+          templateBlocks.set(cellKey(base[0] + x, base[1] + SIZE - 1, base[2] + z), "Smooth Stone");
+        }
+      }
       return base;
     },
   };
@@ -146,8 +152,8 @@ function createTestLoader(server, templates, difficulty = VERY_EASY) {
 const TEMPLATE_A = [0, -32, 0];
 const TEMPLATE_B = [64, -32, 0];
 const ROOMS = [
-  { id: "a", src: TEMPLATE_A, faces: "NESW", markerLocal: null, spawn: true },
-  { id: "b", src: TEMPLATE_B, faces: "NESW", markerLocal: null, spawn: false },
+  { index: 0, src: TEMPLATE_A, faces: "NESW", spawn: true },
+  { index: 1, src: TEMPLATE_B, faces: "NESW", spawn: false },
 ];
 
 test.beforeEach(() => resetScheduler());
@@ -173,6 +179,33 @@ test("a room is one chunk copy, and the copy is the documented call", () => {
   assert.equal(server.api.getBlock(base[0] + 16, base[1] + 2, base[2] + 16), "Stone Bricks");
 });
 
+
+test("the record of a room is its own ceiling block, written after the copy", () => {
+  const server = createServer();
+  const base = server.addTemplate(TEMPLATE_A);
+  const { loader, level } = createTestLoader(server, ROOMS);
+  // A player in the destination chunk, so the chunk is readable.
+  server.api.setPosition("player", [16, floorOfLayer(VERY_EASY), 16]);
+  for (let tick = 0; tick < 5; tick += 1) server.advance();
+
+  // The template chunk has to arrive too: a read only asks for it.
+  server.api.getBlock(TEMPLATE_A[0], TEMPLATE_A[1], TEMPLATE_A[2]);
+  for (let tick = 0; tick < 5; tick += 1) server.advance();
+
+  const written = server.calls.setBlock.length;
+  loader.placeEntrance(VERY_EASY);
+
+  // One block written, by the engine, in the middle of the ceiling — never taken
+  // from the template, which is hand-built and reserves nothing for us.
+  const own = server.calls.setBlock.slice(written);
+  assert.deepEqual(own.map((call) => [call.x, call.y, call.z, call.name]), [[
+    16, floorOfLayer(VERY_EASY) + SIZE - 1, 16, DUNGEON_CONFIG.surfaceBlock,
+  ]]);
+  // And the template itself is untouched: the copy carries no record block.
+  assert.notEqual(server.templateBlocks.get(`16,${base[1] + SIZE - 1},16`), DUNGEON_CONFIG.surfaceBlock);
+  assert.equal(level.planned.get("0|0"), "placed");
+});
+
 test("a copy from an unloaded template is retried, then disabled, never looped", () => {
   const server = createServer({ loadDelay: 1000 });
   server.addTemplate(TEMPLATE_A);
@@ -185,7 +218,7 @@ test("a copy from an unloaded template is retried, then disabled, never looped",
     loader.placeOne(level);
   }
   assert.equal(server.calls.copy.length, 0, "a copy was attempted from an unloaded template");
-  assert.ok(level.disabled.has("a"), "a template that cannot be read is still being retried");
+  assert.ok(level.disabled.has(0), "a template that cannot be read is still being retried");
   assert.equal(level.queue.length <= 1, true, "the queue kept the unusable entry for ever");
 });
 
@@ -209,8 +242,8 @@ test("a copy is verified by reading the destination back, once the room is there
     "a copy whose record block reads back is not marked as placed");
   assert.equal(level.placed, 1);
   assert.equal(level.unverified, 0);
-  const marker = markerCellOf(VERY_EASY, 1, 0, null);
-  assert.equal(server.api.getBlock(marker[0], marker[1], marker[2]), DUNGEON_CONFIG.markerBlock);
+  const marker = surfaceCellOf(VERY_EASY, 1, 0);
+  assert.equal(server.api.getBlock(marker[0], marker[1], marker[2]), DUNGEON_CONFIG.surfaceBlock);
 
   // And this chunk is never copied twice — whatever else the scan finds to build
   // around the player, which is the point of the scan.
@@ -260,8 +293,8 @@ test("chunks already recorded are never copied again", () => {
   // The origin chunk is loaded, as it is in the game: a player is standing in it.
   server.api.setPosition("player", [16, floorOfLayer(VERY_EASY), 16]);
   for (let tick = 0; tick < 5; tick += 1) server.advance();
-  const cell = markerCellOf(VERY_EASY, 0, 0, null);
-  server.world.set(`${cell[0]},${cell[1]},${cell[2]}`, DUNGEON_CONFIG.markerBlock);
+  const cell = surfaceCellOf(VERY_EASY, 0, 0);
+  server.world.set(`${cell[0]},${cell[1]},${cell[2]}`, DUNGEON_CONFIG.surfaceBlock);
 
   loader.placeEntrance(VERY_EASY);
   assert.equal(server.calls.copy.length, 0, "an already built entrance was copied over itself");

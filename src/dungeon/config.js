@@ -64,13 +64,16 @@ export const DUNGEON_CONFIG = {
   // missing.
   verifyMaxTicks: 40,
 
-  // A chunk's record lives in one block, so a level that is re-entered does not
-  // rebuild what is already there.
-  markerBlock: "Bedrock",
-  // Where that block sits inside the room chunk: the low corner. A room template
-  // keeps its corners solid, so the marker sits inside a wall corner and cannot
-  // be walked through.
-  markerLocalXZ: 0,
+  // A room's record is one block **of its own ceiling**, in the middle of the room:
+  // `(chunkX * 32 + 16, layer + 31, chunkZ * 32 + 16)`. It is written right after
+  // the copy and read back to know whether the room is there.
+  //
+  // On the ceiling, and not on the floor or in a wall corner, for one reason: the
+  // templates are built by hand, so this engine must not require a particular cell
+  // of them to be solid or empty. The ceiling is the one layer a room has by
+  // definition, and the middle of it is the cell a player can never reach.
+  surfaceBlock: "Polished Diorite",
+  surfaceLocalXZ: 16,
 
   // ------------------------------------------------- destination placement ---
   // Each difficulty gets its own horizontal band of chunk layers, two chunks
