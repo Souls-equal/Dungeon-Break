@@ -16,6 +16,7 @@ const WATCH = process.argv.includes("--watch");
 const CALLBACKS = [
   "onBlockStandStart",
   "onBlockStandStop",
+  "onPlayerBoughtShopItem",
   "onPlayerJoin",
   "onPlayerLeave",
   "onRespawnRequest",
@@ -50,6 +51,14 @@ function validate(code) {
   // that writes blocks one at a time again, which is the code this replaced.
   if (!code.includes("copyChunk")) {
     throw new Error("api.copyChunk is not called anywhere in the bundle");
+  }
+
+  // Spawn is a shop item in this world, so a bundle without the shop API is a
+  // bundle where a player who leaves a dungeon has nowhere to go.
+  for (const call of ["createShopItem", "setPosition"]) {
+    if (!code.includes(call)) {
+      throw new Error(`api.${call} is not called anywhere in the bundle`);
+    }
   }
 }
 

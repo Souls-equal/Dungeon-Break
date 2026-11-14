@@ -57,6 +57,8 @@ function createWorld(onlinePlayerIds, options = {}) {
   const positions = [];
   const copies = [];
   const violations = [];
+  /** What the world code asked the shop to show: category → key → item. */
+  const shop = new Map();
   const players = options.positions ? { ...options.positions } : {};
   const template = new Map();
   const world = new Map();
@@ -117,6 +119,12 @@ function createWorld(onlinePlayerIds, options = {}) {
       setClientOption: (playerId, option, value) => clientOptions.push({ playerId, option, value }),
       setClientOptions: (playerId, options2) => {
         for (const option of Object.keys(options2)) clientOptions.push({ playerId, option, value: options2[option] });
+      },
+      // The shop is how a player gets back to spawn in this world: it is registered
+      // by the world code, and the fake keeps what was asked for.
+      createShopItem: (categoryKey, itemKey, item) => {
+        if (!shop.has(categoryKey)) shop.set(categoryKey, new Map());
+        shop.get(categoryKey).set(itemKey, item);
       },
       // Nothing may be written into a chunk, loaded or not: a write is a failure on
       // its own, and the fake keeps the world as the copies made it.
@@ -186,6 +194,7 @@ function createWorld(onlinePlayerIds, options = {}) {
     positions,
     copies,
     violations,
+    shop,
     world,
     template,
     advance,
@@ -591,4 +600,69 @@ test("the bundle carries every room template the source declares", () => {
   }
   assert.ok(worldCode.includes("padBlock"), "the pad table is missing from the bundle");
   assert.ok(worldCode.includes("globalThis.ROOM_TEMPLATES"), "the template table is not reachable from the game");
+});
+
+// ------------------------------------------------------------------- shop --
+
+test("a player at spawn is never a player with a dungeon", () => {
+  const world = createWorld(["p1"]);
+  startDungeon(world, "p1");
+  tickUntil(world, () => said(world, "p1").includes("Level: Very Easy"), 400);
+  const before = world.copies.length;
+
+  // The shop item teleports to spawn, and the dungeon must stop **before** that:
+  // the alternative is a generator reading the chunk spawn happens to be in.
+  world.context.onPlayerBoughtShopItem("p1", "Utilities", "Teleport to spawn", {}, "");
+
+  // The teleport happened, and it is the spawn position.
+  const last = world.positions.at(-1).position;
+  assert.deepEqual(last.slice(0, 3), [10, 21, 10]);
+  // Nothing is copied around spawn, and nothing was left to copy: `/dbg` no longer
+  // reports a dungeon for this player.
+  const since = world.copies.length;
+  world.tick(40);
+  assert.equal(world.copies.length, since,
+    `${world.copies.length - since} rooms were built after the player went to spawn`);
+  assert.equal(world.context.playerCommand("p1", "level"), true);
+  assert.ok(said(world, "p1").some((message) => /not in a dungeon/.test(message)),
+    `a dungeon survived the teleport: ${JSON.stringify(said(world, "p1").slice(-4))}`);
+  assert.ok(before > 0);
+});
+
+test("a teleport during the entrance wait abandons the entrance", () => {
+  // The worst case: the player is in the air, the entrance copy is scheduled a tick
+  // later. Teleporting must not place them back in the dungeon.
+  const world = createWorld(["p1"]);
+  world.context.onBlockStandStart("p1", 2, 10, 3, "Lime Concrete");
+  world.tick(10 * 20 + 1);
+  assert.ok(!said(world, "p1").includes("Level: Very Easy"));
+  world.context.onPlayerBoughtShopItem("p1", "Utilities", "Teleport to spawn", {}, "");
+  world.tick(20);
+  assert.ok(!said(world, "p1").includes("Level: Very Easy"),
+    "the entrance was completed after the player had gone to spawn");
+  assert.deepEqual(world.positions.at(-1).position.slice(0, 3), [10, 21, 10]);
+});
+
+test("the shop offers spawn in a Utilities category", () => {
+  const world = createWorld(["p1"]);
+  world.context.onPlayerJoin("p1");
+  const items = world.shop.get("Utilities");
+  assert.ok(items, "the Utilities category was not created");
+  const spawn = items.get("Teleport to spawn");
+  assert.ok(spawn, "the spawn item was not created");
+  // Free, with a buy button: the item is an action, not a purchase.
+  assert.equal(spawn.cost, 0);
+  assert.equal(spawn.canBuy, true);
+  assert.ok(spawn.image, "the item has no image to draw");
+});
+
+test("buying anything else does nothing", () => {
+  const world = createWorld(["p1"]);
+  startDungeon(world, "p1");
+  tickUntil(world, () => said(world, "p1").includes("Level: Very Easy"), 400);
+  const lastDungeonPosition = world.positions.at(-1).position;
+  world.context.onPlayerBoughtShopItem("p1", "Utilities", "Something else", {}, "");
+  assert.deepEqual(world.positions.at(-1).position, lastDungeonPosition);
+  assert.ok(world.context.playerCommand("p1", "level"));
+  assert.ok(!said(world, "p1").some((message) => /not in a dungeon/.test(message)));
 });

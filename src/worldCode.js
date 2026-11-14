@@ -7,6 +7,8 @@
  *     it worked: step on a pad, wait ten seconds, step off to cancel;
  *   - the pads, both in the lobby and inside a dungeon, which all go through the
  *     same block-to-difficulty table;
+ *   - the **Utilities** shop category, which holds the only way back to spawn now
+ *     that the game's own spawn is off, and which ends the dungeon as it teleports;
  *   - the `/dbg` commands, which are how a bug gets reported with numbers.
  *
  * Everything about rooms lives in `src/dungeon/`: one chunk copied per tick, no
@@ -20,7 +22,7 @@ import {
   step as stepScheduler,
 } from "./utils/scheduler.js";
 import { DIFFICULTIES, difficultyForPadBlock } from "./dungeon/config.js";
-import { createDungeonService } from "./dungeon/service.js";
+import { LOBBY_POSITION, createDungeonService } from "./dungeon/service.js";
 
 const LOBBY_CONFIG = {
   countdownSeconds: 10,
@@ -314,6 +316,77 @@ playerCommand = (playerId, command) => {
   return true;
 };
 
+// ------------------------------------------------------------------ shop --
+//
+// The game's own spawn is switched off in this world, so spawn is a place the code
+// has to provide. It is one shop item, in a category of its own, and buying it is
+// both the teleport and the way out of a dungeon.
+//
+// **Ending the dungeon is the point.** A player teleported out of their dungeon
+// without telling the dungeon would still have a record: the next tick would read the
+// chunk they now stand in and keep copying rooms around the spawn. Buying this item
+// moves the player and forgets the dungeon in the same call, so nothing is ever
+// generated for a player who is at spawn.
+
+const SHOP_CATEGORY = "Utilities";
+const SPAWN_ITEM = "Teleport to spawn";
+
+const SHOP_ITEMS = [
+  {
+    category: SHOP_CATEGORY,
+    key: SPAWN_ITEM,
+    item: {
+      // A block name is an image the game already has, which keeps this readable in
+      // every world. `api.getBlock` is not involved: nothing is placed.
+      image: "Lime Concrete",
+      customTitle: "Teleport to spawn",
+      description: "Return to the lobby, at spawn. Stops the dungeon you are in.",
+      buyButtonText: "Teleport",
+      // Free, and a purchase rather than a display tile: the callback is what tells
+      // the code a player asked for it.
+      cost: 0,
+      canBuy: true,
+      sortPriority: 0,
+    },
+  },
+];
+
+/**
+ * Registers the shop items, once, at load.
+ *
+ * Called again by `onPlayerJoin` as a safety net: an item registered while no player
+ * was online is not always shown to the first player who joins, and re-creating an
+ * existing item simply replaces it — the documented behaviour of `createShopItem`.
+ */
+function registerShopItems() {
+  for (const entry of SHOP_ITEMS) {
+    try {
+      api.createShopItem(entry.category, entry.key, { ...entry.item });
+    } catch (error) {
+      // A shop is a convenience: if the API is missing or refuses, the game keeps
+      // running and `/dbg` still works. It is logged rather than silenced.
+      try {
+        api.log(`[Dungeon] shop item "${entry.key}" could not be created: ${error && error.message ? error.message : error}`);
+      } catch (_) {
+        // Nothing left to do.
+      }
+    }
+  }
+}
+
+onPlayerBoughtShopItem = (playerId, categoryKey, itemKey) => {
+  if (categoryKey !== SHOP_CATEGORY || itemKey !== SPAWN_ITEM) return;
+  // Teleport and forget are one call, so the tick can never see a player at spawn
+  // with a dungeon: `teleportToSpawn` moves first, then drops the record.
+  const wasInDungeon = service().teleportToSpawn(playerId);
+  stopLobbyCountdown(playerId);
+  api.setClientOption(playerId, "middleTextUpper", "");
+  api.sendMessage(
+    playerId,
+    wasInDungeon ? "Back to spawn. Your dungeon stopped." : "Back to spawn.",
+  );
+};
+
 // -------------------------------------------------------------- lifecycle --
 
 tick = () => {
@@ -331,7 +404,10 @@ tick = () => {
 };
 
 onPlayerJoin = (playerId) => {
-  api.setPosition(playerId, [10, 21, 10]);
+  // The shop is re-registered per join: an item created while nobody was online is
+  // not always offered to the first player who arrives, and replacing it is free.
+  registerShopItems();
+  api.setPosition(playerId, LOBBY_POSITION);
   const names = DIFFICULTIES.filter((entry) => entry.fromLobby).map((entry) => entry.label).join(", ");
   api.sendMessage(
     playerId,
@@ -357,3 +433,6 @@ onRespawnRequest = (playerId) => {
 // The ladder, for the game side to read. No layer: a dungeon's height is drawn per
 // entry, so the only place that knows it is the dungeon itself.
 globalThis.DUNGEON_LEVELS = DIFFICULTIES.map((entry) => ({ id: entry.id, label: entry.label }));
+
+// The shop is registered once at load; `onPlayerJoin` repeats it for the first player.
+registerShopItems();

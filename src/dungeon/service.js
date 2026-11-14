@@ -125,7 +125,9 @@ export function createDungeonService(options) {
     usedLevels.add(difficulty);
 
     scheduleTimeout(() => {
-      // A player who left the game during the wait has no business being placed.
+      // A player who left the game — or was sent to spawn — during the wait has no
+      // business being placed. Their dungeon is gone, so the whole entrance is
+      // abandoned here rather than in each step below.
       if (!playerDungeons.has(playerId)) return;
 
       // The landing is drawn from the room that was copied into the entrance chunk,
@@ -204,12 +206,47 @@ export function createDungeonService(options) {
     return difficulty;
   }
 
+  /**
+   * Stops building for a player, without moving them.
+   *
+   * Every way out of a dungeon goes through here: leaving the game, or the shop's
+   * "Teleport to spawn" button, which is the only way back now that the game's own
+   * spawn is off. `playerDungeons` is what the tick reads, and what it holds is the
+   * whole of "this player has a dungeon" — dropping the record stops the scan, the
+   * queue and the copies for that player, and `release` frees the place.
+   *
+   * Nothing is destroyed in the world: the rooms stay where they are, and the game
+   * clears them. That is why this can be called from anywhere without asking.
+   */
+  function stopBuilding(playerId) {
+    const dungeon = dungeonOf(playerId);
+    if (!dungeon) return false;
+    loader.release(dungeon.difficulty, playerId);
+    playerDungeons.delete(playerId);
+    return true;
+  }
+
   /** Sends a player back to the lobby. Every exit goes through here. */
   function leave(playerId) {
-    const dungeon = dungeonOf(playerId);
-    if (dungeon) loader.release(dungeon.difficulty, playerId);
-    playerDungeons.delete(playerId);
+    stopBuilding(playerId);
     api.setPosition(playerId, LOBBY_POSITION);
+  }
+
+  /**
+   * A player asking to go back to spawn.
+   *
+   * Two things in one, in the order that matters: **teleport, then forget**. The
+   * forgetting is what makes the generator stop — the tick reads `playerDungeons`, so
+   * dropping the record ends the scan, the queue and the copies for that player — and
+   * doing it after the teleport means the last record still holds the dungeon's place
+   * rather than the lobby's. A record that held the lobby would be one tick of the
+   * scan pointed at spawn, which is exactly the leak this button closes.
+   */
+  function teleportToSpawn(playerId) {
+    const wasInDungeon = inDungeon(playerId);
+    api.setPosition(playerId, LOBBY_POSITION);
+    stopBuilding(playerId);
+    return wasInDungeon;
   }
 
   /**
@@ -352,6 +389,8 @@ export function createDungeonService(options) {
     usePad,
     leave,
     leaveToLobby: leave,
+    teleportToSpawn,
+    stopBuilding,
     tick,
     dungeonOf,
     inDungeon,
