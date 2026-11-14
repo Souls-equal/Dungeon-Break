@@ -50,11 +50,12 @@ Les 15 salles construites sont dans la table, les 60 restantes en commentaire �
 
 Une seule chose, et elle est dans ta construction : **une couche de Bedrock en bas et une en haut du chunk**, sol et plafond, comme les Bedrock du Nether.
 
-C'est tout le contrat, et il sert à trois choses d'un coup :
+C'est tout le contrat, et il sert à deux choses d'un coup :
 
 1. **Charger** la destination : le moteur lit un bloc dans le chunk, et le serveur l'envoie ; deux ticks plus tard il est là et accepte une copie.
-2. **Savoir si le chunk est déjà bâti** : le Bedrock lu en bas (ou en haut) dit qu'une salle est déjà là. Aucune salle n'est jamais recopiée, même après un redémarrage du serveur, et sans qu'aucun bloc n'ait été écrit par le code.
-3. **Reconnaître une couche vide** : si le Bedrock manque sur une couche, il suffit que le bloc ne soit pas de l'Air.
+2. **Savoir si une salle est déjà là** : le moteur lit une seule case, au **centre du chunk** (local 16,16), sur la couche du bas puis sur celle du haut. Bedrock → la salle est là, rien n'est recopié, même après un redémarrage. Autre bloc → ce n'est pas une salle : la copie se fait par-dessus.
+
+La case lue est celle où le joueur atterrit et où se trouve la plaque Concrete : le centre de la salle. **Seul le Bedrock compte comme preuve** — sinon du terrain ordinaire, à la même profondeur, passerait pour une salle et le moteur sauterait la copie.
 
 La hauteur du sol, elle, est lue et jamais configurée : le moteur remonte la colonne du milieu et prend le premier bloc qui n'est ni de l'Air ni du Bedrock.
 
@@ -121,7 +122,7 @@ src/worldCode.js           lobby, pads, /dbg
 - `npm run build` régénère le fichier compact.
 - `npm run watch` le régénère à chaque sauvegarde dans `src/`.
 - `npm run check` vérifie que le bundle est à jour, valide les syntaxes, et refuse un bundle où `copyChunk` ou la table des modèles ont disparu au minification.
-- `npm test` lance les 63 tests : moteur, configuration, et le bundle réel exécuté dans un `vm` contre un faux serveur qui applique les règles de Bloxd.
+- `npm test` lance les 64 tests : moteur, configuration, et le bundle réel exécuté dans un `vm` contre un faux serveur qui applique les règles de Bloxd.
 
 Le workflow GitHub vérifie la version générée sur les Pull Requests et resynchronise `world-code/` après un merge dans `main`.
 

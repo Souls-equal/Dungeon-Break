@@ -154,7 +154,11 @@ export function createDungeonService(options) {
               waitForFloor(attemptsLeft - 1);
               return;
             }
-            api.sendMessage(playerId, "The room could not be built. You have been returned to the lobby.");
+            api.sendMessage(
+              playerId,
+              `The room could not be built. ${loader.entranceFailureMessage(difficulty)} `
+                + "You have been returned to the lobby.",
+            );
             api.setClientOptions(playerId, { gravityMultiplier: 1 });
             leave(playerId);
             log(`entrance copy failed for ${playerId} on ${difficulty.label}`);
@@ -270,6 +274,7 @@ export function createDungeonService(options) {
       templates: stats.templates,
       disabled: stats.disabled,
       exampleChunk: template ? template.chunk : null,
+      entrance: loader.explainEntrance(dungeon.difficulty),
       ticks,
     };
   }
