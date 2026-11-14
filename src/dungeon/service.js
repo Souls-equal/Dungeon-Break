@@ -86,7 +86,7 @@ export function createDungeonService(options) {
       api.sendMessage(playerId, "That difficulty does not exist.");
       return null;
     }
-    const level = loader.levelState(difficulty);
+    const level = loader.levelState(difficulty, playerId);
     if (level.templates.length === 0) {
       api.sendMessage(playerId, `${difficulty.label} has no rooms yet. ${DUNGEON_CONFIG.missingTemplatesMessage}`);
       return null;
@@ -94,7 +94,16 @@ export function createDungeonService(options) {
 
     // Ask the server for the template chunks now, so the copies a moment later have
     // something to read. One call per template, once per level.
-    loader.warmTemplates(difficulty);
+    loader.warmTemplates(difficulty, playerId);
+
+    // **A new place for every entry.** A player's dungeon belongs to their entry: the
+    // pad to the next difficulty releases the old one and draws a new place, so no
+    // two players ever start in the same rooms — and a player who comes back does not
+    // find the ruins of their previous run.
+    const previous = dungeonOf(playerId);
+    if (previous) loader.release(previous.difficulty, playerId);
+    loader.newOrigin(difficulty, playerId);
+    const origin = loader.levelState(difficulty, playerId).origin;
 
     // The player is put **in** the entrance chunk immediately, and that is deliberate:
     // a chunk is only sent when someone is near it, so this teleport is what makes the
@@ -105,8 +114,8 @@ export function createDungeonService(options) {
     // layer's floor: the one column a room is built around, and the one cell the
     // engine can name before it has read the room.
     const provisionalY = floorOfLayer(difficulty) + DUNGEON_CONFIG.spawnAboveFloor;
-    const centreX = DUNGEON_CONFIG.originChunkX * SIZE + DUNGEON_CONFIG.probeLocalXZ[0] + 0.5;
-    const centreZ = DUNGEON_CONFIG.originChunkZ * SIZE + DUNGEON_CONFIG.probeLocalXZ[1] + 0.5;
+    const centreX = origin.x * SIZE + DUNGEON_CONFIG.probeLocalXZ[0] + 0.5;
+    const centreZ = origin.z * SIZE + DUNGEON_CONFIG.probeLocalXZ[1] + 0.5;
 
     // Nothing is announced before the floor exists: a player told "ready" while
     // falling is worse than a player told nothing.
@@ -121,7 +130,7 @@ export function createDungeonService(options) {
 
       // The landing is drawn from the room that was copied into the entrance chunk,
       // so the height is the room's own floor and the cell is one no wall occupies.
-      const landing = loader.landingPosition(difficulty);
+      const landing = loader.landingPosition(difficulty, playerId);
       if (!landing) {
         // No template could be read: its chunk is not loaded, so a copy from it
         // would do nothing and there is no floor to stand on. Saying so is the only
@@ -138,7 +147,7 @@ export function createDungeonService(options) {
       // The entrance room, first and alone: everything else is planned around it.
       // The probe inside only copies where no room is, so re-entering a level does
       // not rebuild what is already standing.
-      loader.placeEntrance(difficulty);
+      loader.placeEntrance(difficulty, playerId);
 
       // The floor is read back rather than assumed: a copy that did not land is a
       // message, not a player falling through the world. `placeEntrance` is called
@@ -159,13 +168,13 @@ export function createDungeonService(options) {
           );
           if (under === null || under === "Air") {
             if (attemptsLeft > 0) {
-              loader.placeEntrance(difficulty);
+              loader.placeEntrance(difficulty, playerId);
               waitForFloor(attemptsLeft - 1);
               return;
             }
             api.sendMessage(
               playerId,
-              `The room could not be built. ${loader.entranceFailureMessage(difficulty)} `
+              `The room could not be built. ${loader.entranceFailureMessage(difficulty, playerId)} `
                 + "You have been returned to the lobby.",
             );
             api.setClientOptions(playerId, { gravityMultiplier: 1 });
@@ -185,7 +194,7 @@ export function createDungeonService(options) {
           // The rooms around the player are planned from here, once: the next scan
           // (a few ticks later) would do the same, but the player would spend those
           // ticks staring at the edge of a single room.
-          loader.planAround(level, DUNGEON_CONFIG.originChunkX, DUNGEON_CONFIG.originChunkZ);
+          loader.planAround(level, origin.x, origin.z);
           if (onReady) onReady(difficulty, landing);
         }, 1);
       };
@@ -197,6 +206,8 @@ export function createDungeonService(options) {
 
   /** Sends a player back to the lobby. Every exit goes through here. */
   function leave(playerId) {
+    const dungeon = dungeonOf(playerId);
+    if (dungeon) loader.release(dungeon.difficulty, playerId);
     playerDungeons.delete(playerId);
     api.setPosition(playerId, LOBBY_POSITION);
   }
@@ -230,7 +241,7 @@ export function createDungeonService(options) {
   function rescueIfFallen(playerId, dungeon, position) {
     const bottom = floorOfLayer(dungeon.difficulty) - 4;
     if (position[1] >= bottom) return false;
-    const landing = loader.landingPosition(dungeon.difficulty);
+    const landing = loader.landingPosition(dungeon.difficulty, playerId);
     if (!landing) return false;
     api.setPosition(playerId, landing);
     dungeon.position = landing;
@@ -248,10 +259,13 @@ export function createDungeonService(options) {
       dungeon.position = position;
       if (rescueIfFallen(playerId, dungeon, position)) continue;
       const chunk = chunkOfWorld(position[0], position[2]);
-      let group = groups.get(dungeon.difficulty.id);
+      // Grouped by **entry**, not by difficulty: two players in the same difficulty
+      // are in two dungeons a hundred thousand blocks apart, and each has its own
+      // queue and its own one-copy-per-tick budget.
+      let group = groups.get(playerId);
       if (!group) {
-        group = { difficulty: dungeon.difficulty, chunks: [] };
-        groups.set(dungeon.difficulty.id, group);
+        group = { difficulty: dungeon.difficulty, entryId: playerId, chunks: [] };
+        groups.set(playerId, group);
       }
       group.chunks.push(chunk);
     }
@@ -283,7 +297,8 @@ export function createDungeonService(options) {
       templates: stats.templates,
       disabled: stats.disabled,
       exampleChunk: template ? template.chunk : null,
-      entrance: loader.explainEntrance(dungeon.difficulty),
+      origin: loader.levelState(dungeon.difficulty, playerId).origin,
+      entrance: loader.explainEntrance(dungeon.difficulty, playerId),
       ticks,
     };
   }
@@ -292,8 +307,8 @@ export function createDungeonService(options) {
   function templatesReport() {
     const rows = [];
     for (const difficulty of usedLevels) {
-      const level = loader.levelState(difficulty);
-      for (const template of level.templates) {
+      const state = loader.levelState(difficulty);
+      for (const template of state.templates) {
         const block = api.getBlock(template.src[0], template.src[1], template.src[2]);
         rows.push({
           difficulty: difficulty.label,
@@ -302,18 +317,30 @@ export function createDungeonService(options) {
           src: template.src,
           loaded: block !== null && block !== undefined,
           block,
-          disabled: level.disabled.has(template.index),
+          disabled: state.disabled.has(template.index),
         });
       }
     }
     return rows;
   }
 
+  /**
+   * One row per dungeon that exists right now.
+   *
+   * A dungeon belongs to an entry, so this is no longer "one row per level": two
+   * players in Very Easy are two rows, each with the place it was built at, which is
+   * exactly what a report needs now that every entry draws its own.
+   */
   function memoryReport() {
     const rows = [];
-    for (const difficulty of usedLevels) {
-      const stats = loader.statsOf(difficulty);
-      rows.push({ ...stats, chunkY: difficulty.chunkY });
+    for (const [entryId, dungeon] of playerDungeons.entries()) {
+      const state = loader.levelState(dungeon.difficulty, entryId);
+      rows.push({
+        ...loader.statsOf(dungeon.difficulty, entryId),
+        entryId,
+        chunkY: dungeon.difficulty.chunkY,
+        origin: state.origin,
+      });
     }
     return rows;
   }
