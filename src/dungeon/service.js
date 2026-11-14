@@ -68,10 +68,17 @@ export function createDungeonService(options) {
    * Steps, in order, each one asserted before the next:
    *
    *   1. a template exists, or the player stays in the lobby with a reason;
-   *   2. gravity is switched off and the player is dropped into the chunk the
-   *      entrance room will occupy — that read is what loads it;
-   *   3. `chunkWarmupTicks` later, the room is copied and the player is placed on
-   *      its floor, two blocks above the block they stand on.
+   *   2. the template chunks are requested, gravity is switched off, and the player
+   *      is dropped into the chunk the entrance room will occupy;
+   *   3. `chunkLoadTicks` later, the entrance room is copied if it is not already
+   *      there — the room's own Bedrock says which;
+   *   4. a tick later, the floor under the landing cell is read back, and the player
+   *      is placed on it. A floor that is not there is retried for
+   *      `entryMaxTicks`, then it is a message — never a player falling through the
+   *      world.
+   *
+   * None of these waits is a guess: a chunk answers `chunkLoadTicks` after the read
+   * that requested it, and a copied room is readable the tick after the copy.
    */
   function enterDifficulty(playerId, difficultyReference, onReady) {
     const difficulty = findDifficulty(difficultyReference);
@@ -104,13 +111,11 @@ export function createDungeonService(options) {
       // A player who left the game during the wait has no business being placed.
       if (!playerDungeons.has(playerId)) return;
 
-      // The copy and the landing are computed together, from one reading of the
-      // template. Reading the floor later, in a second step, would read a chunk
-      // the world may already have replaced with the copy — the difference between
-      // "the floor is at local y 2" and "there is stone at local y 2" comes from
-      // exactly this.
-      const landing = loader.landingPosition(difficulty);
+      // The floor height is read from the template before the copy replaces what
+      // the destination holds: the value is what the copy will produce, not what
+      // happens to be there now.
       const floorLocalY = loader.findFloorLocalY(level);
+      const landing = loader.landingPosition(difficulty);
       if (!landing || floorLocalY === null) {
         // No template could be read: its chunk is not loaded, so a copy from it
         // would do nothing and there is no floor to stand on. Saying so is the only
@@ -125,44 +130,54 @@ export function createDungeonService(options) {
       }
 
       // The entrance room, first and alone: everything else is planned around it.
+      // The probe inside only copies where no room is, so re-entering a level does
+      // not rebuild what is already standing.
       loader.placeEntrance(difficulty);
 
-      // One tick for the copy to be applied, then the player is put on the floor
-      // it produced — read back first, so a copy that did not land is a message
-      // rather than a player falling through the world.
-      scheduleTimeout(() => {
-        if (!playerDungeons.has(playerId)) return;
-        const record = playerDungeons.get(playerId);
-        if (record && record.difficulty.id !== difficulty.id) return;
+      // The floor is read back rather than assumed: a copy that did not land is a
+      // message, not a player falling through the world. `placeEntrance` is called
+      // again on each attempt, which copies again only if the room is still missing.
+      const waitForFloor = (attemptsLeft) => {
+        scheduleTimeout(() => {
+          if (!playerDungeons.has(playerId)) return;
+          const record = playerDungeons.get(playerId);
+          if (record && record.difficulty.id !== difficulty.id) return;
 
-        const under = api.getBlock(
-          Math.floor(landing[0]),
-          floorOfLayer(difficulty) + floorLocalY,
-          Math.floor(landing[2]),
-        );
-        if (under === null || under === "Air") {
-          api.sendMessage(playerId, "The room could not be built. You have been returned to the lobby.");
+          const under = api.getBlock(
+            Math.floor(landing[0]),
+            floorOfLayer(difficulty) + floorLocalY,
+            Math.floor(landing[2]),
+          );
+          if (under === null || under === "Air") {
+            if (attemptsLeft > 0) {
+              loader.placeEntrance(difficulty);
+              waitForFloor(attemptsLeft - 1);
+              return;
+            }
+            api.sendMessage(playerId, "The room could not be built. You have been returned to the lobby.");
+            api.setClientOptions(playerId, { gravityMultiplier: 1 });
+            leave(playerId);
+            log(`entrance copy failed for ${playerId} on ${difficulty.label}`);
+            return;
+          }
+
+          api.setPosition(playerId, landing);
           api.setClientOptions(playerId, { gravityMultiplier: 1 });
-          leave(playerId);
-          log(`entrance copy failed for ${playerId} on ${difficulty.label}`);
-          return;
-        }
-
-        api.setPosition(playerId, landing);
-        api.setClientOptions(playerId, { gravityMultiplier: 1 });
-        const state = playerDungeons.get(playerId);
-        if (state) {
-          state.landed = true;
-          state.position = landing;
-        }
-        api.sendMessage(playerId, `Level: ${difficulty.label}`);
-        // The rooms around the player are planned from here, once: the next scan
-        // (a few ticks later) would do the same, but the player would spend those
-        // ticks staring at the edge of a single room.
-        loader.planAround(level, DUNGEON_CONFIG.originChunkX, DUNGEON_CONFIG.originChunkZ);
-        if (onReady) onReady(difficulty, landing);
-      }, 1);
-    }, DUNGEON_CONFIG.chunkWarmupTicks);
+          const state = playerDungeons.get(playerId);
+          if (state) {
+            state.landed = true;
+            state.position = landing;
+          }
+          api.sendMessage(playerId, `Level: ${difficulty.label}`);
+          // The rooms around the player are planned from here, once: the next scan
+          // (a few ticks later) would do the same, but the player would spend those
+          // ticks staring at the edge of a single room.
+          loader.planAround(level, DUNGEON_CONFIG.originChunkX, DUNGEON_CONFIG.originChunkZ);
+          if (onReady) onReady(difficulty, landing);
+        }, 1);
+      };
+      waitForFloor(DUNGEON_CONFIG.entryMaxTicks);
+    }, DUNGEON_CONFIG.chunkLoadTicks);
 
     return difficulty;
   }

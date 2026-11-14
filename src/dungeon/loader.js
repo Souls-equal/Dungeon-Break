@@ -1,26 +1,30 @@
 /*
  * The core: one room per tick, copied whole.
  *
- * Everything this file does is a consequence of two documented facts:
+ * Everything this file does is a consequence of three facts:
  *
  *   1. `api.copyChunk(fromPos, toPos)` copies a whole 32x32x32 chunk in one call,
  *      and its documentation names the use case — "storing 'template' chunks that
- *      can be continuously copied to a new position".
+ *      can be continuously copied to a new position". Measured in game: the copy
+ *      itself is done within a tick.
  *
  *   2. "NOTE: Does nothing if the source chunk is not loaded." A copy from an
- *      unloaded template is not an error, it is silence. A template is therefore
- *      read once before it is used, and one that fails the check is disabled for
- *      the session instead of being retried for ever.
+ *      unloaded chunk is not an error, it is silence — so both ends are checked
+ *      rather than assumed.
  *
- * The queue is a consequence of a third fact: the engine writes nothing into a
- * room, so it cannot ask the world whether a room is already there. Planning
- * therefore happens only around players — never in the abstract — and the level
- * remembers for the session what it copied.
+ *   3. A `getBlock` in a chunk the server has not sent *is* the request for it, and
+ *      the chunk is ready two ticks later. That single behaviour replaces every
+ *      wait, every timer and every retry loop this file used to need.
+ *
+ * **Nothing is ever written into a chunk.** Not a marker, not a pad, not a repair.
+ * The record a room carries is its own **Bedrock** floor and ceiling, which the
+ * builder placed and the copy carries; the engine only reads it. That is what makes
+ * a room recognisable after a restart, and it is the only state a room has.
  *
  * There is no state per room, no cursor, no resumable build, no progress record,
- * no shard, no index. A room is a chunk that was copied, or a chunk that was not.
- * Nothing in between exists, which is what makes the whole thing small enough to
- * trust.
+ * no shard, no index. A room is a chunk whose Bedrock floor is there, or a chunk
+ * whose Bedrock floor is not there. Nothing in between exists, which is what makes
+ * the whole thing small enough to trust.
  */
 
 import { DUNGEON_CONFIG, floorOfLayer } from "./config.js";
@@ -46,6 +50,8 @@ export function createLoader({ api, log }) {
     if (!level) {
       level = {
         difficulty,
+        /** Ticks this level has been running, for the load and verify delays. */
+        tick: 0,
         templates: templatesFor(difficulty, say),
         /** Templates whose source chunk cannot be read: never retried. */
         disabled: new Set(),
@@ -53,15 +59,20 @@ export function createLoader({ api, log }) {
         templateAttempts: new Map(),
         /** chunkX|chunkZ → "queued" | "placing" | "placed". Bounded to the view. */
         planned: new Map(),
+        /** chunkX|chunkZ → first tick a copy into it may land. Bounded to the view. */
+        ready: new Map(),
+        /** chunkX|chunkZ → tick of the copy, until a probe sees the room. */
+        placingSince: new Map(),
         /** Ordered work: the next chunk to copy. */
         queue: [],
+        /** Rooms the world itself showed as built, this session. */
         placed: 0,
-        /** Copies made without any way to read them back — see `isPlaced`. */
-        unverified: 0,
         failures: 0,
         ticksSinceScan: DUNGEON_CONFIG.scanTicks,
         /** Chunk-local Y of the templates' floor, found once per level. */
         floorLocalY: null,
+        /** Levels the shipped templates were already requested for. */
+        warmed: false,
         warnedMissing: false,
       };
       levels.set(difficulty.id, level);
@@ -81,34 +92,95 @@ export function createLoader({ api, log }) {
   }
 
   /**
-   * Is the destination of a copy loaded?
+   * What one cell of a chunk says: a block name, or `null` when it says nothing.
    *
-   * The one question this engine still has to ask, because a copy into a chunk the
-   * server has not sent is dropped without an error. It is answered with
-   * `isBlockInLoadedChunk`, which **reads and writes nothing** — the alternative,
-   * reading a block of the room, would work too but returns `null` for a chunk that
-   * is merely not sent yet, and would make the scan take a decision on an absence.
-   *
-   * No API is assumed: a host that does not provide the function is treated as
-   * "loaded", so the engine degrades to "copy and hope" instead of not building.
+   * `null` is the server telling us the chunk is not here **yet** — and the read
+   * itself is what asks for it. That is the whole loading mechanism: one read, then
+   * `chunkLoadTicks` later the chunk exists.
    */
-  function isDestinationLoaded(difficulty, chunkX, chunkZ) {
-    if (typeof api.isBlockInLoadedChunk !== "function") return true;
-    return api.isBlockInLoadedChunk(chunkX * SIZE, floorOfLayer(difficulty), chunkZ * SIZE) === true;
+  function readCell(x, y, z) {
+    const name = api.getBlock(x, y, z);
+    return name === undefined ? null : name;
   }
 
   /**
-   * Has this chunk of this level been copied in this session?
+   * What a chunk says about itself, from its two Bedrock layers.
    *
-   * The only available answer, because the engine writes nothing into a room: no
-   * record block to read back, and a copied room looks exactly like an uncopied
-   * one from the world's point of view. So the level remembers what it copied, and
-   * says so honestly — `/dbg mem` counts these as "unconfirmed".
+   * Every room has Bedrock on its first and its last layer — floor and ceiling,
+   * like the Nether — so a handful of readings answers everything this engine needs
+   * to know about a chunk:
    *
-   * What that costs, and why it is acceptable: after a restart, or when a player
-   * walks back into a room copied during another session, the level has forgotten
-   * the room and will copy it again. A copy is idempotent — it writes the same
-   * blocks over the same cells — so the cost is one `copyChunk`, not a bug.
+   *   - `loaded: false` — every probed cell read `null`, the chunk has not been
+   *     sent. The read itself is the request, so the caller asks and comes back;
+   *   - `occupied: false` — the chunk is here and one of its layers reads `Air`:
+   *     nothing was built in it, it is a free slot;
+   *   - `occupied: true` — a block other than Air is there. In a room built the way
+   *     the project builds them, that block is the Bedrock of a floor or a ceiling.
+   *
+   * Both layers are probed, and both the first and the last, for one reason: the
+   * rule the owner gave is "if a layer has no Bedrock, just check the block is not
+   * Air". A room whose floor has no Bedrock is still a real room, and its ceiling
+   * still proves it is there.
+   *
+   * Four columns are tried per layer because a room is free to keep its centre
+   * open. The loop stops at the first cell that answers, so a normal room costs one
+   * read and a free slot costs one per column, once.
+   */
+  function probeChunk(chunkX, chunkY, chunkZ) {
+    const baseX = chunkX * SIZE;
+    const baseY = chunkY * SIZE;
+    const baseZ = chunkZ * SIZE;
+    let loaded = false;
+    for (const localY of DUNGEON_CONFIG.probeLocalYs) {
+      for (const [localX, localZ] of DUNGEON_CONFIG.probeLocalXZ) {
+        const name = readCell(baseX + localX, baseY + localY, baseZ + localZ);
+        if (name === null) continue;
+        loaded = true;
+        if (name !== "Air") return { loaded, occupied: true };
+      }
+    }
+    return { loaded, occupied: false };
+  }
+
+  /**
+   * Has this chunk a room in it?
+   *
+   * The question the engine used to answer with a marker block it wrote itself.
+   * It is answered here by the room's own Bedrock, which the builder placed and the
+   * copy carries: nothing is written, and a room copied in a previous session is
+   * still recognised.
+   *
+   * Two consequences worth stating:
+   *
+   *   - a chunk that does not answer is **empty as far as we know**; the caller
+   *     asks for it and comes back two ticks later rather than guessing;
+   *   - the answer is about the world, not about this session's memory, so a level
+   *     that has forgotten its rooms asks the world and finds them.
+   */
+  function roomInChunk(level, chunkX, chunkZ) {
+    return probeChunk(chunkX, level.difficulty.chunkY, chunkZ).occupied;
+  }
+
+  /**
+   * Records when a copy into this chunk may land.
+   *
+   * The probe that just ran is the request: if the chunk answered, `level.tick` is
+   * enough; if it did not, the server was asked and needs `chunkLoadTicks` more.
+   * `placeOne` refuses to copy before that tick, which is the only guard this engine
+   * needs against `copyChunk`'s silent no-op.
+   */
+  function markReadyAt(level, chunkX, chunkZ, loaded) {
+    const readyAt = loaded ? level.tick : level.tick + DUNGEON_CONFIG.chunkLoadTicks;
+    level.ready.set(chunkKey(chunkX, chunkZ), readyAt);
+  }
+
+  /**
+   * Has this chunk of this level been dealt with?
+   *
+   * `planned` is the session's short memory — queued, being copied, placed — and it
+   * is what keeps a scan every four ticks from queueing the same chunk twice. It is
+   * **not** what decides whether a room is built: the world decides that, with the
+   * Bedrock probe, so this can forget without cost.
    */
   function isPlaced(level, chunkX, chunkZ) {
     return level.planned.get(chunkKey(chunkX, chunkZ)) === "placed";
@@ -139,12 +211,14 @@ export function createLoader({ api, log }) {
     const baseX = Math.floor(probe.src[0] / SIZE) * SIZE;
     const baseZ = Math.floor(probe.src[2] / SIZE) * SIZE;
     // Columns through the middle first: that is where every room has its floor.
-    const columns = [[16, 16], [8, 8], [24, 24], [4, 4]];
-    for (const [localX, localZ] of columns) {
+    for (const [localX, localZ] of DUNGEON_CONFIG.probeLocalXZ) {
       for (let cell = 0; cell < DUNGEON_CONFIG.floorProbeMaxCells; cell += 1) {
-        const name = api.getBlock(baseX + localX, baseY + cell, baseZ + localZ);
-        if (name === null || name === undefined) break;
-        if (name === "Air") continue;
+        const name = readCell(baseX + localX, baseY + cell, baseZ + localZ);
+        if (name === null) break;
+        // Bedrock is the room's own shell, not the floor a player stands on: every
+        // room has one under the floor and one over the ceiling, so skipping it is
+        // what makes this a floor probe instead of a "first solid block" probe.
+        if (name === "Air" || name === DUNGEON_CONFIG.solidBlock) continue;
         level.floorLocalY = cell;
         return cell;
       }
@@ -188,14 +262,26 @@ export function createLoader({ api, log }) {
     //     in, so the plan follows the player instead of growing behind them.
     const doneReach = DUNGEON_CONFIG.viewChunks * 2;
     const pendingReach = DUNGEON_CONFIG.viewChunks + 2;
-    for (const key of level.planned.keys()) {
-      const placed = level.planned.get(key) === "placed";
-      const reach = placed ? doneReach : pendingReach;
+
+    const keep = (key, reach) => {
       const separator = key.indexOf("|");
       const x = Number(key.slice(0, separator));
       const z = Number(key.slice(separator + 1));
-      if (Math.abs(x - playerChunkX) <= reach && Math.abs(z - playerChunkZ) <= reach) continue;
-      level.planned.delete(key);
+      return Math.abs(x - playerChunkX) <= reach && Math.abs(z - playerChunkZ) <= reach;
+    };
+
+    for (const key of level.planned.keys()) {
+      const reach = level.planned.get(key) === "placed" ? doneReach : pendingReach;
+      if (!keep(key, reach)) level.planned.delete(key);
+    }
+    // The two clocks are bounded by the same ring: a probe writes one entry per
+    // candidate chunk, and a player who walks for an hour must not leave a trail of
+    // them behind.
+    for (const key of level.ready.keys()) {
+      if (!keep(key, pendingReach)) level.ready.delete(key);
+    }
+    for (const key of level.placingSince.keys()) {
+      if (!keep(key, doneReach)) level.placingSince.delete(key);
     }
   }
 
@@ -224,11 +310,26 @@ export function createLoader({ api, log }) {
 
       const template = templateAt(level, x, z);
       if (!template) continue;
-      // Only a chunk the server has sent. Nothing is written into a room to
-      // recognise it later, and a copy into an unloaded chunk is dropped in silence,
-      // so this is the one check that keeps a scan from queueing work that cannot
-      // happen.
-      if (!isDestinationLoaded(level.difficulty, x, z)) continue;
+
+      // Two questions, one probe. "Is the chunk sent?" and "is there already a
+      // room in it?" are answered by the same Bedrock reading, so a scan costs one
+      // `getBlock` per candidate and nothing else.
+      const probe = probeChunk(x, level.difficulty.chunkY, z);
+      // The probe is also the request: `ready` now holds the first tick a copy may
+      // land, whether the chunk answered or has to be sent first.
+      markReadyAt(level, x, z, probe.loaded);
+      if (!probe.loaded) {
+        // Not sent: the world catches up in `chunkLoadTicks`, and the chunk is
+        // picked up by the next scan. No timer, no poll, no retry loop.
+        continue;
+      }
+      if (probe.occupied) {
+        // A room is already there — from this session or from a previous one. This
+        // is the whole benefit of the Bedrock record: a level no longer rebuilds
+        // what it finds, and no marker has to be written to know it.
+        level.planned.set(key, "placed");
+        continue;
+      }
 
       level.planned.set(key, "queued");
       level.queue.push({ chunkX: x, chunkZ: z, template });
@@ -239,19 +340,19 @@ export function createLoader({ api, log }) {
   /**
    * Asks the server to send the template chunks, before they are needed.
    *
-   * One read per template chunk. The read is the request: a cell in an unloaded
-   * chunk returns `null` and, in Bloxd, is what tells the server to create or send
-   * that chunk. Doing it once at the start of a level costs one call per template
-   * and gives the copies the few ticks they need to become readable.
+   * One read per template chunk, once. The read is the request: a cell in an unsent
+   * chunk returns `null` and makes the server send it, ready `chunkLoadTicks` later.
+   * Doing it when a level starts gives the first copies something to read, which is
+   * the only reason this exists — the loading itself is not special-cased anywhere.
    */
   function warmTemplates(difficulty) {
     const level = levelState(difficulty);
+    if (level.warmed) return 0;
+    level.warmed = true;
     const seen = new Set();
     for (const template of level.templates) {
-      const chunkX = Math.floor(template.src[0] / SIZE);
-      const chunkY = Math.floor(template.src[1] / SIZE);
-      const chunkZ = Math.floor(template.src[2] / SIZE);
-      const key = `${chunkX}|${chunkY}|${chunkZ}`;
+      const key = `${Math.floor(template.src[0] / SIZE)}`
+        + `|${Math.floor(template.src[1] / SIZE)}|${Math.floor(template.src[2] / SIZE)}`;
       if (seen.has(key)) continue;
       seen.add(key);
       api.getBlock(template.src[0], template.src[1], template.src[2]);
@@ -276,15 +377,20 @@ export function createLoader({ api, log }) {
     const originX = DUNGEON_CONFIG.originChunkX;
     const originZ = DUNGEON_CONFIG.originChunkZ;
     const key = chunkKey(originX, originZ);
-    // Not copied twice in the same session: an entrance is placed on every entry
-    // into the level, and a player who dies, leaves and comes back must not trigger
-    // a second copy of the same room. Across sessions the room is copied again, and
-    // that is harmless: the same blocks land on the same cells.
-    if (isPlaced(level, originX, originZ)) {
+    // A player who dies, leaves and comes back must not trigger a second copy of the
+    // same room, and neither must a restart: the room's own Bedrock answers for it.
+    // Only a chunk whose room is really absent is queued — and if it has not been
+    // sent yet, the probe that asks is the same one, so the copy simply waits a
+    // couple of ticks.
+    if (isPlaced(level, originX, originZ) || roomInChunk(level, originX, originZ)) {
       level.planned.set(key, "placed");
       return template;
     }
     level.planned.delete(key);
+    // The entrance is placed by hand, ahead of the queue, so its load starts here.
+    // The probe just answered `Air`, which means the chunk is there and a copy can
+    // land in the same tick.
+    markReadyAt(level, originX, originZ, true);
     level.queue.unshift({
       chunkX: originX,
       chunkZ: originZ,
@@ -312,12 +418,22 @@ export function createLoader({ api, log }) {
   }
 
   /**
-   * Copies one queued room and schedules its verification.
+   * Copies one queued room, or drops it because there is nothing to do.
    *
-   * Returns true when a copy was attempted, so the caller can budget it. The
-   * verification is not done here: a write that the server applies a tick later
-   * would look like a failed copy, and a level that retries a copy it already did
-   * is a level that never finishes.
+   * Three things can be true of a queued chunk, and none of them is retried in a
+   * loop:
+   *
+   *   - **its destination is not ready** — the server was asked for the chunk by a
+   *     probe, and it answers `chunkLoadTicks` later. The entry goes back to the end
+   *     of the queue, and the level keeps building elsewhere meanwhile;
+   *   - **its template cannot be read** — `copyChunk` would do nothing, silently.
+   *     Read, count, and after `templateReadAttempts`, disable it and say so;
+   *   - **both ends answer** — one `copyChunk`, done within the tick.
+   *
+   * What a copy cannot do is confirm itself. Nothing is written that could be read
+   * back, so a copied room is counted as **in flight** until a probe sees its
+   * Bedrock; the count is reported separately from `placed`, which is what the
+   * world actually shows.
    */
   function placeOne(level) {
     const item = level.queue.shift();
@@ -325,9 +441,9 @@ export function createLoader({ api, log }) {
 
     const difficulty = level.difficulty;
     const key = chunkKey(item.chunkX, item.chunkZ);
-    // Measured, never assumed: one chunk may be queued by two scans — or by the
-    // entrance, which is placed ahead of the queue — and `copyChunk` is the one
-    // call in this file whose cost lives on the server.
+    // One chunk may be queued twice — by two scans, or by the entrance ahead of the
+    // queue — and `copyChunk` is the one call in this file whose cost lives on the
+    // server.
     if (level.planned.get(key) === "placing" || level.planned.get(key) === "placed") return true;
     // A template that has been disabled is dropped, not retried: the whole point
     // of disabling it is that the queue stops spending ticks on it.
@@ -335,6 +451,18 @@ export function createLoader({ api, log }) {
       level.planned.delete(key);
       return true;
     }
+
+    // The destination first: a copy into a chunk that has not been sent is dropped
+    // without an error, and the room is simply missing. The probe that queued it is
+    // the request that loads it, so the only question is whether it has had the time.
+    const readyAt = level.ready.get(key);
+    if (readyAt === undefined || level.tick < readyAt) {
+      level.planned.delete(key);
+      level.queue.push(item);
+      return true;
+    }
+    level.ready.delete(key);
+
     // The copy reads the template at its own corner, in its own chunk: `copyChunk`
     // takes any cell inside a chunk, so the source coordinate only has to be
     // inside the template — and the corner keeps the arithmetic obvious.
@@ -345,18 +473,15 @@ export function createLoader({ api, log }) {
       item.chunkZ * SIZE,
     ];
 
-    // One read before asking: a copy from an unloaded template is a no-op, so a
-    // level that has lost its templates would otherwise spend its one copy per
-    // tick on silence, for ever.
-    if (api.getBlock(from[0], from[1], from[2]) === null) {
+    if (readCell(from[0], from[1], from[2]) === null) {
       level.planned.delete(key);
       const attempts = (level.templateAttempts.get(item.template.index) || 0) + 1;
       level.templateAttempts.set(item.template.index, attempts);
       if (attempts < DUNGEON_CONFIG.templateReadAttempts) {
         // The read itself is how the server is asked to send that chunk, so a
-        // second chance is not optimism: it is the only way a template that is one
-        // tick late ever gets used. The item goes to the back of the queue, so the
-        // level keeps working while it waits.
+        // second chance is not optimism: it is the only way a template that is a
+        // couple of ticks late ever gets used. Back of the queue, so the level keeps
+        // working while it waits.
         level.queue.push(item);
         return true;
       }
@@ -368,14 +493,46 @@ export function createLoader({ api, log }) {
     level.templateAttempts.delete(item.template.index);
 
     api.copyChunk(from, to);
-    // Counted as placed at once, because there is nothing to read back: the engine
-    // writes no record into a room, and a copied room is indistinguishable from an
-    // uncopied one. The `unverified` counter says exactly this, and `/dbg mem`
-    // reports it rather than letting the number look like a proof.
-    level.placed += 1;
-    level.unverified += 1;
-    level.planned.set(key, "placed");
+    level.planned.set(key, "placing");
+    level.placingSince.set(key, level.tick);
     return true;
+  }
+
+  /**
+   * Reads the rooms this level copied and has not seen yet.
+   *
+   * A copy is done within a tick, but what the world shows is only what the server
+   * has applied — so the check happens on the **next** tick, never in the tick of
+   * the copy. That is the whole difference between counting a request and counting
+   * a room.
+   *
+   * A room still unseen after `chunkLoadTicks` is truly missing: the entry is
+   * dropped and the next scan queues it again, one copy away. This is not a retry
+   * loop — the scan is the retry, and it is the same scan that builds everything
+   * else.
+   */
+  function verifyCopied(level) {
+    for (const [key, state] of level.planned) {
+      if (state !== "placing") continue;
+      const since = level.placingSince.get(key);
+      // A copy made this very tick has not been applied yet: asking now would count
+      // a room as missing because the answer arrived too early.
+      if (since === undefined || level.tick <= since) continue;
+
+      const separator = key.indexOf("|");
+      const chunkX = Number(key.slice(0, separator));
+      const chunkZ = Number(key.slice(separator + 1));
+      if (roomInChunk(level, chunkX, chunkZ)) {
+        level.planned.set(key, "placed");
+        level.placed += 1;
+        level.placingSince.delete(key);
+        continue;
+      }
+      if (level.tick - since < DUNGEON_CONFIG.chunkLoadTicks) continue;
+      level.planned.delete(key);
+      level.placingSince.delete(key);
+      level.failures += 1;
+    }
   }
 
   /**
@@ -391,7 +548,11 @@ export function createLoader({ api, log }) {
       if (level.templates.length === 0 || usableTemplates(level).length === 0) continue;
       if (chunks.length === 0) continue;
 
-      // A copy is the expensive step, so it is first: one per level per tick.
+      level.tick += 1;
+
+      // What the world already shows, then one copy: the check costs one read for
+      // the rooms in flight, and a copy is the expensive step, so it is budgeted.
+      verifyCopied(level);
       placeOne(level);
 
       level.ticksSinceScan += 1;
@@ -404,20 +565,31 @@ export function createLoader({ api, log }) {
     }
   }
 
-  /** Everything a report needs, without touching the world. */
+  /**
+   * Everything a report needs, without touching the world.
+   *
+   * `inView` is what this level currently knows about, counted as the world shows
+   * it: rooms found by their Bedrock, plus those still in flight. `placed` is the
+   * total the world confirmed, `inFlight` those copied but not seen yet.
+   */
   function statsOf(difficulty) {
     const level = levelState(difficulty);
-    let placed = 0;
-    for (const state of level.planned.values()) if (state === "placed") placed += 1;
+    let placedInView = 0;
+    let inFlight = 0;
+    for (const state of level.planned.values()) {
+      if (state === "placed") placedInView += 1;
+      if (state === "placing") inFlight += 1;
+    }
     return {
       difficulty: level.difficulty.label,
       templates: level.templates.length,
       disabled: level.disabled.size,
       queued: level.queue.length,
       planned: level.planned.size,
-      placed,
-      unverified: level.unverified,
-      copies: level.placed,
+      placedInView,
+      placed: level.placed,
+      inFlight,
+      loading: level.ready.size,
       failures: level.failures,
     };
   }
@@ -427,6 +599,7 @@ export function createLoader({ api, log }) {
     landingPosition,
     findFloorLocalY,
     isPlaced,
+    probeChunk,
     planAround,
     placeEntrance,
     placeOne,

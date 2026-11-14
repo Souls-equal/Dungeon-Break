@@ -1,6 +1,6 @@
 # Dungeon Break — Bloxd.io
 
-Lobby de sélection de difficulté, compte à rebours individuel, puis un donjon généré **chunk par chunk** : une salle est un modèle de 32×32×32 copié d'un seul appel.
+Lobby de sélection de difficulté, compte à rebours individuel, puis un donjon généré **chunk par chunk** : une salle est un modèle de 32×32×32 copié d'un seul appel. Le code ne lit que ce que tes constructions lui donnent : le **Bedrock** du chunk pour savoir où il en est, et le **Concrete** du niveau suivant pour la progression.
 
 Les règles de travail du projet sont dans [`AGENT_RULES.md`](AGENT_RULES.md) ; l'architecture et les limites vérifiées de l'API sont dans [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
@@ -21,7 +21,7 @@ La documentation Bloxd décrit exactement ce cas d'usage : « *storing 'template
 
 ## Installer dans Bloxd
 
-1. Dans ton monde Bloxd, construis les pads de difficulté avec les blocs **Concrete** ci-dessous, à l'endroit où tu veux le lobby. Le joueur doit pouvoir marcher sur leur surface.
+1. Dans ton monde Bloxd, construis les pads de difficulté avec les blocs **Concrete** ci-dessous, à l'endroit où tu veux le lobby. Le joueur doit pouvoir marcher sur leur surface. Chaque salle doit avoir **une couche de Bedrock en bas et une en haut** du chunk, et le **Concrete** du niveau suivant **dans la salle** : le code n'écrit aucun bloc.
 2. **Remplis la table des modèles** — c'est la seule chose que le code ne peut pas deviner, voir la section suivante.
 3. Ouvre le **World Code** (`F8` par défaut), colle le contenu de [`world-code/worldCode.js`](world-code/worldCode.js), sauvegarde.
 4. Entre dans le monde (spawn `10, 21, 10`) et marche sur un pad. Le compte à rebours s'affiche ; quitter le pad l'annule.
@@ -48,12 +48,17 @@ Les 15 salles construites sont dans la table, les 60 restantes en commentaire �
 
 ### Ce que le générateur exige d'une salle
 
-Deux choses, aucune écrite dans la table :
+Une seule chose, et elle est dans ta construction : **une couche de Bedrock en bas et une en haut du chunk**, sol et plafond, comme les Bedrock du Nether.
 
-1. **Le chunk doit être chargé** au moment de la copie : sinon `copyChunk` ne fait rien, sans erreur. `/dbg templates` répond pour chaque salle (`loaded` / `NOT LOADED`).
-2. **La hauteur du sol est lue**, jamais configurée : le moteur remonte la colonne du milieu de la salle jusqu'au premier bloc plein. La copie conserve la disposition verticale de la salle, donc cette hauteur est valable à destination.
+C'est tout le contrat, et il sert à trois choses d'un coup :
 
-**Le générateur n'écrit jamais un bloc.** Rien ne vient du modèle non plus : aucune case de tes constructions n'est réservée, aucun témoin, aucune plaque, aucune réparation. Une salle est un chunk, et le seul geste du moteur est de le copier.
+1. **Charger** la destination : le moteur lit un bloc dans le chunk, et le serveur l'envoie ; deux ticks plus tard il est là et accepte une copie.
+2. **Savoir si le chunk est déjà bâti** : le Bedrock lu en bas (ou en haut) dit qu'une salle est déjà là. Aucune salle n'est jamais recopiée, même après un redémarrage du serveur, et sans qu'aucun bloc n'ait été écrit par le code.
+3. **Reconnaître une couche vide** : si le Bedrock manque sur une couche, il suffit que le bloc ne soit pas de l'Air.
+
+La hauteur du sol, elle, est lue et jamais configurée : le moteur remonte la colonne du milieu et prend le premier bloc qui n'est ni de l'Air ni du Bedrock.
+
+**Le générateur n'écrit jamais un bloc.** Aucune case de tes constructions n'est réservée, aucun témoin, aucune plaque, aucune réparation : une salle est un chunk, et les seuls gestes du moteur sont `copyChunk` et des lectures.
 
 ### Changer la liste change tous les donjons
 
@@ -91,13 +96,13 @@ Tous les textes visibles par les joueurs sont en anglais.
 
 ## Génération
 
-- **Grille de chunks.** Les `viewChunks: 2` chunks autour de chaque joueur (5×5, soit 160 blocs de côté) sont mis en file, du plus proche au plus loin.
-- **Une copie par tick et par niveau.** Une copie écrit 32 768 blocs côté serveur ; elle n'est jamais doublée dans un tick.
+- **Grille de chunks.** Les `viewChunks: 1` chunk autour de chaque joueur (3×3, soit 96 blocs de côté) sont mis en file, du plus proche au plus loin. Le joueur est toujours au milieu d'un anneau complet, donc le bord du monde bâti n'est jamais en vue.
+- **Une sonde par chunk candidat.** Un `getBlock` sur le Bedrock du chunk répond à tout : pas envoyé → il est demandé et prêt **2 ticks** plus tard ; déjà bâti → on passe ; vide → il est mis en file.
+- **Une copie par tick et par niveau.** La copie elle-même se fait en moins d'un tick ; elle n'est jamais doublée dans un tick.
 - **Un scan toutes les 4 ticks**, borné à 8 nouvelles salles par scan. Un joueur immobile dont les salles sont faites ne coûte aucune lecture.
 - **Rien n'est écrit dans un chunk.** Le moteur ne connaît que `copyChunk` et des lectures : c'est ce qui rend les salles sûres à construire à la main.
-- **Une salle copiée est retenue pour la session**, puisque le monde ne peut pas être interrogé : `/dbg mem` la compte comme posée, et non vérifiée. Après un redémarrage le niveau la recopie une fois — une copie est idempotente, elle réécrit les mêmes blocs aux mêmes cases.
-- **Seules les destinations chargées sont copiées** (`api.isBlockInLoadedChunk`) : une copie dans un chunk que le serveur n'a pas encore envoyé serait perdue sans erreur.
-- **Entrée.** Lecture du modèle, téléportation dans le chunk vide, trois ticks, copie de la salle d'entrée, relecture du sol, puis le joueur est posé deux blocs au-dessus. La gravité est coupée pendant ces ticks, ce qui remplace la boîte de murs de l'ancien moteur.
+- **Une salle est reconnue par son Bedrock**, pas par un compteur : le tick suivant la copie, la sonde relit la destination et c'est le monde qui confirme. `/dbg mem` sépare les salles vues (`rooms`), celles en vol (`in flight`) et les chunks en cours de chargement.
+- **Entrée.** Demande des modèles, téléportation dans le chunk vide, `chunkLoadTicks: 2`, copie de la salle d'entrée (si elle n'y est pas déjà), relecture du sol, puis le joueur est posé deux blocs au-dessus. La gravité est coupée pendant ces ticks, ce qui remplace la boîte de murs de l'ancien moteur. Un sol qui ne vient pas est réessayé `entryMaxTicks` fois, puis c'est un message — jamais un joueur dans le vide.
 
 ## Sources et version compacte
 
@@ -116,15 +121,15 @@ src/worldCode.js           lobby, pads, /dbg
 - `npm run build` régénère le fichier compact.
 - `npm run watch` le régénère à chaque sauvegarde dans `src/`.
 - `npm run check` vérifie que le bundle est à jour, valide les syntaxes, et refuse un bundle où `copyChunk` ou la table des modèles ont disparu au minification.
-- `npm test` lance les 58 tests : moteur, configuration, et le bundle réel exécuté dans un `vm` contre un faux serveur qui applique les règles de Bloxd.
+- `npm test` lance les 63 tests : moteur, configuration, et le bundle réel exécuté dans un `vm` contre un faux serveur qui applique les règles de Bloxd.
 
 Le workflow GitHub vérifie la version générée sur les Pull Requests et resynchronise `world-code/` après un merge dans `main`.
 
 ## Limites connues
 
-- **Le coût réel d'une copie de chunk n'est pas mesuré en jeu.** 1 par tick est un choix prudent ; si un tick s'allonge, c'est `scanTicks` dans `config.js` qu'il faut augmenter d'abord.
-- **`chunkWarmupTicks: 3`** vient de la mesure faite sur le moteur précédent. Si une salle d'entrée n'apparaît pas, c'est le premier chiffre à augmenter.
-- **Le pad n'est posé que dans la salle d'arrivée.** Le poser dans toutes les salles visiterait 25 blocs de plus par salle ; à décider quand le coût d'une copie sera connu.
+- **`chunkLoadTicks: 2`** vient d'une mesure en jeu : deux ticks après un `getBlock`, le chunk est là et accepte une copie. Si une salle n'apparaît pas, c'est le premier chiffre à augmenter — et il n'y a qu'un endroit à changer.
+- **Chaque salle doit avoir son Bedrock en bas et en haut.** C'est le seul contrat, et c'est ce qui permet au moteur de charger, de reconnaître et de ne jamais recopier une salle.
+- **Une salle sans Concrete du niveau suivant est un cul-de-sac.** Le code ne pose aucune plaque : il lit le bloc sous les pieds du joueur.
 - **Pas encore de mobs, minerais, butin, ni de fin de partie.** La structure est un décor figé, rien d'autre ne dépend d'elle.
 
 ## Documentation Bloxd utilisée

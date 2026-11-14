@@ -42,8 +42,12 @@ const TEST_TABLE = { rooms: TEST_TEMPLATES };
  *
  *   - a chunk is only readable once it has been sent, and it is sent a tick or two
  *     after the first read asks for it;
- *   - `copyChunk` does nothing when its source chunk is not loaded;
+ *   - `copyChunk` does nothing when its source chunk is not loaded, and nothing when
+ *     its destination has not been sent either;
  *   - `getBlock` returns `null` outside a loaded chunk, never "Air".
+ *
+ * A room carries its own record — a Bedrock floor and ceiling — so the fake builds
+ * one, and the world code only ever reads it.
  */
 function createWorld(onlinePlayerIds, options = {}) {
   const loadDelay = options.loadDelay === undefined ? 1 : options.loadDelay;
@@ -81,7 +85,13 @@ function createWorld(onlinePlayerIds, options = {}) {
       }
     }
   }
-  template.set(key(base[0], base[1], base[2]), DUNGEON_CONFIG.markerBlock);
+  // Bedrock under the floor and over the ceiling: the record a built room carries.
+  for (let x = 0; x < SIZE; x += 1) {
+    for (let z = 0; z < SIZE; z += 1) {
+      template.set(key(base[0] + x, base[1] + floorY - 1, base[2] + z), "Bedrock");
+      template.set(key(base[0] + x, base[1] + SIZE - 1, base[2] + z), "Bedrock");
+    }
+  }
 
   function advance() {
     for (let index = pending.length - 1; index >= 0; index -= 1) {
@@ -106,7 +116,6 @@ function createWorld(onlinePlayerIds, options = {}) {
       setBlock: (x, y, z, blockName) => {
         violations.push({ x, y, z, blockName });
       },
-      isBlockInLoadedChunk: (x, y, z) => near(x, y, z),
       getBlock: (x, y, z) => {
         const chunkKey = `${Math.floor(x / SIZE)}|${Math.floor(y / SIZE)}|${Math.floor(z / SIZE)}`;
         if (!loaded.has(chunkKey)) {
@@ -122,7 +131,9 @@ function createWorld(onlinePlayerIds, options = {}) {
       copyChunk: (from, to) => {
         copies.push({ from: Array.from(from), to: Array.from(to) });
         const sourceChunk = [Math.floor(from[0] / SIZE), Math.floor(from[1] / SIZE), Math.floor(from[2] / SIZE)];
+        const destinationChunk = [Math.floor(to[0] / SIZE), Math.floor(to[1] / SIZE), Math.floor(to[2] / SIZE)];
         if (!loaded.has(sourceChunk.join("|"))) return;
+        if (!loaded.has(destinationChunk.join("|"))) return;
         const destChunk = [Math.floor(to[0] / SIZE), Math.floor(to[1] / SIZE), Math.floor(to[2] / SIZE)];
         // A copy carries the template's blocks and nothing else, exactly as the
         // server does it.
@@ -476,8 +487,8 @@ test("/dbg mem reports the counters that must stay bounded", () => {
   const lines = world.messages.slice(before).map((entry) => entry.message);
   const header = lines.find((message) => /layer/.test(message));
   assert.match(header, /Very Easy · layer -32 · templates \d+/);
-  assert.match(lines.join("\n"), /queued \d+ · planned \d+ · placed \d+ · copies \d+/);
-  assert.match(lines.join("\n"), /unverified \d+ · failed \d+/);
+  assert.match(lines.join("\n"), /queued \d+ · planned \d+ · rooms \d+ \(\d+ in flight\)/);
+  assert.match(lines.join("\n"), /placed \d+ · loading \d+ · failed \d+/);
 });
 
 test("an unknown command is left to the game", () => {

@@ -246,8 +246,9 @@ function runDebugCommand(playerId, verb) {
       );
       debugSay(
         playerId,
-        `[dbg]   queued ${row.queued} · planned ${row.planned} · placed ${row.placed}`
-          + ` · copies ${row.copies} · unverified ${row.unverified} · failed ${row.failures}`,
+        `[dbg]   queued ${row.queued} · planned ${row.planned} · rooms ${row.placedInView}`
+          + ` (${row.inFlight} in flight) · placed ${row.placed} · loading ${row.loading}`
+          + ` · failed ${row.failures}`,
       );
     }
     return;

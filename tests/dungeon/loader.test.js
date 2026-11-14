@@ -9,13 +9,14 @@ const SIZE = DUNGEON_CONFIG.chunkSize;
 const VERY_EASY = findDifficulty("veryEasy");
 
 /**
- * A fake Bloxd server that enforces the two rules this engine is built around.
+ * A fake Bloxd server that enforces the three rules this engine is built around.
  *
- *   - A chunk is only readable once something has loaded it. A player loads the
- *     chunks around them when they are teleported; a template is loaded by the
- *     first read, but only a tick or two later — and that delay is the point.
- *   - `copyChunk` **does nothing** when the source chunk is not loaded. The doc
- *     says so in one line, and a fake that quietly copied anyway would hide the
+ *   - A chunk is readable only once the server has sent it. A `getBlock` in an
+ *     unsent chunk **is the request**: the chunk arrives `loadDelay` ticks later,
+ *     which is the behaviour the whole engine is timed on.
+ *   - A destination chunk that has not been sent rejects a copy, silently.
+ *   - `copyChunk` **does nothing** when the source chunk is not loaded either. The
+ *     doc says so in one line, and a fake that quietly copied anyway would hide the
  *     only failure mode that leaves a player standing in a void.
  */
 function createServer(options = {}) {
@@ -80,8 +81,9 @@ function createServer(options = {}) {
     copyChunk(from, to) {
       calls.copy.push({ from: [...from], to: [...to] });
       const sourceKey = chunkKeyOf(from[0], from[1], from[2]);
-      // Documented behaviour: silence, not an error.
-      if (!loadedChunks.has(sourceKey)) return;
+      const destinationKey = chunkKeyOf(to[0], to[1], to[2]);
+      // Documented behaviour: silence, not an error — at either end.
+      if (!loadedChunks.has(sourceKey) || !loadedChunks.has(destinationKey)) return;
       const sourceChunk = [Math.floor(from[0] / SIZE), Math.floor(from[1] / SIZE), Math.floor(from[2] / SIZE)];
       const destChunk = [Math.floor(to[0] / SIZE), Math.floor(to[1] / SIZE), Math.floor(to[2])];
       for (let x = 0; x < SIZE; x += 1) {
@@ -97,9 +99,6 @@ function createServer(options = {}) {
           }
         }
       }
-    },
-    isBlockInLoadedChunk(x, y, z) {
-      return loadedChunks.has(chunkKeyOf(x, y, z));
     },
     isNearInterrupt() { return false; },
     log() {},
@@ -132,10 +131,13 @@ function createServer(options = {}) {
           }
         }
       }
-      // A ceiling, so that a room reads as a room and not as an open floor.
+      // Bedrock under the floor and over the ceiling, as every built room has: this
+      // is the record the engine reads to know a chunk holds a room. Nothing is
+      // written by the code.
       for (let x = 0; x < SIZE; x += 1) {
         for (let z = 0; z < SIZE; z += 1) {
-          templateBlocks.set(cellKey(base[0] + x, base[1] + SIZE - 1, base[2] + z), "Smooth Stone");
+          templateBlocks.set(cellKey(base[0] + x, base[1] + floorY - 1, base[2] + z), "Bedrock");
+          templateBlocks.set(cellKey(base[0] + x, base[1] + SIZE - 1, base[2] + z), "Bedrock");
         }
       }
       return base;
@@ -149,6 +151,11 @@ function createTestLoader(server, templates, difficulty = VERY_EASY) {
   const level = loader.levelState(difficulty);
   level.templates = templates;
   return { loader, level };
+}
+
+/** Marks a chunk as requested and ready now, as a scan or the entrance does. */
+function readyNow(level, chunkX, chunkZ) {
+  level.ready.set(`${chunkX}|${chunkZ}`, level.tick);
 }
 
 const TEMPLATE_A = [0, -32, 0];
@@ -198,7 +205,7 @@ test("the loader never writes a block, anywhere", () => {
     "the loader wrote into a room: a template is hand-built and must only be copied");
 });
 
-test("a copied room is remembered by the level, and reported as unconfirmed", () => {
+test("a copied room is confirmed by the world on the next tick", () => {
   const server = createServer();
   server.addTemplate(TEMPLATE_A);
   const { loader, level } = createTestLoader(server, ROOMS);
@@ -208,22 +215,112 @@ test("a copied room is remembered by the level, and reported as unconfirmed", ()
   for (let tick = 0; tick < 5; tick += 1) server.advance();
 
   loader.placeEntrance(VERY_EASY);
-  assert.equal(level.planned.get("0|0"), "placed", "the entrance was not copied");
-  // The honest counter: nothing was read back, and the report says so.
-  assert.equal(level.placed, level.unverified,
-    "a copy is presented as verified when nothing was read back");
+  assert.equal(level.planned.get("0|0"), "placing", "the entrance was not copied");
+  // Counted as in flight, not as placed: the copy has not been applied yet.
+  assert.equal(level.placed, 0, "a copy was counted as a room before the world showed it");
+
+  // One tick later the room answers, and the counter says what the world says.
+  loader.tick([{ difficulty: VERY_EASY, chunks: [{ x: 0, z: 0 }] }]);
+  assert.equal(level.planned.get("0|0"), "placed");
+  assert.equal(level.placed, 1);
+  assert.equal(loader.statsOf(VERY_EASY).inFlight, 0);
 
   // Within the session, the room is never copied twice.
   for (let tick = 0; tick < 10; tick += 1) loader.tick([{ difficulty: VERY_EASY, chunks: [{ x: 0, z: 0 }] }]);
   const sameRoom = server.calls.copy.filter((call) => call.to[0] === 0 && call.to[2] === 0);
   assert.equal(sameRoom.length, 1, "a room copied in this session was copied again");
+});
 
-  // And once the level has forgotten it — a restart, or a return from a session
-  // that built it — it is copied again. Idempotent, so harmless.
-  level.planned.delete("0|0");
+test("a room of a previous session is found by its Bedrock, not rebuilt", () => {
+  const server = createServer();
+  server.addTemplate(TEMPLATE_A);
+  const { loader, level } = createTestLoader(server, ROOMS);
+  loader.warmTemplates(VERY_EASY);
+  server.api.setPosition("player", [16, floorOfLayer(VERY_EASY), 16]);
+  for (let tick = 0; tick < 5; tick += 1) server.advance();
+
   loader.placeEntrance(VERY_EASY);
-  const again = server.calls.copy.filter((call) => call.to[0] === 0 && call.to[2] === 0);
-  assert.equal(again.length, 2, "a room of another session is never rebuilt");
+  loader.tick([{ difficulty: VERY_EASY, chunks: [{ x: 0, z: 0 }] }]);
+  const copies = server.calls.copy.length;
+
+  // A new loader is a restart: no memory at all, and the world is the only witness.
+  const restarted = createLoader({ api: server.api, log: () => {} });
+  const fresh = restarted.levelState(VERY_EASY);
+  fresh.templates = ROOMS;
+  restarted.placeEntrance(VERY_EASY);
+
+  assert.equal(server.calls.copy.length, copies, "a room already in the world was copied again");
+  assert.equal(fresh.planned.get("0|0"), "placed");
+});
+
+test("a chunk says whether it is sent and whether it holds a room", () => {
+  const server = createServer();
+  server.addTemplate(TEMPLATE_A);
+  const { loader, level } = createTestLoader(server, ROOMS);
+  loader.warmTemplates(VERY_EASY);
+  for (let tick = 0; tick < 5; tick += 1) server.advance();
+  server.api.setPosition("player", [16, floorOfLayer(VERY_EASY), 16]);
+  for (let tick = 0; tick < 5; tick += 1) server.advance();
+
+  // A chunk nobody asked for: the probe is the request, and the answer is honest.
+  const unsent = loader.probeChunk(40, VERY_EASY.chunkY, 40);
+  assert.deepEqual(unsent, { loaded: false, occupied: false });
+
+  // The entrance chunk, empty: sent, and nothing in it.
+  assert.deepEqual(loader.probeChunk(0, VERY_EASY.chunkY, 0), { loaded: true, occupied: false });
+
+  // After the copy: sent, and a room.
+  loader.placeEntrance(VERY_EASY);
+  assert.deepEqual(loader.probeChunk(0, VERY_EASY.chunkY, 0), { loaded: true, occupied: true });
+
+  // The template chunk, which holds the room being copied.
+  assert.deepEqual(loader.probeChunk(0, -1, 0), { loaded: true, occupied: true });
+});
+
+test("a layer without Bedrock still counts as a room, by not being Air", () => {
+  const server = createServer();
+  server.addTemplate(TEMPLATE_A);
+  const { loader } = createTestLoader(server, ROOMS);
+  loader.warmTemplates(VERY_EASY);
+  for (let tick = 0; tick < 5; tick += 1) server.advance();
+
+  // Strip the Bedrock from the bottom layer and leave stone on it: the owner's rule
+  // is "if a layer has no Bedrock, just check the block is not Air".
+  const base = { x: 0, y: -32, z: 0 };
+  for (const [localX, localZ] of DUNGEON_CONFIG.probeLocalXZ) {
+    server.templateBlocks.set(`${base.x + localX},${base.y},${base.z + localZ}`, "Stone");
+  }
+  for (const [localX, localZ] of DUNGEON_CONFIG.probeLocalXZ) {
+    server.templateBlocks.set(`${base.x + localX},${base.y + SIZE - 1},${base.z + localZ}`, "Air");
+  }
+  assert.deepEqual(loader.probeChunk(0, -1, 0), { loaded: true, occupied: true },
+    "a room whose bottom layer is stone instead of Bedrock was read as empty");
+});
+
+test("a copy waits for the chunk it was asked about, then lands", () => {
+  const server = createServer({ loadDelay: 2, loadRadius: 0 });
+  server.addTemplate(TEMPLATE_A);
+  const { loader, level } = createTestLoader(server, ROOMS);
+  loader.warmTemplates(VERY_EASY);
+  for (let tick = 0; tick < 5; tick += 1) server.advance();
+
+  // The player only loads what is loaded for real: nothing near the destination, so
+  // the scan's probe has to request it.
+  server.api.setPosition("player", [900, floorOfLayer(VERY_EASY), 900]);
+  loader.planAround(level, 0, 0);
+  assert.ok(server.calls.getBlock.length > 0, "the scan did not ask for anything");
+  assert.equal(level.queue.length, 0, "a copy was queued before the chunk was sent");
+
+  // Two ticks later the chunk exists: the scan queues it, the copy lands, and the
+  // next tick's probe confirms the room.
+  for (let tick = 0; tick < 2; tick += 1) server.advance();
+  loader.planAround(level, 0, 0);
+  assert.ok(level.queue.length > 0, "the chunk was sent but never queued");
+  loader.tick([{ difficulty: VERY_EASY, chunks: [{ x: 0, z: 0 }] }]);
+  const copied = server.calls.copy.length;
+  assert.equal(copied > 0, true, "nothing was copied once the destination existed");
+  loader.tick([{ difficulty: VERY_EASY, chunks: [{ x: 0, z: 0 }] }]);
+  assert.equal(level.placed > 0, true, "the copy was never seen by the probe");
 });
 
 test("a copy from an unloaded template is retried, then disabled, never looped", () => {
@@ -232,8 +329,10 @@ test("a copy from an unloaded template is retried, then disabled, never looped",
   const { loader, level } = createTestLoader(server, ROOMS, VERY_EASY);
 
   // No warm-up and no advance: the template chunk is never loaded, so every read
-  // of its source block returns null.
+  // of its source block returns null. The destination is ready, so the template is
+  // the only thing standing between the level and a copy.
   for (let tick = 0; tick < 20; tick += 1) {
+    readyNow(level, 1, 1);
     level.queue.push({ chunkX: 1, chunkZ: 1, template: ROOMS[0] });
     loader.placeOne(level);
   }
@@ -250,10 +349,11 @@ test("a room is placed once in a session, and only where the server has sent it"
   for (let tick = 0; tick < 5; tick += 1) server.advance();
   server.api.setPosition("player", [SIZE + 16, floorOfLayer(VERY_EASY), 16]);
 
+  readyNow(level, 1, 0);
   level.queue.push({ chunkX: 1, chunkZ: 0, template: level.templates[0] });
   loader.placeOne(level);
   assert.equal(server.calls.copy.length, 1, "the copy was not attempted");
-  assert.equal(level.planned.get("1|0"), "placed");
+  assert.equal(level.planned.get("1|0"), "placing");
 
   // Never copied twice, whatever else the scan finds to build around the player.
   for (let tick = 0; tick < 6; tick += 1) loader.tick([{ difficulty: VERY_EASY, chunks: [{ x: 1, z: 0 }] }]);
@@ -281,7 +381,10 @@ test("one copy per tick per level, whatever the queue holds", () => {
   loader.warmTemplates(VERY_EASY);
   for (let tick = 0; tick < 5; tick += 1) server.advance();
 
-  for (let x = 0; x < 10; x += 1) level.queue.push({ chunkX: x, chunkZ: 3, template: ROOMS[0] });
+  for (let x = 0; x < 10; x += 1) {
+    level.queue.push({ chunkX: x, chunkZ: 3, template: ROOMS[0] });
+    readyNow(level, x, 3);
+  }
   const chunks = [{ x: 3, z: 3 }];
   for (let tick = 0; tick < 5; tick += 1) loader.tick([{ difficulty: VERY_EASY, chunks }]);
   assert.equal(server.calls.copy.length, 5, "a tick copied more than one room");
