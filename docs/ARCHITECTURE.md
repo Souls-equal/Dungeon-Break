@@ -85,7 +85,14 @@ L'ordre est imposé par la plateforme, et il est respecté pas à pas :
 2. Gravité coupée (`gravityMultiplier: 0`), joueur téléporté **dans le chunk vide** de l'entrée. C'est le `setPosition` qui charge ce chunk.
 3. `chunkLoadTicks: 2` ticks plus tard, le chunk existe et accepte une copie.
 4. **La salle d'entrée est copiée** si elle n'est pas déjà là — c'est la sonde qui tranche, pas un compteur : re-rentrer dans un niveau ne reconstruit rien.
-5. Un tick plus tard, le sol de la salle est **relu**. S'il est là, le joueur y est posé, deux blocs au-dessus du bloc de sol. Sinon la copie est retentée, `entryMaxTicks: 4` fois au total, puis le joueur est renvoyé au lobby avec la raison.
+5. Un tick plus tard, l'atterrissage est **tiré** et le sol sous la position est relu. S'il est là, le joueur y est posé. Sinon la copie est retentée, `entryMaxTicks: 4` fois au total, puis le joueur est renvoyé au lobby avec la raison.
+
+**L'atterrissage est tiré au hasard, et sa hauteur est celle de la salle copiée.** Deux bugs étaient ici, et ils expliquent un joueur dans le sol :
+
+- la hauteur du sol venait du **premier modèle de la liste**, alors que `templateFor` tire une salle par chunk : l'entrée prend souvent une autre salle, avec un sol à une autre hauteur (2 pour l'une, 7 pour l'autre — et 7 est la bonne sur ce monde). La hauteur est maintenant lue dans `level.entrance`, la salle qui a réellement été copiée ;
+- la position était fixe, au centre de la salle : deux joueurs sur la même plaque apparaissaient l'un sur l'autre. Elle est maintenant tirée dans `landingMargin = 4` cellules, donc jamais contre les murs, et les deux cases au-dessus de la colonne doivent être vides — sinon un autre tirage. Un joueur ne peut donc pas apparaître dans un mur, et deux joueurs n'apparaissent pas au même endroit.
+
+La colonne est lue **dans le modèle**, pas dans la destination : au moment du tirage, la destination n'est pas encore copiée, donc elle ne contient que de l'Air. La copie conserve la disposition verticale, donc la hauteur lue dans la salle est exacte à l'arrivée.
 6. Les salles alentour sont mises en file.
 
 Rien n'est annoncé avant que le sol existe, et aucune plaque n'est posée : celle qui mène au niveau suivant est dans la salle.

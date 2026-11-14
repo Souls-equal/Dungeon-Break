@@ -75,9 +75,9 @@ export const DUNGEON_CONFIG = {
 
   // Block (x, z) inside the chunk, 0..31. One cell, not four.
   //
-  // This is also the cell a room's Concrete pad is read at by the game, and with
-  // `landingLocalXZ` the player, the pad and the probe are in the same place — a
-  // room whose centre is the pad is a room whose centre says "a room is here".
+  // This is also the cell a room's Concrete pad occupies, and the cell the player is
+  // put in while a level loads: the pad, the probe and that provisional spot are the
+  // middle of the room, and a room whose centre reads Bedrock says "a room is here".
   probeLocalXZ: [16, 16],
 
   // ------------------------------------------------- destination placement ---
@@ -104,17 +104,26 @@ export const DUNGEON_CONFIG = {
   entryMaxTicks: 4,
 
   // ---------------------------------------------------------------- landing --
-  // Where the player lands in a room, in chunk-local cells: the middle of the
-  // room, four cells south of its centre.
+  // Where a player lands in the entrance room, in chunk-local cells.
   //
-  // The pad sits on the exact centre, so the landing cell cannot be the pad
-  // itself — a player who materialises on a pad is sent to the next difficulty
-  // before they have seen the room.
-  landingLocalXZ: [16, 16],
-  landingShiftZ: 4,
-  // How far above the floor block the player is placed. Same value as the
-  // previous engine, which was verified in game: a body is two blocks tall and
-  // its position is its centre, so `floor + 2` puts the feet on the floor.
+  // **Random, and never twice in the same place.** A level hands out a different
+  // column to every player who enters it, so two players who step on the same pad
+  // do not appear on top of each other, and a player who re-enters does not come
+  // back to where they were seen last.
+  //
+  // The area is bounded by `landingMargin`, which keeps the draw away from the
+  // walls: the room's own walls fill the first and the last cell of the chunk, and a
+  // position there is a position inside a wall. The engine then reads the column and
+  // looks for a pair of empty cells anyway, so a wall or a pillar inside the margin
+  // costs one more draw rather than a player stuck in stone.
+  landingMargin: 4,
+  landingDraws: 12,
+  // Cells above the floor block that must be free. A body is two cells tall, and a
+  // room may have a low ceiling: one free cell is not enough to stand up in.
+  landingFreeCells: 2,
+  // How far above the floor block the player is placed. Same value as the previous
+  // engine, which was verified in game: the position is the body's centre, so the
+  // feet sit on the block below.
   spawnAboveFloor: 2,
 
   // ---------------------------------------------------------------- refresh --

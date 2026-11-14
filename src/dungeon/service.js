@@ -96,9 +96,17 @@ export function createDungeonService(options) {
     // something to read. One call per template, once per level.
     loader.warmTemplates(difficulty);
 
-    const provisionalY = floorOfLayer(difficulty) + SIZE - 2;
-    const centreX = DUNGEON_CONFIG.originChunkX * SIZE + DUNGEON_CONFIG.landingLocalXZ[0] + 0.5;
-    const centreZ = DUNGEON_CONFIG.originChunkZ * SIZE + DUNGEON_CONFIG.landingLocalXZ[1] + 0.5;
+    // The player is put **in** the entrance chunk immediately, and that is deliberate:
+    // a chunk is only sent when someone is near it, so this teleport is what makes the
+    // entrance room visible to the world. It is not where they will land — the landing
+    // is drawn a couple of ticks later — and gravity is off until then.
+    //
+    // The provisional spot is therefore the room's own centre, two cells above the
+    // layer's floor: the one column a room is built around, and the one cell the
+    // engine can name before it has read the room.
+    const provisionalY = floorOfLayer(difficulty) + DUNGEON_CONFIG.spawnAboveFloor;
+    const centreX = DUNGEON_CONFIG.originChunkX * SIZE + DUNGEON_CONFIG.probeLocalXZ[0] + 0.5;
+    const centreZ = DUNGEON_CONFIG.originChunkZ * SIZE + DUNGEON_CONFIG.probeLocalXZ[1] + 0.5;
 
     // Nothing is announced before the floor exists: a player told "ready" while
     // falling is worse than a player told nothing.
@@ -111,12 +119,10 @@ export function createDungeonService(options) {
       // A player who left the game during the wait has no business being placed.
       if (!playerDungeons.has(playerId)) return;
 
-      // The floor height is read from the template before the copy replaces what
-      // the destination holds: the value is what the copy will produce, not what
-      // happens to be there now.
-      const floorLocalY = loader.findFloorLocalY(level);
+      // The landing is drawn from the room that was copied into the entrance chunk,
+      // so the height is the room's own floor and the cell is one no wall occupies.
       const landing = loader.landingPosition(difficulty);
-      if (!landing || floorLocalY === null) {
+      if (!landing) {
         // No template could be read: its chunk is not loaded, so a copy from it
         // would do nothing and there is no floor to stand on. Saying so is the only
         // honest answer — and `/dbg templates` says which chunk to fix.
@@ -143,9 +149,12 @@ export function createDungeonService(options) {
           const record = playerDungeons.get(playerId);
           if (record && record.difficulty.id !== difficulty.id) return;
 
+          // The floor block the drawn landing stands on: the position is
+          // `spawnAboveFloor` cells above it, so one cell below the position would be
+          // the air above the floor and every copy would look like a failure.
           const under = api.getBlock(
             Math.floor(landing[0]),
-            floorOfLayer(difficulty) + floorLocalY,
+            Math.floor(landing[1]) - DUNGEON_CONFIG.spawnAboveFloor,
             Math.floor(landing[2]),
           );
           if (under === null || under === "Air") {
