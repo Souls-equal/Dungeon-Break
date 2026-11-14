@@ -18,8 +18,15 @@ const CALLBACKS = [
   "onBlockStandStop",
   "onPlayerJoin",
   "onPlayerLeave",
+  "onRespawnRequest",
   "tick",
 ];
+/**
+ * Names that must survive minification, because they are read from outside the
+ * bundle: the template table a player edits, and the level table a report prints.
+ * A constant renamed to `he` is a constant nobody can debug in game.
+ */
+const ANCHORED_GLOBALS = ["globalThis.ROOM_TEMPLATES", "globalThis.DUNGEON_LEVELS"];
 
 function validate(code) {
   if (/^\s*(?:import|export)\b/m.test(code)) {
@@ -31,6 +38,18 @@ function validate(code) {
     if (!assignment.test(code)) {
       throw new Error(`Bloxd callback assignment was lost during bundling: ${callback}`);
     }
+  }
+
+  for (const name of ANCHORED_GLOBALS) {
+    if (!code.includes(name)) {
+      throw new Error(`A name that must stay reachable was renamed during bundling: ${name}`);
+    }
+  }
+
+  // The one call the whole generator is built on. A bundle without it is a bundle
+  // that writes blocks one at a time again, which is the code this replaced.
+  if (!code.includes("copyChunk")) {
+    throw new Error("api.copyChunk is not called anywhere in the bundle");
   }
 }
 
