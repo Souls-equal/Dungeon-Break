@@ -151,9 +151,10 @@ Tous les textes visibles par les joueurs sont en anglais.
 
 ### Coffres : une clé par coffre
 
-- **Cliquer sur un coffre donne une clé**, tirée selon la difficulté du donjon. Cinq raretés, qui **sont cinq items distincts** du jeu (`Wooden Key`, `Stone Key`, `Iron Key`, `Gold Key`, `Diamond Key` — il n'existe pas de `Key` générique).
-- **Un coffre ne s'ouvre qu'une fois.** La preuve est `setBlockData` sur le bloc du coffre : les données sont effacées quand le bloc change, donc une salle recopiée rend ses coffres, et une nouvelle entrée (nouvelle place) repart avec tout plein. Revenir sur un coffre déjà ouvert dit `This chest is already empty.`
-- **La clé va dans l'inventaire**, pas au sol : un drop peut rouler sous un mob ou tomber d'une corniche, et une clé perdue est pire qu'une clé jamais donnée. Inventaire plein → message, et **le coffre reste fermé** pour être rouvert plus tard.
+- **Cliquer sur un `Chest`** donne une clé, tirée selon la difficulté du donjon. Cinq raretés, qui **sont cinq items distincts** du jeu (`Wooden Key`, `Stone Key`, `Iron Key`, `Gold Key`, `Diamond Key` — il n'existe pas de `Key` générique).
+- **Aucune détection, aucune prédiction.** Les coffres sont dans les modèles de salles, à la main ; le code ne cherche rien et ne devine rien : `onPlayerClick` nomme le bloc cliqué, et la seule question est `bloc === "Chest"`. Un coffre posé n'importe où dans une salle fonctionne.
+- **Le coffre est remplacé par de l'`Air`**, et la clé **tombe au milieu du bloc cliqué** (`x + 0.5`, `y`, `z + 0.5`). Le coffre vide est toute la mémoire de « déjà ouvert » : il n'y a plus de coffre à rouvrir, et une salle recopiée rend son coffre.
+- **Le bloc est vidé avant que la clé soit créée** : si le drop échoue, la clé n'est pas dupliquée, et le joueur est prévenu (`could not be dropped`).
 - **Les chances penchent vers le rare quand la difficulté monte** (tirage pondéré, chaque clé reste possible partout) :
 
   | Niveau | Wooden | Stone | Iron | Gold | Diamond |
@@ -166,9 +167,6 @@ Tous les textes visibles par les joueurs sont en anglais.
   | Insane | 23 % | 18 % | 19 % | 20 % | 20 % |
   | Ultra Insane | 15 % | 17 % | 20 % | 23 % | 24 % |
   | Hell | 8 % | 16 % | 22 % | 26 % | 28 % |
-
-- **Un coffre, c'est une case dans la boîte de la salle** (`chestBox` : le milieu de la salle, de `y+2` à `y+12`). Un coffre construit dans un mur ou dans un coin est de la décoration : le clic ne paie pas. `/dbg chests` compte les coffres des neuf salles autour du joueur et dit quelles salles n'étaient pas lisibles.
-- **Le clic est celui du jeu** : `onPlayerClick(playerId, wasAltClick, x, y, z, block, targetEId)`, une seule lecture de bloc, aucun scan.
 
 ### Mourir, et revenir
 

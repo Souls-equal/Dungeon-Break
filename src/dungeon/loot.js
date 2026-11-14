@@ -1,23 +1,28 @@
 /*
- * Chests: one key per chest, drawn for the level the chest is in.
+ * Chests: click one, get a key, and the chest is gone.
  *
- * The dungeon cannot put an item **in** a chest, and does not want to: a room is a copy,
- * and writing into a copy is the one thing this project does not do. So a chest is a
- * **trigger** — the player opens it, the game says so, and the key is handed over. What a
- * chest gives is decided here, where it can be tested without a game.
+ * A chest is a **block of the room's build**, so the code never looks for one and never
+ * predicts where one is: the game says which block was clicked, and the answer is either
+ * `Chest` or it is not. That is the owner's rule, and it is also the only rule that works —
+ * a hand-built room can put a chest anywhere, and a list of guesses would miss it.
  *
- * A chest opens **once**, and the proof is the same one cleared rooms use: `setBlockData`
- * on the chest's own block. That data is cleared when the block changes, which is exactly
- * the lifetime wanted — a room copied again gets its chest back, and a new entry (a new
- * place) starts with every chest full.
+ * Opening a chest is **one write**: the chest becomes `Air`, and the key drops at the middle
+ * of the block it was in. Nothing has to remember that the chest was opened, because there
+ * is no chest left to open — a room copied again gets its chest back, which is the only
+ * reset wanted.
  */
 
-import { DUNGEON_CONFIG, chestKeysFor, floorOfLayer } from "./config.js";
+import { DUNGEON_CONFIG, chestKeysFor } from "./config.js";
 
 const SIZE = DUNGEON_CONFIG.chunkSize;
 
-/** The block names a room can hold that are chests, in the game's own spelling. */
-const CHEST_BLOCKS = new Set(["Chest", "Iron Chest", "Gold Chest"]);
+/**
+ * The block a dungeon chest is: **`Chest`, and only `Chest`**.
+ *
+ * The owner put it plainly: the builds hold ordinary chests, no iron or gold ones, so one
+ * name is the whole test — and a name this code invents is a chest that never pays out.
+ */
+const CHEST_BLOCKS = new Set(["Chest"]);
 
 export function isChestBlock(name) {
   return typeof name === "string" && CHEST_BLOCKS.has(name);
@@ -43,100 +48,46 @@ export function drawChestKey(difficulty, random = Math.random) {
 }
 
 /**
- * Finds the chests of a room, reading the world and never writing it.
+ * Opens a chest: the block becomes `Air`, and the key lands at the middle of it.
  *
- * Nothing in the API says where a hand-built room keeps its chests, so the search is
- * bounded and explicit: `chestBox` in chunk-local coordinates, every column of it, and
- * `chestScanHeights` cells up from the bottom of the box. A column is read upwards and
- * stops at the first chest — a room's chest stands on its floor, not halfway up a wall.
+ * `x + 0.5, y, z + 0.5` is the centre of the block's **column**, with `y` left as the
+ * chest's own height: a key dropped at `y` sits in the cell the chest occupied, which is
+ * where a player's hand is — half a block up would be inside the chest's own lid.
  *
- * This is a **reporting** tool, not the click path: it is thousands of reads, it is cached
- * per room, and `/dbg chests` is what calls it. A click is answered from the block the
- * player clicked (see `chestOfClick`), which costs one read.
- *
- * `complete` is false when a column was unreadable (the chunk is not sent yet). That
- * matters to the caller: an incomplete scan cannot be used to say "there is no chest
- * here", only "not this time".
+ * The block is removed **before** the key is dropped: if the drop fails there is no chest
+ * to try again with, so the order is the one that cannot duplicate a key. The caller
+ * checks the return of `createItemDrop` and says so when nothing could be dropped.
  */
-export function findRoomChests(api, level, chunkX, chunkZ) {
-  if (!level.chests) level.chests = new Map();
-  const cacheKey = `${chunkX}|${chunkZ}`;
-  const cached = level.chests.get(cacheKey);
-  if (cached !== undefined) return cached;
-
-  const box = DUNGEON_CONFIG.chestBox;
-  const baseX = chunkX * SIZE;
-  const baseY = floorOfLayer(level.origin.y);
-  const baseZ = chunkZ * SIZE;
-  const chests = [];
-  let complete = true;
-
-  // Every column of the box, bottom up, stopping at the first chest in it.
-  for (let localX = box.minX; localX <= box.maxX; localX += 1) {
-    for (let localZ = box.minZ; localZ <= box.maxZ; localZ += 1) {
-      for (let up = 0; up < DUNGEON_CONFIG.chestScanHeights; up += 1) {
-        const y = baseY + box.minY + up;
-        const name = api.getBlock(baseX + localX, y, baseZ + localZ);
-        if (name === null || name === undefined) {
-          // The chunk is not sent: the rest of this column would be a guess.
-          complete = false;
-          break;
-        }
-        if (!isChestBlock(name)) continue;
-        chests.push({ x: baseX + localX, y, z: baseZ + localZ, block: name });
-        break;
-      }
-    }
-  }
-
-  const result = { chests, complete };
-  // An incomplete scan is not cached: the next call has a right to a real answer.
-  if (complete) level.chests.set(cacheKey, result);
-  return result;
-}
-
-/** Was this chest already opened? The answer comes from the world, not from memory. */
-export function isChestOpened(api, x, y, z) {
-  const data = api.getBlockData(x, y, z);
-  return Boolean(data && data.opened);
-}
-
-/** Marks a chest as opened. Idempotent, and the block itself is never touched. */
-export function markChestOpened(api, x, y, z) {
-  api.setBlockData(x, y, z, { opened: true });
+export function openChest(api, chest) {
+  api.setBlock(chest.x, chest.y, chest.z, "Air");
+  return api.createItemDrop(chest.x + 0.5, chest.y, chest.z + 0.5, chest.itemName, 1, false);
 }
 
 /**
- * The chest a player just clicked, if it is one of a dungeon's chests.
+ * The chest a player just clicked, if they are in a dungeon.
  *
- * The test is three cheap things and no scan: the click is **inside the room's box**, at a
- * height the level uses, and **the block is a chest**. Scanning the room on a click would
- * mean thousands of reads to answer a question the click already answers — the game names
- * the block — and it would fail whenever a room's chunk happened to be loading.
+ * **Nothing is looked for and nothing is predicted**: a room's chests live in the build, and
+ * the game hands over the block the player clicked. So the test is one thing — the block is
+ * `Chest`, and the player's dungeon can say where the chest is (`level.origin`, which a
+ * level always has once it is being played).
  *
- * So a chest a builder put in the room's middle is loot, and one built into a wall or a
- * corner outside `chestBox` is decoration: the box is the line, and it is a number in
- * `config.js` rather than a guess made per room.
+ * `null` means "not a chest of this dungeon": a click on anything else, or a click from
+ * somebody who is not in a dungeon.
  *
- * `null` means "not a chest of this dungeon".
+ * The chest keeps its height in its own coordinates: opening it is what decides what it
+ * gives, and the height is in this position so a report and a test can name the block.
  */
 export function chestOfClick(api, level, position) {
-  if (!level.origin) return null;
-  const box = DUNGEON_CONFIG.chestBox;
+  if (!level || !level.origin) return null;
   const x = Math.floor(position[0]);
   const y = Math.floor(position[1]);
   const z = Math.floor(position[2]);
-  const chunkX = Math.floor(x / SIZE);
-  const chunkZ = Math.floor(z / SIZE);
-  const baseY = floorOfLayer(level.origin.y);
-  const localX = x - chunkX * SIZE;
-  const localZ = z - chunkZ * SIZE;
-
-  if (localX < box.minX || localX > box.maxX) return null;
-  if (localZ < box.minZ || localZ > box.maxZ) return null;
-  if (y < baseY + box.minY || y > baseY + box.maxY) return null;
-  const block = api.getBlock(x, y, z);
-  if (!isChestBlock(block)) return null;
-
-  return { x, y, z, block, chunkX, chunkZ };
+  if (!isChestBlock(api.getBlock(x, y, z))) return null;
+  return {
+    x,
+    y,
+    z,
+    chunkX: Math.floor(x / SIZE),
+    chunkZ: Math.floor(z / SIZE),
+  };
 }

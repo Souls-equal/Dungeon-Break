@@ -23,7 +23,7 @@ import {
 } from "./utils/scheduler.js";
 import { DIFFICULTIES, DUNGEON_CONFIG, difficultyForPadBlock } from "./dungeon/config.js";
 import { LOBBY_POSITION, createDungeonService } from "./dungeon/service.js";
-import { findRoomChests, isChestBlock } from "./dungeon/loot.js";
+import { isChestBlock } from "./dungeon/loot.js";
 
 const LOBBY_CONFIG = {
   countdownSeconds: 10,
@@ -265,28 +265,10 @@ function runDebugCommand(playerId, verb) {
     return;
   }
   if (verb === "chests") {
-    const dungeon = service().dungeonOf(playerId);
-    if (!dungeon) {
-      debugSay(playerId, "[dbg] you are not in a dungeon — step on a pad first");
-      return;
-    }
-    const level = service().levelStateOf(playerId);
-    const position = report.position;
-    const centre = { x: Math.floor(position[0] / DUNGEON_CONFIG.chunkSize), z: Math.floor(position[2] / DUNGEON_CONFIG.chunkSize) };
-    let found = 0;
-    let incomplete = 0;
-    const rooms = [];
-    for (let dx = -1; dx <= 1; dx += 1) {
-      for (let dz = -1; dz <= 1; dz += 1) {
-        const scan = findRoomChests(api, level, centre.x + dx, centre.z + dz);
-        found += scan.chests.length;
-        if (!scan.complete) incomplete += 1;
-        rooms.push(`${centre.x + dx},${centre.z + dz}: ${scan.chests.length}${scan.complete ? "" : " (chunk not sent)"}`);
-      }
-    }
-    debugSay(playerId, `[dbg] chests · ${found} in 9 rooms · ${incomplete} room(s) unreadable`);
-    debugSay(playerId, `[dbg] ${rooms.join(" · ")}`);
-    debugSay(playerId, "[dbg] a chest outside the scan box is not loot — see `chestBox` in config.js");
+    // There is nothing to scan: a room's chests are in its build, and the code only meets
+    // one when a player clicks it. What this prints is the state of the rule instead.
+    debugSay(playerId, "[dbg] chests are `Chest` blocks, opened by clicking them: they become Air and drop a key.");
+    debugSay(playerId, "[dbg] nothing is searched, so a chest anywhere in a room works.");
     return;
   }
   if (verb === "seed") {
@@ -463,6 +445,8 @@ onPlayerLeave = (playerId) => {
  * be in front of one must not pay twice.
  */
 onPlayerClick = (playerId, wasAltClick, x, y, z, block, targetEId) => {
+  // Only a `Chest` — that is the block the builds hold, and the caller does not have to
+  // know what a chest gives to know what a chest is.
   if (targetEId) return;
   if (!isChestBlock(block)) return;
   try {

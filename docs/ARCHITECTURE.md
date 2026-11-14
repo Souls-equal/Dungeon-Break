@@ -190,51 +190,45 @@ Les statistiques sont multipliées **à partir de ce que le jeu rapporte** (`get
 lui-même (`onMobDespawned`) est oublié sans rendre la salle clear : une salle n'est clear que
 si le joueur l'a vidée.
 
-## 6quater. Les coffres : une clé, une fois, tirée pour le niveau
+## 6quater. Les coffres : un clic, une clé, et le coffre disparaît
 
-Un coffre n'est pas un contenant : le donjon **ne peut pas** mettre d'objet dans un coffre
-d'une salle — la salle est une copie, et écrire dans une copie est la seule chose que ce projet
-ne fait jamais. Un coffre est donc un **déclencheur** : le joueur clique, le jeu le dit
-(`onPlayerClick`), et la clé est donnée. Ce que le coffre donne est décidé dans `loot.js`, où
-cela se teste sans jeu.
+Un coffre n'est pas un contenant : le donjon **ne peut pas** remplir un coffre d'une salle — la
+salle est une copie, et écrire dans une copie est la seule chose que ce projet ne fait jamais. Un
+coffre est un **déclencheur** : le joueur clique, le jeu dit quel bloc a été cliqué
+(`onPlayerClick(playerId, wasAltClick, x, y, z, block, targetEId)`), et la clé tombe.
 
 | Question | Réponse | Pourquoi |
 | --- | --- | --- |
-| quel clic ? | `onPlayerClick(playerId, wasAltClick, x, y, z, block, targetEId)`, ignoré si `targetEId` | la signature documentée ; un clic sur une entité n'est pas un coffre |
-| quel coffre ? | une case dans `chestBox` **et** un bloc de coffre | trois tests bon marché, une lecture ; une boîte plutôt qu'un scan de 2 700 cases |
-| déjà ouvert ? | `getBlockData` sur le bloc du coffre | le monde répond, pas notre mémoire |
-| quoi ? | `drawChestKey(difficulty)` | une loi de probabilité, testable secteur par secteur |
-| comment ? | `giveItem`, jamais un drop | un drop roule sous un mob ou tombe d'une corniche |
+| quel coffre ? | `block === "Chest"` | c'est le bloc des modèles, et le seul nom dont on ait besoin |
+| où ? | nulle part : on ne cherche rien | un coffre est posé à la main dans une salle, une liste de suppositions le raterait |
+| déjà ouvert ? | il n'y a plus de coffre | le bloc est devenu `Air` : c'est toute la mémoire |
+| quoi ? | `drawChestKey(difficulty)` | une loi de probabilité, testable palier par palier |
+| comment ? | `createItemDrop(x + 0.5, y, z + 0.5)` | le milieu du bloc cliqué, à sa propre hauteur |
 
-**Un coffre ouvert reste ouvert, et un coffre recopié redevient plein.** La marque est
-`setBlockData(x, y, z, { opened: true })` sur le bloc du coffre — les données d'un bloc sont
-effacées quand le bloc change, ce qui est exactement la durée de vie voulue : dans un run, un
-coffre rouvert dit `already empty` ; une salle recopiée, ou une entrée dans un nouveau donjon
-(nouvelle place), repart avec ses coffres pleins. C'est la même preuve que la salle clear, sur
-un autre bloc.
+**Une seule écriture, et elle est demandée.** Ouvrir un coffre fait `setBlock(x, y, z, "Air")` —
+le coffre disparaît — puis `createItemDrop` au milieu du bloc. L'ordre n'est pas cosmétique :
+le bloc est vidé **avant** la création du drop, donc un échec laisse un coffre vide et un
+message, jamais deux clés pour un coffre. Et le coffre disparu est ce qui rend une seconde
+ouverture impossible sans rien mémoriser : une salle recopiée rend son coffre, un clic sur la
+case vidée ne trouve qu'`Air`.
 
 **Les raretés sont des items, pas des étiquettes.** Le jeu a cinq items — `Wooden Key`,
 `Stone Key`, `Iron Key`, `Gold Key`, `Diamond Key` — et **pas** de `Key` générique. Le nom est
 donc construit (`keyItemName`), et `tools/build-world-code.mjs` **refuse un bundle** qui nomme un
-item absent de `src/data/item-names.txt` : un nom faux dans `giveItem` ne lève pas, il ne fait
-rien, et un coffre qui ne donne rien est un bug qu'on ne voit qu'en jeu.
+item absent de `src/data/item-names.txt` : un nom faux dans `createItemDrop` ne lève pas, il ne
+fait rien, et un coffre qui ne donne rien est un bug qu'on ne voit qu'en jeu.
 
 **Une courbe, pas une table par niveau.** `CHEST_KEYS` donne deux poids par clé — l'extrémité
-très facile et l'extrémité Hell — et `chestKeysFor(difficulty)` interpole entre les deux selon la
+Very Easy et l'extrémité Hell — et `chestKeysFor(difficulty)` interpole entre les deux selon la
 position du niveau dans l'échelle. Chaque clé garde un poids **strictement positif partout** (un
 Wooden Key en Hell est un mauvais tirage, pas une impossibilité), et la loi est normalisée au
 tirage, donc aucun arrondi ne peut rendre une clé inatteignable. Very Easy : 60/24/10/5/1 ;
 Hell : 8/16/22/26/28.
 
-**Un inventaire plein n'est pas un coffre vide.** `giveItem` rend le nombre d'items ajoutés ; si
-c'est 0, la marque est **retirée** (`setBlockData(…, {})`) et le joueur est prévenu — il pourra
-rouvrir le coffre quand il aura de la place.
-
-**Le scan est un outil de diagnostic, pas le chemin du clic.** `findRoomChests` marche les
-2 704 cases de `chestBox` (deux lectures par case au plus) et met le résultat en cache par salle :
-c'est ce que `/dbg chests` appelle, pour dire « 3 coffres dans ces 9 salles, 2 salles illisibles ».
-Le clic, lui, ne lit **qu'un bloc** : un scan par clic coûterait des milliers de lectures pour une
-question à laquelle le clic répond déjà.
+**Ce que ce module ne fait plus.** Il n'y a plus de boîte de recherche, plus de scan de salle, plus
+de `setBlockData` sur un coffre : ces trois choses venaient de l'idée qu'il fallait *deviner* où
+sont les coffres et se souvenir lesquels étaient ouverts. Un bloc qui disparaît répond aux deux
+questions sans mémoire, et `/dbg chests` n'a plus rien à compter — il rappelle la règle.
 
 ## 6bis. Sortir : le spawn est une boutique, et le donjon s'arrête là
 
@@ -276,10 +270,9 @@ elles sont, et c'est le jeu qui vide la carte quand le propriétaire active son 
 | `getBlock` en colonne | une fois par entrée | une constante « hauteur du sol » fausse pour un modèle sur dix |
 | `getBlockSolidity` | à chaque case de mob | « est-ce de l'Air » — les plantes du donjon sont traversables |
 | `setBlockData` sur le coin d'une salle | quand une salle est vidée | un compteur en mémoire, qui ne survit pas à un redémarrage. **Une des deux seules écritures du projet** |
-| `getBlockData` sur un coffre | à chaque clic | un inventaire de coffres ouverts à garder en mémoire |
-| `setBlockData` sur un coffre | quand il s'ouvre, ou quand un inventaire plein l'annule | la même chose, mais qui survit à un retour dans le run. **La seconde écriture** |
-| `giveItem` | un coffre ouvert | un drop au sol, qui peut rouler sous un mob |
-| `onPlayerClick` | un clic du joueur | deviner où il regarde |
+| `setBlock(…, "Air")` sur un coffre | quand un coffre s'ouvre | la même chose, sans mémoire. **La seconde écriture, demandée aussi** |
+| `createItemDrop` | un coffre ouvert | un inventaire à tenir à jour |
+| `onPlayerClick` | un clic du joueur | chercher les coffres d'une salle, ou deviner où il regarde |
 
 **Le moteur n'écrit jamais un bloc, nulle part.** C'est la contrainte que le propriétaire du projet a posée, et elle simplifie tout : aucune case d'une salle n'est réservée, aucun témoin, aucune plaque, aucune réparation. Les seules opérations autorisées dans un chunk sont `copyChunk` et des lectures — plus **une** exception, demandée explicitement : `setBlockData` sur le bloc du coin d'une salle, qui stocke des données *sur* un bloc existant sans le changer (voir §6ter).
 
@@ -307,7 +300,6 @@ Aucune de ces lectures n'est sur le chemin chaud : un scan lit un bloc par chunk
 | `level.populated` | une entrée par salle visitée | un donjon par entrée, détruit par `release` |
 | `level.pendingTuning` | les mobs d'un tick | vidée au tick suivant |
 | `level.refusedMobs` | au plus types × niveaux | une entrée par nom refusé, indexée `type|niveau` |
-| `level.chests` | une entrée par salle scannée | seulement par `/dbg chests`, jamais par un clic |
 | `states` (une par entrée) | une `Map` de chunks par entrée | l'état entier est détruit par `release`, donc aucune origine ne survit à un départ |
 
 Aucune de ces structures ne dépend du nombre de salles construites.
@@ -344,8 +336,8 @@ C'est la réponse à un vrai rapport de bug : « The room could not be built » 
 
 - `tests/dungeon/config.test.js` — une difficulté est un ordre et ne porte **aucune** hauteur ; la plage verticale tirée commence au-dessus de `y = 0` et couvre bien 1 000 à 100 000 blocs ; un pad = une difficulté ; Hell est le dernier ; le tirage de salle est stable et étalé ; les huit niveaux tirent dans la même liste ; les salles d'un niveau passent avant les communes ; une salle malformée est ignorée sans casser le niveau ; **la conversion chunk → bloc, y compris sur les coordonnées négatives** ; les 15 salles livrées occupent 15 chunks distincts ; une salle ne porte aucune propriété.
 - `tests/dungeon/loader.test.js` — un état par entrée : chaque entrée tire sa propre place dans le carré configuré, deux entrées vivantes restent à `spawnSeparation` l'une de l'autre, une place n'est tirée qu'une fois, `newOrigin` en donne une autre, un départ la rend et ne laisse rien en mémoire, deux joueurs de la même difficulté ne partagent ni place ni plan ; et un faux serveur où **`copyChunk` depuis un chunk non chargé ne fait rien**, où une copie dans un chunk non envoyé est ignorée, et où **un `getBlock` de chunk non envoyé déclenche l'envoi, deux ticks plus tard** : une salle est une seule copie, la sonde distingue « pas envoyé » / « vide » / « salle déjà là », **et seul le Bedrock compte** : du terrain ordinaire à la même profondeur ne passe pas pour une salle, une salle du redémarrage précédent n'est pas recopiée, une copie est confirmée au tick suivant et jamais dans le sien, la file est bornée, une salle illisible est désactivée puis retirée de la file, **aucun bloc n'est écrit nulle part**, la hauteur de sol est lue et non configurée, un niveau vide ne coûte rien.
-- **mobs** (dans `loader.test.js`) — l'entrée dans une salle peuple les quatre salles autour et jamais celle du joueur ; les mobs sont au Y du joueur, jamais dans un bloc solide, jamais sur les plaques ; une case de plante reste utilisable (`getBlockSolidity`, pas « Air ») ; entrer dans une salle garde ses mobs et tue ceux des autres salles ; le dernier mob écrit le record du coin et le joueur reçoit `CLEAR` ; une salle clear n'est plus jamais peuplée ; un type refusé par le jeu ne casse pas le reste ; la difficulté multiplie les statistiques (Hell : 5 mobs à ×5 PV) ; un mob retiré par le jeu ne rend pas la salle clear ; une salle vidée puis regagnée ne se remplit pas. Et dans `world-code.test.js` : un coffre du donjon donne **une** des cinq clés, une seule fois, et dit quoi ; un clic sur autre chose (bloc, hors boîte, entité) ne donne rien ; un inventaire plein laisse le coffre fermé puis rouvrable ; les mobs apparaissent autour de l'entrée, la salle d'entrée est écrite clear, `onPlayerKilledMob` dit `CLEAR` et écrit le record, revenir au spawn tue les mobs, **mourir garde le donjon (même origine, aucune copie) et le repeuple** — le tout sans écrire un bloc.
-- **coffres** (`tests/dungeon/loot.test.js`) — les poids penchent vers le rare à chaque niveau et chaque clé reste possible partout ; le tirage suit la loi (20 000 tirages sur une suite fixe, ±2 points) ; un tirage à 0 et à 1 rendent quand même une clé ; le scan trouve les coffres de la salle et **dit** qu'il est incomplet quand le chunk n'est pas envoyé ; un coffre hors de la boîte n'est pas du butin ; un clic sur le bloc au-dessus, hors salle ou en hauteur ne paie pas ; la marque vit sur le bloc et disparaît quand le bloc change ; les noms de blocs de coffres sont reconnus et les autres non.
+- **mobs** (dans `loader.test.js`) — l'entrée dans une salle peuple les quatre salles autour et jamais celle du joueur ; les mobs sont au Y du joueur, jamais dans un bloc solide, jamais sur les plaques ; une case de plante reste utilisable (`getBlockSolidity`, pas « Air ») ; entrer dans une salle garde ses mobs et tue ceux des autres salles ; le dernier mob écrit le record du coin et le joueur reçoit `CLEAR` ; une salle clear n'est plus jamais peuplée ; un type refusé par le jeu ne casse pas le reste ; la difficulté multiplie les statistiques (Hell : 5 mobs à ×5 PV) ; un mob retiré par le jeu ne rend pas la salle clear ; une salle vidée puis regagnée ne se remplit pas. Et dans `world-code.test.js` : un coffre du donjon donne **une** des cinq clés, déposée au milieu du bloc, devient de l'`Air`, et ce clic ne paie plus ensuite ; un clic sur autre chose (bloc, entité) ne donne ni clé ni écriture ; un coffre du lobby n'est pas touché ; un drop impossible est signalé ; les mobs apparaissent autour de l'entrée, la salle d'entrée est écrite clear, `onPlayerKilledMob` dit `CLEAR` et écrit le record, revenir au spawn tue les mobs, **mourir garde le donjon (même origine, aucune copie) et le repeuple** — le tout sans écrire un bloc.
+- **coffres** (`tests/dungeon/loot.test.js`) — les poids penchent vers le rare à chaque niveau et chaque clé reste possible partout ; le tirage suit la loi (20 000 tirages sur une suite fixe, ±2 points) ; un tirage à 0 et à 1 rendent quand même une clé ; un clic sur un `Chest` est un coffre, un clic ailleurs non ; la position est arrondie vers le bas ; un clic hors donjon ne paie pas ; ouvrir laisse de l'`Air` et dépose la clé à `x + 0.5, y, z + 0.5` ; le bloc est vidé **avant** le drop ; `Iron Chest` n'est plus un coffre.
 - **bestiaire** (dans `loader.test.js`) — chaque niveau tire parmi les mobs débloqués à son niveau ou en dessous ; les multiplicateurs du type se composent avec ceux du niveau (Hell : PV et dégâts vérifiés mob par mob, et la salle est bien mélangée) ; un type refusé par le jeu ne laisse pas la salle vide ; un refus est enregistré **pour son niveau** ; mourir vide les mobs sans oublier les salles, donc le donjon peut encore se remplir ; quitter l'oublie pour de bon.
 - `tests/world-code.test.js` — la boutique `Utilities` (créée, gratuite, avec une image), un clic qui ramène au spawn **et** arrête le donjon — plus aucune salle n'est copiée ensuite et `/dbg` ne voit plus de donjon —, un clic pendant l'entrée qui abandonne l'entrée au lieu de reposer le joueur, et un achat d'autre chose qui ne fait rien ; le bundle réel, dans un contexte `vm`, sur un faux serveur qui compte chaque `setBlock` comme une violation : compte à rebours, entrée, atterrissage sur le sol, gravité coupée puis rendue, une plaque Concrete construite dans la salle qui mène au niveau suivant, ordre des copies, joueur qui tombe et qui est reposé, aucun bloc écrit par le code, `/dbg level` qui dit pourquoi une entrée a échoué, commandes `/dbg`.
 
