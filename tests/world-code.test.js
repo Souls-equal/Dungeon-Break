@@ -21,8 +21,8 @@ const VERY_EASY = findDifficulty("veryEasy");
  */
 const TEST_SRC = [0, -32, 0];
 const TEST_TEMPLATES = [
-  { src: TEST_SRC, faces: "NESW", spawn: true },
-  { src: [64, -32, 0], faces: "NESW" },
+  { src: TEST_SRC },
+  { src: [64, -32, 0] },
 ];
 
 /**
@@ -460,7 +460,11 @@ test("/dbg templates says whether each template can actually be read", () => {
   world.context.playerCommand("p1", "templates");
   const lines = world.messages.slice(before).map((entry) => entry.message);
   assert.ok(lines.length >= TEST_TEMPLATES.length, `no template was listed: ${JSON.stringify(lines)}`);
-  assert.ok(lines.some((line) => /\[0, -32, 0\].*loaded/.test(line)), `no readable template was reported: ${lines.join(" | ")}`);
+  // The chunk coordinate the player built against, then the block the engine
+  // copies — both, because the first is what a builder recognises and the second
+  // is what the API takes.
+  assert.ok(lines.some((line) => /chunk 0,-1,0 → block 0,-32,0 · loaded/.test(line)),
+    `no readable room was reported: ${lines.join(" | ")}`);
 });
 
 test("/dbg mem reports the counters that must stay bounded", () => {

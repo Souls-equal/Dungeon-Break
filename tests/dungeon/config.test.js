@@ -10,7 +10,7 @@ import {
   lobbyDifficulties,
   nextDifficulty,
 } from "../../src/dungeon/config.js";
-import { hashOf, templateFor, templatesFor } from "../../src/dungeon/templates.js";
+import { chunkToBlock, hashOf, templateFor, templatesFor } from "../../src/dungeon/templates.js";
 
 const SIZE = DUNGEON_CONFIG.chunkSize;
 
@@ -80,14 +80,21 @@ test("the same chunk always picks the same template", () => {
   assert.equal(picked.size, 3, "the hash only ever reaches a subset of the templates");
 });
 
-test("a spawning template is used for the entrance, and only there", () => {
+test("no room is special: the entrance is an ordinary draw", () => {
+  // A room used to be able to declare itself the entrance. Nothing does any more,
+  // and nothing in the generator looks for it: the origin chunk draws like the
+  // others, which is what keeps the table a plain list of coordinates.
   const list = [
-    { index: 0, src: [0, -32, 0], faces: "NESW" },
-    { index: 1, src: [96, -32, 0], faces: "NESW", spawn: true },
+    { index: 0, chunk: [0, 0, 0], src: [0, 0, 0] },
+    { index: 1, chunk: [1, 0, 0], src: [32, 0, 0] },
+    { index: 2, chunk: [2, 0, 0], src: [64, 0, 0] },
   ];
   const difficulty = findDifficulty("easy");
-  assert.equal(templateFor(list, difficulty, 0, 0).index, 1);
-  assert.notEqual(templateFor(list, difficulty, 2, 2).index, 1);
+  const drawn = [];
+  for (let chunkX = 0; chunkX < 40; chunkX += 1) drawn.push(templateFor(list, difficulty, chunkX, 0).index);
+  // The origin chunk is one of the draws, not a fixed choice.
+  assert.ok(drawn.includes(templateFor(list, difficulty, 0, 0).index));
+  assert.ok(new Set(drawn).size > 1, "the draw always returns the same room");
 });
 
 test("the shipped table is one shared list, numbered by position", () => {
@@ -142,4 +149,66 @@ test("the hash is stable across runs", () => {
   assert.equal(hashOf("veryEasy", 0, 0), 386675546);
   assert.equal(hashOf("veryEasy", 0, 0), hashOf("veryEasy", 0, 0));
   assert.notEqual(hashOf("veryEasy", 0, 0), hashOf("easy", 0, 0));
+});
+
+// ------------------------------------------------------- chunk coordinates --
+//
+// The rooms are written in chunk coordinates, and a chunk coordinate of `-2` is
+// not `-64 / 32` in the arithmetic a player expects — it is the chunk that
+// *contains* block −64, whose first block is −64 itself. Getting that boundary
+// wrong shifts a room by one block and the player lands through a wall, so the
+// edge cases are asserted rather than reasoned about.
+
+test("a chunk coordinate is 32 blocks, and the negative side is its own case", () => {
+  const cases = [
+    // [chunk, first block]
+    [0, 0],
+    [1, 32],
+    [2, 64],
+    [-1, -32],
+    [-2, -64],
+    [-30, -960],
+  ];
+  for (const [chunk, block] of cases) {
+    assert.deepEqual(chunkToBlock(chunk, 0, 0), [block, 0, 0], `chunk ${chunk}`);
+  }
+});
+
+test("a block belongs to the chunk that contains it, negatives included", () => {
+  // The identity that matters: the first block of the chunk the engine copies for
+  // a room must be exactly the block `chunkToBlock` gives for that room.
+  for (const chunk of [0, 1, -1, -2, -30, 17]) {
+    const [block] = chunkToBlock(chunk, 0, 0);
+    assert.equal(Math.floor(block / 32), chunk, `chunk ${chunk} does not round-trip`);
+    // And the block just before it belongs to the previous chunk, never to this one.
+    assert.equal(Math.floor((block - 1) / 32), chunk - 1, `boundary of chunk ${chunk}`);
+  }
+});
+
+test("the shipped rooms are fifteen distinct chunks, two apart", () => {
+  const list = templatesFor({ id: "veryEasy" }, () => {});
+  assert.equal(list.length, 15, "the table no longer holds the fifteen built rooms");
+  const chunks = new Set(list.map((room) => room.chunk.join("|")));
+  assert.equal(chunks.size, 15, "two rooms point at the same chunk: copying one would copy the other");
+  for (let index = 1; index < list.length; index += 1) {
+    assert.equal(list[index].chunk[0] - list[index - 1].chunk[0], -2,
+      `rooms #${index - 1} and #${index} are not two chunks apart`);
+  }
+  // The block coordinate the engine copies is the chunk's own first block.
+  assert.deepEqual(list[0].src, [-64, 32, 0]);
+  assert.deepEqual(list[0].chunk, [-2, 1, 0]);
+});
+
+test("a room has nothing to declare but a chunk", () => {
+  // No faces, no spawn flag, no height: the table is a list of coordinates. This
+  // asserts the shape rather than trusting a comment, because a leftover property
+  // is a promise the generator would silently stop honouring.
+  const saved = globalThis.ROOM_TEMPLATES;
+  globalThis.ROOM_TEMPLATES = { rooms: [[-2, 1, 0]] };
+  try {
+    const [room] = templatesFor({ id: "veryEasy" }, () => {});
+    assert.deepEqual(Object.keys(room).sort(), ["chunk", "index", "src"]);
+  } finally {
+    globalThis.ROOM_TEMPLATES = saved;
+  }
 });

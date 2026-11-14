@@ -267,7 +267,7 @@ export function createDungeonService(options) {
       placed: stats.placed,
       templates: stats.templates,
       disabled: stats.disabled,
-      exampleSrc: template ? template.src : null,
+      exampleChunk: template ? template.chunk : null,
       ticks,
     };
   }
@@ -282,8 +282,8 @@ export function createDungeonService(options) {
         rows.push({
           difficulty: difficulty.label,
           index: template.index,
+          chunk: template.chunk,
           src: template.src,
-          faces: template.faces,
           loaded: block !== null && block !== undefined,
           block,
           disabled: level.disabled.has(template.index),

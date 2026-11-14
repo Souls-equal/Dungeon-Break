@@ -28,55 +28,36 @@ La documentation Bloxd décrit exactement ce cas d'usage : « *storing 'template
 
 ## Remplir les modèles de salles
 
-Tout est dans [`src/dungeon/templates.js`](src/dungeon/templates.js). **Une seule liste de salles**, partagée par les huit difficultés : ajouter une salle une fois la rend disponible partout. Une difficulté peut avoir ses propres salles en plus (`veryEasy: [...]`), mais ce n'est pas utilisé aujourd'hui.
+Tout est dans [`src/dungeon/templates.js`](src/dungeon/templates.js). **Une seule liste de salles**, partagée par les huit difficultés.
 
 ```js
 const READY_ROOMS = [
-  { src: [-2, 1, 0], faces: "NESW" },
-  { src: [-4, 1, 0], faces: "NESW" },
+  [-2, 1, 0],
+  [-4, 1, 0],
+  // ...
 ];
 
 globalThis.ROOM_TEMPLATES = globalThis.ROOM_TEMPLATES || { rooms: READY_ROOMS };
 ```
 
-- **Pas d'identifiant.** Une salle est connue par sa **position dans la liste** : `#12` est la treizième. `/dbg templates` affiche `#12 [x, 1, z]`, l'index et la coordonnée, et rien d'autre n'est à tenir à jour.
-- **`src`** : `[x, y, z]` d'un bloc **dans** le chunk modèle. Le `y` doit être dans le chunk aussi (`[0, 1, 0]` et `[7, 30, 9]` désignent le même chunk).
-- **`faces`** : les côtés qui ont une porte, dans l'ordre **N, E, S, W**. `"NESW"` : quatre portes. `"NS"` : un couloir nord–sud.
-- **`spawn: true`** : la salle utilisée pour l'entrée d'un niveau (facultatif).
+**Les coordonnées sont en chunks, pas en blocs.** `[-2, 1, 0]` est le chunk qui commence au bloc `-64` : un pas de 1 en x vaut 32 blocs, deux pas valent 64. La série `-2, -4, -6…` laisse donc un chunk de vide entre chaque salle, et chacune est un chunk distinct — c'est tout ce que `copyChunk` demande. La conversion chunk → bloc se fait à un seul endroit (`chunkToBlock`), une seule fois, quand la table est lue.
 
-### ⚠️ La série « −2, −4, −6… » n'est pas utilisable telle quelle
+**Une salle n'est qu'une coordonnée.** Pas d'identifiant, pas de portes à déclarer, pas de hauteur, pas de forme. Elle est connue par sa position dans la liste (`#12`), et le générateur en pose une **au hasard** pour chaque chunk qu'il remplit.
 
-`copyChunk` travaille sur des chunks de **32 blocs**. Les 15 coordonnées données (`-2, -4, … -30`) tombent toutes dans **un seul et même chunk** — celui qui contient x de −32 à −1 :
+Les 15 salles construites sont dans la table, les 60 restantes en commentaire — remplir une entrée, c'est effacer deux `//`.
 
-```
--32 .................... -1 | 0 .................... 31
-        les 15 modèles    |        un autre chunk
-```
+### Ce que le générateur exige d'une salle
 
-Copier « la salle numéro 7 » demanderait de copier une **partie** du chunk, ce que `copyChunk` ne sait pas faire. Il faut donc une coordonnée par chunk : la série doit progresser de 32 en 32 en x (ou en z, ou les deux), par exemple −16, −48, −80, −112…
+Deux choses, aucune écrite dans la table :
 
-La liste en commentaire dans `templates.js` couvre les 60 salles encore à construire (positions 16 à 75) : remplir une entrée, c'est effacer deux `//`.
+1. **Le chunk doit être chargé** au moment de la copie : sinon `copyChunk` ne fait rien, sans erreur. `/dbg templates` répond pour chaque salle (`loaded` / `NOT LOADED`).
+2. **La hauteur du sol est lue**, jamais configurée : le moteur remonte la colonne du milieu de la salle jusqu'au premier bloc plein. La copie conserve la disposition verticale de la salle, donc cette hauteur est valable à destination.
 
-### Les trois contraintes
-
-1. **Les portes doivent tomber sur les mêmes cases de part et d'autre.** Deux chunks se touchent, sans couloir entre eux : une porte en `x 13..18` sur la face nord du chunk `(0,0)` doit correspondre à `x 13..18` sur la face sud du chunk `(0,−1)`. Le plus simple : la même porte au même endroit sur tous les modèles.
-2. **Le chunk doit être chargé** au moment de la copie, sinon `copyChunk` ne fait rien. `/dbg templates` répond pour chaque salle.
-3. **Rien d'autre.** Le moteur écrit lui-même son bloc-témoin dans le **milieu du plafond** de chaque salle après la copie, et il **lit** la hauteur du sol dans le modèle : aucun bloc de tes salles n'est réservé, et aucune hauteur n'est à configurer.
+Le bloc-témoin ne vient pas du modèle : le moteur écrit lui-même un `Polished Diorite` au **milieu du plafond** de chaque salle après la copie. Aucun bloc de tes constructions n'est réservé.
 
 ### Changer la liste change tous les donjons
 
-Le tirage est `hash(niveau, chunk) % nombre_de_salles`. Ajouter la 16ᵉ salle redistribue donc **toutes les salles des huit niveaux**. C'est accepté pendant la construction ; quand le monde vaudra la peine d'être conservé, on passera à `hash % TEMPLATE_COUNT` pour qu'une salle ajoutée plus tard ne déplace pas ce qui existe déjà.
-
-### Vérifier que les modèles sont lisibles en jeu
-
-`copyChunk` **ne fait rien si le chunk source n'est pas chargé**, et ne le dit pas. En jeu, tape `/dbg templates` :
-
-```
-[dbg] Very Easy · #0 [-2, 1, 0] faces NESW · loaded
-[dbg] Very Easy · #1 [-4, 1, 0] faces NESW · NOT LOADED
-```
-
-`NOT LOADED` veut dire que le serveur n'a pas envoyé ce chunk : la coordonnée est mauvaise, ou la zone des modèles n'est pas chargée. C'est le premier endroit à regarder quand un niveau s'ouvre sur du vide.
+Le tirage est `hash(niveau, chunk) % nombre_de_salles`. Ajouter la 16ᵉ salle redistribue donc **toutes les salles des huit niveaux**. C'est accepté pendant la construction ; quand le monde vaudra la peine d'être conservé, on passera à un modulo fixe pour qu'une salle ajoutée plus tard ne déplace pas ce qui existe déjà.
 
 ## Commandes de debug
 
@@ -134,7 +115,7 @@ src/worldCode.js           lobby, pads, /dbg
 - `npm run build` régénère le fichier compact.
 - `npm run watch` le régénère à chaque sauvegarde dans `src/`.
 - `npm run check` vérifie que le bundle est à jour, valide les syntaxes, et refuse un bundle où `copyChunk` ou la table des modèles ont disparu au minification.
-- `npm test` lance les 54 tests : moteur, configuration, et le bundle réel exécuté dans un `vm` contre un faux serveur qui applique les règles de Bloxd.
+- `npm test` lance les 58 tests : moteur, configuration, et le bundle réel exécuté dans un `vm` contre un faux serveur qui applique les règles de Bloxd.
 
 Le workflow GitHub vérifie la version générée sur les Pull Requests et resynchronise `world-code/` après un merge dans `main`.
 
