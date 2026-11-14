@@ -1,6 +1,6 @@
 # Architecture — génération par copies de chunks
 
-**Statut : livré.** 4 modules, 75 tests verts, bundle de 21 k caractères sur les 512 k autorisés.
+**Statut : livré.** 4 modules, 76 tests verts, bundle de 21 k caractères sur les 512 k autorisés.
 
 Ce document remplace l'architecture par ouvertures des Phases 0 à 4, supprimée avec son moteur. Il décrit ce qui existe, pas ce qui est prévu : toute divergence entre ce texte et le code est un défaut du texte.
 
@@ -105,14 +105,17 @@ L'ordre est imposé par la plateforme, et il est respecté pas à pas :
 3. Gravité coupée (`gravityMultiplier: 0`), joueur téléporté **dans le chunk vide** de l'entrée. C'est le `setPosition` qui charge ce chunk.
 4. `chunkLoadTicks: 2` ticks plus tard, le chunk existe et accepte une copie.
 5. **La salle d'entrée est copiée** dans le chunk de cette entrée. C'est la sonde qui tranche, pas un compteur : si une salle y est déjà, rien n'est recopié.
-6. Un tick plus tard, l'atterrissage est **tiré** et le sol sous la position est relu. S'il est là, le joueur y est posé. Sinon la copie est retentée, `entryMaxTicks: 4` fois au total, puis le joueur est renvoyé au lobby avec la raison.
+6. **Un tick plus tard, l'atterrissage est lu dans la salle copiée** — pas dans le modèle — et le joueur y est posé. Puis le bloc sous ses pieds est relu. S'il est là, c'est fini ; sinon la copie est retentée, `entryMaxTicks: 4` fois au total, puis le joueur est renvoyé au lobby avec la raison.
 
-**L'atterrissage est tiré au hasard, et sa hauteur est celle de la salle copiée.** Deux bugs étaient ici, et ils expliquent un joueur dans le sol :
+**L'atterrissage est lu dans la salle copiée, et nulle part ailleurs.** Trois bugs ont vécu ici, et ils expliquent tous un joueur dans le sol :
 
-- la hauteur du sol venait du **premier modèle de la liste**, alors que `templateFor` tire une salle par chunk : l'entrée prend souvent une autre salle, avec un sol à une autre hauteur (2 pour l'une, 7 pour l'autre — et 7 est la bonne sur ce monde). La hauteur est maintenant lue dans `level.entrance`, la salle qui a réellement été copiée ;
-- la position était fixe, au centre de la salle : deux joueurs sur la même plaque apparaissaient l'un sur l'autre. Elle est maintenant tirée dans `landingMargin = 4` cellules, donc jamais contre les murs, et les deux cases au-dessus de la colonne doivent être vides — sinon un autre tirage. Un joueur ne peut donc pas apparaître dans un mur. Deux joueurs, eux, ne se croisent plus du tout : chacun a son propre donjon (§5bis).
+- la hauteur venait du **premier modèle de la liste**, alors que `templateFor` tire une salle par chunk : l'entrée prend souvent une autre salle, avec un sol à une autre hauteur ;
+- la colonne était lue **dans le modèle**, puis la hauteur recalculée comme « bas de couche + nombre de cases ». C'est juste tant que le modèle est construit sur la grille que la table annonce — et faux dès qu'une coordonnée de chunk est mal saisie, ce qui est la seule chose qu'un humain peut rater en construisant une salle ;
+- le calcul avait lieu **avant la copie**, et la vérification qui suivait relisait le bloc sous la position calculée : une hauteur fausse était donc vérifiée contre elle-même, et le joueur se posait dans le sol sans message.
 
-La colonne est lue **dans le modèle**, pas dans la destination : au moment du tirage, la destination n'est pas encore copiée, donc elle ne contient que de l'Air. La copie conserve la disposition verticale, donc la hauteur lue dans la salle est exacte à l'arrivée.
+Maintenant l'ordre est : **copier, puis lire**. `landingPosition` lit la colonne de la salle dans **le chunk de destination** (`origin.x, origin.y, origin.z`) — la copie conserve la disposition locale, donc c'est le bloc que le joueur aura sous les pieds — et la hauteur est la coordonnée absolue de ce bloc, jamais une addition. La vérification qui suit relit le bloc sous la position que le serveur a acceptée (`getPosition`), et le joueur reçoit `Landed at y … · floor block at y …` : deux nombres à recopier dans un rapport de bug.
+
+**La position est tirée au hasard**, dans `landingMargin = 4` cellules, donc jamais contre les murs, et les deux cases au-dessus de la colonne doivent être vides — sinon un autre tirage. Un joueur ne peut donc pas apparaître dans un mur, et deux joueurs ne se croisent plus du tout : chacun a son propre donjon (§5bis).
 
 7. Les salles alentour sont mises en file, autour de l'origine de cette entrée.
 
@@ -211,7 +214,7 @@ C'est la réponse à un vrai rapport de bug : « The room could not be built » 
 
 ## 11. Tests
 
-`npm test` — 75 tests.
+`npm test` — 76 tests.
 
 - `tests/dungeon/config.test.js` — une difficulté est un ordre et ne porte **aucune** hauteur ; la plage verticale tirée commence au-dessus de `y = 0` et couvre bien 1 000 à 100 000 blocs ; un pad = une difficulté ; Hell est le dernier ; le tirage de salle est stable et étalé ; les huit niveaux tirent dans la même liste ; les salles d'un niveau passent avant les communes ; une salle malformée est ignorée sans casser le niveau ; **la conversion chunk → bloc, y compris sur les coordonnées négatives** ; les 15 salles livrées occupent 15 chunks distincts ; une salle ne porte aucune propriété.
 - `tests/dungeon/loader.test.js` — un état par entrée : chaque entrée tire sa propre place dans le carré configuré, deux entrées vivantes restent à `spawnSeparation` l'une de l'autre, une place n'est tirée qu'une fois, `newOrigin` en donne une autre, un départ la rend et ne laisse rien en mémoire, deux joueurs de la même difficulté ne partagent ni place ni plan ; et un faux serveur où **`copyChunk` depuis un chunk non chargé ne fait rien**, où une copie dans un chunk non envoyé est ignorée, et où **un `getBlock` de chunk non envoyé déclenche l'envoi, deux ticks plus tard** : une salle est une seule copie, la sonde distingue « pas envoyé » / « vide » / « salle déjà là », **et seul le Bedrock compte** : du terrain ordinaire à la même profondeur ne passe pas pour une salle, une salle du redémarrage précédent n'est pas recopiée, une copie est confirmée au tick suivant et jamais dans le sien, la file est bornée, une salle illisible est désactivée puis retirée de la file, **aucun bloc n'est écrit nulle part**, la hauteur de sol est lue et non configurée, un niveau vide ne coûte rien.

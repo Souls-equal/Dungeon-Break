@@ -327,10 +327,17 @@ test("a level is one chunk copy, and the player lands on its floor", () => {
       `the player lands in the wall at x ${localX}`);
     assert.ok(localZ >= DUNGEON_CONFIG.landingMargin && localZ < SIZE - DUNGEON_CONFIG.landingMargin,
       `the player lands in the wall at z ${localZ}`);
-    // And the floor is really there, read from the world and not from a tally.
+    // And the floor is really there, read from the world and not from a tally. The
+    // landing is read in the room that was copied into the entrance chunk, so this is
+    // the block the player stands on — the bug report that started this check was a
+    // player inside the ground with no message.
+
     assert.equal(world.blockAt(Math.floor(landing[0]), landing[1] - DUNGEON_CONFIG.spawnAboveFloor, Math.floor(landing[2])),
       "Stone Bricks");
     assert.ok(said(world, "p1").includes("Level: Very Easy"));
+    // The two numbers a player can report if it ever goes wrong again.
+    assert.ok(said(world, "p1").some((message) => /^Landed at y \d+ · floor block at y \d+$/.test(message)),
+      `the landing was not reported: ${JSON.stringify(said(world, "p1").slice(-4))}`);
   }
 });
 

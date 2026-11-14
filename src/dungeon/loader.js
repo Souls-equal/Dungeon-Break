@@ -345,20 +345,27 @@ export function createLoader({ api, log }) {
   }
 
   /**
-   * Chunk-local Y of the first block a player can stand in, in one column.
+   * The **world Y** of the first block a player can stand on, in one column.
    *
    * Walked from the bottom of the chunk upward, taking the first cell that is
    * neither Air nor Bedrock — the room's own floor, and not the shell under it.
    * `null` means the column is not readable, or has nothing to stand on.
+   *
+   * It returns an absolute coordinate rather than a cell count, and that difference
+   * is the bug this function used to carry: the landing was built as
+   * `layerBottom + cellCount`, which is the copy's Y only while the template sits on
+   * the grid the table claims. Measuring from the block that was actually read cannot
+   * drift — the copy moves that block by `toY - sourceY`, and nothing else.
    */
-  function floorLocalYAt(baseX, baseY, baseZ, localX, localZ) {
+  function floorBlockYAt(baseX, baseY, baseZ, localX, localZ) {
     for (let cell = 0; cell < DUNGEON_CONFIG.floorProbeMaxCells; cell += 1) {
-      const name = readCell(baseX + localX, baseY + cell, baseZ + localZ);
+      const y = baseY + cell;
+      const name = readCell(baseX + localX, y, baseZ + localZ);
       // `null` is "the chunk is not sent", not "there is no floor": a room whose
       // columns are still loading must not be read as a room without a floor.
       if (name === null) return null;
       if (name === "Air" || name === DUNGEON_CONFIG.solidBlock) continue;
-      return cell;
+      return y;
     }
     return null;
   }
@@ -370,43 +377,42 @@ export function createLoader({ api, log }) {
   }
 
   /**
-   * Where a player lands in the entrance room.
+   * Where a player lands in the entrance room, read **in the room that was copied**.
    *
-   * **The column is read in the template, the position is written in the
-   * destination.** The copy preserves the room's vertical layout, so a cell that is
-   * walkable at local `(x, z, y)` in the template is walkable at the same local
-   * coordinates in the destination — and reading the destination instead would read
-   * a chunk that has not been copied yet, which is a column of Air.
+   * The height used to be computed from the template and then trusted: the landing was
+   * `originBottom + floorCell`, and the check that followed read the block under that
+   * same computed position. A landing that was wrong was therefore the coordinate the
+   * copy was checked at, and a wrong answer confirmed itself — which is how a player
+   * ends up inside the floor with no message.
    *
-   * The height therefore comes from **the room that was actually copied into the
-   * entrance chunk**, never from the first template in the list: `templateFor` draws
-   * a room per chunk, so the entrance may be any room of the catalogue, and a floor
-   * height read from another one puts the player inside the floor. That is exactly
-   * the bug this replaces — the first room reads 2, the entrance's room reads 7, and
-   * the player spawns five blocks too low.
+   * What this does instead is the only thing a copy allows: the copy keeps the room's
+   * local layout, so the floor of the destination is the floor of the template read
+   * **at the destination's own chunk** — `origin.x, origin.y, origin.z`, the chunk the
+   * entrance was copied into. Reading the template's own chunk would be reading a
+   * different block whenever the template is not built where its `src` says, which is
+   * the one thing about the tables a human can get wrong.
    *
    * Position: drawn at random inside `landingMargin`, which keeps it away from the
-   * room's own walls. A pillar, a step or a low ceiling inside the margin make the
-   * draw fail — the engine checks the two cells a body needs and draws again, so a
-   * player never appears inside a wall. After `landingDraws`, the middle column is
-   * used: it is the one place a room is built around.
+   * room's own walls. A pillar, a step or a low ceiling inside the margin make the draw
+   * fail — the engine checks the two cells a body needs and draws again. After
+   * `landingDraws`, the middle column is used: the one place a room is built around.
    *
-   * `null` means the entrance room cannot be read at all: the level cannot be built,
-   * and the caller says so instead of dropping the player into the void.
+   * `null` means the destination cannot be read at all: the level cannot be built, and
+   * the caller says so instead of dropping the player into the void.
    */
   function landingPosition(difficulty, entryId) {
     const level = levelState(difficulty, entryId);
     const origin = level.origin;
     if (!origin) return null;
-    const template = level.entrance || templateAt(level, origin.x, origin.z);
+    // The room is **known**, not drawn again: `placeEntrance` records the template it
+    // copied, and drawing here could name a room that is not the one at that chunk.
+    const template = level.entrance;
     if (!template) return null;
 
-    const sourceX = Math.floor(template.src[0] / SIZE) * SIZE;
-    const sourceY = Math.floor(template.src[1] / SIZE) * SIZE;
-    const sourceZ = Math.floor(template.src[2] / SIZE) * SIZE;
-    const toX = origin.x * SIZE;
-    const toY = floorOfLayer(origin.y);
-    const toZ = origin.z * SIZE;
+    // The floor is read where the copy put the room: this chunk, this layer.
+    const baseX = origin.x * SIZE;
+    const baseY = floorOfLayer(origin.y);
+    const baseZ = origin.z * SIZE;
     const [centreX, centreZ] = DUNGEON_CONFIG.probeLocalXZ;
     const margin = DUNGEON_CONFIG.landingMargin;
     const span = SIZE - margin * 2;
@@ -415,14 +421,14 @@ export function createLoader({ api, log }) {
     // repeating one cell for ever.
     if (level.landings.size >= span * span) level.landings.clear();
 
-    /** The landing for a column, or null when the room has no room to stand there. */
+    /** The landing for a column, or null when the copied room has no room to stand there. */
     const landingAt = (localX, localZ) => {
-      const floorY = floorLocalYAt(sourceX, sourceY, sourceZ, localX, localZ);
+      const floorY = floorBlockYAt(baseX, baseY, baseZ, localX, localZ);
       if (floorY === null) return null;
       for (let up = 1; up <= DUNGEON_CONFIG.landingFreeCells; up += 1) {
-        if (!isFreeCell(sourceX + localX, sourceY + floorY + up, sourceZ + localZ)) return null;
+        if (!isFreeCell(baseX + localX, floorY + up, baseZ + localZ)) return null;
       }
-      return [toX + localX + 0.5, toY + floorY + DUNGEON_CONFIG.spawnAboveFloor, toZ + localZ + 0.5];
+      return [baseX + localX + 0.5, floorY + DUNGEON_CONFIG.spawnAboveFloor, baseZ + localZ + 0.5];
     };
 
     for (let draw = 0; draw < DUNGEON_CONFIG.landingDraws; draw += 1) {
@@ -444,16 +450,16 @@ export function createLoader({ api, log }) {
     // Every draw hit a wall, a pillar or the pad — a room built of pillars, which is
     // not what a room is for. Rather than refuse the level, put the player at the
     // room's own centre: it is the cell a room is built around, and if it is blocked
-    // the room is not a room. The two cells above are then not checked, which is the
-    // only place in this engine where the answer is "best effort" — and the player
-    // sees it in the message only if there is no floor at all.
-    const middleFloor = floorLocalYAt(sourceX, sourceY, sourceZ, centreX, centreZ);
+    // by stone the room is not a room. The two cells above are then not checked, which
+    // is the only place in this engine where the answer is "best effort" — and the
+    // player sees it in the message only if there is no floor at all.
+    const middleFloor = floorBlockYAt(baseX, baseY, baseZ, centreX, centreZ);
     if (middleFloor === null) return null;
     level.landings.add(`${centreX},${centreZ}`);
     return [
-      toX + centreX + 0.5,
-      toY + middleFloor + DUNGEON_CONFIG.spawnAboveFloor,
-      toZ + centreZ + 0.5,
+      baseX + centreX + 0.5,
+      middleFloor + DUNGEON_CONFIG.spawnAboveFloor,
+      baseZ + centreZ + 0.5,
     ];
   }
 
@@ -585,7 +591,11 @@ export function createLoader({ api, log }) {
     const level = levelState(difficulty, entryId);
     const origin = level.origin;
     if (!origin) return null;
+    // The fallback only exists for the case where `templateAt` cannot answer — an
+    // empty usable list is handled by the caller — and it is recorded like any other,
+    // so `landingPosition` reads the room that is really in the chunk.
     const template = templateAt(level, origin.x, origin.z)
+      || level.entrance
       || usableTemplates(level)[0];
     if (!template) return null;
     // Which room ended up in the entrance chunk: the landing reads its floor height,
@@ -734,7 +744,7 @@ export function createLoader({ api, log }) {
     if (info.occupied) {
       return "The entrance chunk already holds a room, so nothing was copied into it.";
     }
-    if (info.floorLocalY === null) {
+    if (info.floorBlockY === null) {
       return "No floor could be read in the room template: /dbg templates.";
     }
     return `The copy did not land: Bedrock ${info.bottomName} / ${info.topName} at the destination.`;
@@ -836,17 +846,18 @@ export function createLoader({ api, log }) {
       templateIndex: template ? template.index : null,
       templateChunk: template ? template.chunk : null,
       templateSource: template ? readCell(template.src[0], template.src[1], template.src[2]) : null,
-      // The floor of the room the entrance chunk got, in its own middle column: the
-      // height the landing is drawn from, and the number a builder checks against.
-      floorLocalY: template
-        ? floorLocalYAt(
-          Math.floor(template.src[0] / SIZE) * SIZE,
-          Math.floor(template.src[1] / SIZE) * SIZE,
-          Math.floor(template.src[2] / SIZE) * SIZE,
+      // The **world Y** of the floor block of the entrance chunk, in its own middle
+      // column: the number the landing is drawn from, read where the landing is read.
+      // A world coordinate, in the destination, like the copy it describes.
+      floorBlockY: chunkX === null
+        ? null
+        : floorBlockYAt(
+          chunkX * SIZE,
+          chunkY * SIZE,
+          chunkZ * SIZE,
           DUNGEON_CONFIG.probeLocalXZ[0],
           DUNGEON_CONFIG.probeLocalXZ[1],
-        )
-        : null,
+        ),
       disabled: level.disabled.size,
       failures: level.failures,
     };
@@ -884,7 +895,7 @@ export function createLoader({ api, log }) {
   return {
     levelState,
     landingPosition,
-    floorLocalYAt,
+    floorBlockYAt,
     isPlaced,
     probeChunk,
     claimOrigin,

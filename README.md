@@ -121,7 +121,7 @@ Tous les textes visibles par les joueurs sont en anglais.
 - **Une salle est reconnue par son Bedrock**, pas par un compteur : le tick suivant la copie, la sonde relit la destination et c'est le monde qui confirme. `/dbg mem` sépare les salles vues (`rooms`), celles en vol (`in flight`) et les chunks en cours de chargement.
 - **Entrée.** Demande des modèles, téléportation au centre du chunk d'entrée, `chunkLoadTicks: 2`, copie de la salle d'entrée (si elle n'y est pas déjà), tirage de l'atterrissage, puis le joueur y est posé. La gravité est coupée pendant ces ticks, ce qui remplace la boîte de murs de l'ancien moteur. Un sol qui ne vient pas est réessayé `entryMaxTicks` fois, puis c'est un message — jamais un joueur dans le vide.
 - **Un donjon par entrée, à une place tirée au hasard dans les trois directions.** Chaque entrée tire `x` et `z` en chunks dans `-3125..3124` (**±100 000 blocs**) et `y` dans `32..3124` (**blocs 1 000 à 100 000**, `spawnChunkYMin/Max`), à au moins `spawnSeparation: 20 000` blocs de toute autre entrée vivante dans **les trois directions** (`spawnDraws: 24` essais, la plus éloignée l'emporte). Quitter libère la place. Deux joueurs ne peuvent donc pas se croiser, et rien n'est écrit dans les chunks : c'est le jeu qui vide la carte quand le propriétaire active le réglage. `/dbg` affiche l'origine `x,y,z`, `/dbg mem` celle de chaque donjon.
-- **Atterrissage tiré au hasard.** Chaque entrée donne une colonne différente, à `landingMargin` cellules des murs, avec la hauteur du sol **de la salle qui a réellement été copiée** — pas celle du premier modèle de la liste. Les deux cases au-dessus doivent être vides, sinon un autre tirage ; après `landingDraws`, le centre de la salle. Un joueur ne peut donc pas apparaître dans un mur.
+- **Atterrissage lu dans la salle copiée, et tiré au hasard.** La salle d'entrée est copiée d'abord ; ensuite le moteur lit le sol **dans le chunk de destination** et pose le joueur dessus — la hauteur est la coordonnée absolue du bloc trouvé, jamais « bas de couche + n », qui se trompe dès qu'un modèle n'est pas construit là où sa table le dit. La colonne est tirée à `landingMargin` cellules des murs, les deux cases au-dessus doivent être vides (sinon un autre tirage), et après `landingDraws` c'est le centre. Le joueur reçoit `Landed at y … · floor block at y …`, et le bloc sous ses pieds est relu après la téléportation : un échec est un message, pas un joueur dans le sol.
 
 ## Sources et version compacte
 
@@ -140,7 +140,7 @@ src/worldCode.js           lobby, pads, /dbg
 - `npm run build` régénère le fichier compact.
 - `npm run watch` le régénère à chaque sauvegarde dans `src/`.
 - `npm run check` vérifie que le bundle est à jour, valide les syntaxes, et refuse un bundle où `copyChunk`, `createShopItem` ou la table des modèles ont disparu au minification.
-- `npm test` lance les 75 tests : moteur, configuration, et le bundle réel exécuté dans un `vm` contre un faux serveur qui applique les règles de Bloxd.
+- `npm test` lance les 76 tests : moteur, configuration, et le bundle réel exécuté dans un `vm` contre un faux serveur qui applique les règles de Bloxd.
 
 Le workflow GitHub vérifie la version générée sur les Pull Requests et resynchronise `world-code/` après un merge dans `main`.
 
