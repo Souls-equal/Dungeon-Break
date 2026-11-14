@@ -273,7 +273,7 @@ function runDebugCommand(playerId, verb) {
       + ` · ${report.entrance.loaded ? "loaded" : "NOT loaded"}`
       + ` · ${report.entrance.occupied ? "a room is there" : "empty"}`
       + ` · Bedrock ${report.entrance.bottomName || "unreadable"} / ${report.entrance.topName || "unreadable"}`,
-    `[dbg] template #${report.entrance.templateIndex === null ? "-" : report.entrance.templateIndex}`
+    `[dbg] room #${report.entrance.templateIndex === null ? "-" : report.entrance.templateIndex}`
       + ` · ${report.entrance.templateSource || "unreadable"}`
       + ` · floor local y ${report.entrance.floorLocalY === null ? "unknown" : report.entrance.floorLocalY}`
       + ` · failed ${report.entrance.failures}`,

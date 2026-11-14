@@ -103,7 +103,8 @@ Tous les textes visibles par les joueurs sont en anglais.
 - **Un scan toutes les 4 ticks**, borné à 8 nouvelles salles par scan. Un joueur immobile dont les salles sont faites ne coûte aucune lecture.
 - **Rien n'est écrit dans un chunk.** Le moteur ne connaît que `copyChunk` et des lectures : c'est ce qui rend les salles sûres à construire à la main.
 - **Une salle est reconnue par son Bedrock**, pas par un compteur : le tick suivant la copie, la sonde relit la destination et c'est le monde qui confirme. `/dbg mem` sépare les salles vues (`rooms`), celles en vol (`in flight`) et les chunks en cours de chargement.
-- **Entrée.** Demande des modèles, téléportation dans le chunk vide, `chunkLoadTicks: 2`, copie de la salle d'entrée (si elle n'y est pas déjà), relecture du sol, puis le joueur est posé deux blocs au-dessus. La gravité est coupée pendant ces ticks, ce qui remplace la boîte de murs de l'ancien moteur. Un sol qui ne vient pas est réessayé `entryMaxTicks` fois, puis c'est un message — jamais un joueur dans le vide.
+- **Entrée.** Demande des modèles, téléportation au centre du chunk d'entrée, `chunkLoadTicks: 2`, copie de la salle d'entrée (si elle n'y est pas déjà), tirage de l'atterrissage, puis le joueur y est posé. La gravité est coupée pendant ces ticks, ce qui remplace la boîte de murs de l'ancien moteur. Un sol qui ne vient pas est réessayé `entryMaxTicks` fois, puis c'est un message — jamais un joueur dans le vide.
+- **Atterrissage tiré au hasard.** Chaque entrée donne une colonne différente (deux joueurs sur la même plaque ne se croisent pas), à `landingMargin` cellules des murs, avec la hauteur du sol **de la salle qui a réellement été copiée** — pas celle du premier modèle de la liste. Les deux cases au-dessus doivent être vides, sinon un autre tirage ; après `landingDraws`, le centre de la salle. Un joueur ne peut donc pas apparaître dans un mur.
 
 ## Sources et version compacte
 

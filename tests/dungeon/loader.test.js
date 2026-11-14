@@ -456,32 +456,82 @@ test("the queue and the plan stay bounded as a player walks away", () => {
   assert.ok(level.queue.length <= DUNGEON_CONFIG.maxQueued, "the queue grew past its ceiling");
 });
 
-test("the floor height is read from the template, not configured", () => {
-  for (const floorY of [1, 2, 6]) {
+test("the landing height comes from the entrance room, not from another room", () => {
+  // The same room, built twice at two heights: the entrance chunk takes the higher
+  // one, which is the case that mattered — the floor read from the catalogue's first
+  // room puts the player three cells inside this one.
+  for (const floorY of [2, 5]) {
     const server = createServer();
     server.addTemplate(TEMPLATE_A, { floorY });
-    const { loader } = createTestLoader(server, ROOMS);
+    const { loader, level } = createTestLoader(server, ROOMS);
     loader.warmTemplates(VERY_EASY);
     for (let tick = 0; tick < 5; tick += 1) server.advance();
-    assert.equal(loader.findFloorLocalY(loader.levelState(VERY_EASY)), floorY,
-      `a template with its floor at local y ${floorY} is not read correctly`);
+    loader.placeEntrance(VERY_EASY);
+    // Whatever room the draw chose, the landing reads that room's floor.
+    assert.equal(level.entrance.index, level.templates[0].index);
+    const landing = loader.landingPosition(VERY_EASY);
+    assert.equal(landing[1], floorOfLayer(VERY_EASY) + floorY + DUNGEON_CONFIG.spawnAboveFloor,
+      `the landing is not above the floor (local y ${floorY}) of the room that was copied`);
   }
 });
 
-test("the landing position is the middle of the origin room, above its floor", () => {
+test("a landing is drawn inside the room, away from the walls", () => {
+  const server = createServer();
+  server.addTemplate(TEMPLATE_A, { floorY: 2 });
+  const { loader, level } = createTestLoader(server, ROOMS);
+  loader.warmTemplates(VERY_EASY);
+  server.api.setPosition("player", [16, floorOfLayer(VERY_EASY), 16]);
+  for (let tick = 0; tick < 5; tick += 1) server.advance();
+  loader.placeEntrance(VERY_EASY);
+
+  const margin = DUNGEON_CONFIG.landingMargin;
+  const seen = new Set();
+  for (let draw = 0; draw < 20; draw += 1) {
+    const landing = loader.landingPosition(VERY_EASY);
+    assert.equal(landing[1], floorOfLayer(VERY_EASY) + 2 + DUNGEON_CONFIG.spawnAboveFloor,
+      "the drawn landing is not above the room's floor");
+    const localX = Math.floor(landing[0]) - DUNGEON_CONFIG.originChunkX * SIZE;
+    const localZ = Math.floor(landing[2]) - DUNGEON_CONFIG.originChunkZ * SIZE;
+    // The room's walls are its first and last cells: a position there is a position
+    // inside a wall.
+    assert.ok(localX >= margin && localX < SIZE - margin, `x ${localX} is against a wall`);
+    assert.ok(localZ >= margin && localZ < SIZE - margin, `z ${localZ} is against a wall`);
+    assert.equal(localX === 16 && localZ === 16, false, "the player was put on the pad");
+    // Two players never share a column: the level gives each entry its own.
+    assert.equal(seen.has(`${localX},${localZ}`), false, "a landing column was handed out twice");
+    seen.add(`${localX},${localZ}`);
+  }
+  assert.ok(seen.size > 1, "the landing is fixed instead of drawn");
+  assert.equal(level.landings.size, seen.size);
+});
+
+test("a drawn landing never lands in a pillar", () => {
   const server = createServer();
   server.addTemplate(TEMPLATE_A, { floorY: 2 });
   const { loader } = createTestLoader(server, ROOMS);
   loader.warmTemplates(VERY_EASY);
+  server.api.setPosition("player", [16, floorOfLayer(VERY_EASY), 16]);
   for (let tick = 0; tick < 5; tick += 1) server.advance();
+  loader.placeEntrance(VERY_EASY);
 
+  // A room full of pillars: the two cells a body needs are filled everywhere in the
+  // room the entrance chunk got. The engine must fall back to the middle column
+  // rather than hand out a column inside stone. This is the "spawn in a wall" case.
+  for (let localX = 0; localX < SIZE; localX += 1) {
+    for (let localZ = 0; localZ < SIZE; localZ += 1) {
+      for (let up = 1; up <= 2; up += 1) {
+        server.templateBlocks.set(
+          `${TEMPLATE_A[0] + localX},${TEMPLATE_A[1] + 2 + up},${TEMPLATE_A[2] + localZ}`,
+          "Stone",
+        );
+      }
+    }
+  }
   const landing = loader.landingPosition(VERY_EASY);
-  assert.equal(landing[0], 16.5);
-  assert.equal(landing[2], 20.5);
-  assert.equal(landing[1], floorOfLayer(VERY_EASY) + 2 + DUNGEON_CONFIG.spawnAboveFloor);
-  // Two blocks above the floor block is where the feet land; one block less and
-  // the player is inside the floor.
-  assert.equal(landing[1] - (floorOfLayer(VERY_EASY) + 2), 2);
+  const originX = DUNGEON_CONFIG.originChunkX * SIZE;
+  const originZ = DUNGEON_CONFIG.originChunkZ * SIZE;
+  assert.equal(landing[0], originX + 16.5, "the fallback is not the room's middle column");
+  assert.equal(landing[2], originZ + 16.5);
 });
 
 test("without a readable template there is no landing position, and no invention", () => {

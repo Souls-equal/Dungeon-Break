@@ -69,8 +69,10 @@ export function createLoader({ api, log }) {
         placed: 0,
         failures: 0,
         ticksSinceScan: DUNGEON_CONFIG.scanTicks,
-        /** Chunk-local Y of the templates' floor, found once per level. */
-        floorLocalY: null,
+        /** The template the entrance chunk got, copied once. */
+        entrance: null,
+        /** Landing positions already handed out, "x,z", for this level's life. */
+        landings: new Set(),
         /** Levels the shipped templates were already requested for. */
         warmed: false,
         warnedMissing: false,
@@ -184,58 +186,111 @@ export function createLoader({ api, log }) {
   }
 
   /**
-   * Chunk-local Y of a room's floor, found by walking up the middle column of a
-   * template.
+   * Chunk-local Y of the first block a player can stand in, in one column.
    *
-   * Any template may answer: a room whose chunk is not sent yet costs a `null` read
-   * and the next one is tried, instead of the whole level being refused because the
-   * first coordinate in the list is the one that happens to be unreadable. The floor
-   * sits at the same height in every room a builder makes — it is the room's own
-   * build — so the first readable one is the answer, and it is cached.
-   *
-   * `null` means no template answered: the level cannot be built, and the caller
-   * says so with a coordinate to check rather than dropping the player into the void.
+   * Walked from the bottom of the chunk upward, taking the first cell that is
+   * neither Air nor Bedrock — the room's own floor, and not the shell under it.
+   * `null` means the column is not readable, or has nothing to stand on.
    */
-  function findFloorLocalY(level) {
-    if (level.floorLocalY !== null) return level.floorLocalY;
-    const templates = usableTemplates(level);
-    for (const probe of templates) {
-      const baseY = Math.floor(probe.src[1] / SIZE) * SIZE;
-      const baseX = Math.floor(probe.src[0] / SIZE) * SIZE;
-      const baseZ = Math.floor(probe.src[2] / SIZE) * SIZE;
-      // The middle column: that is where every room has its floor, and it is the
-      // column the player lands on.
-      const [localX, localZ] = DUNGEON_CONFIG.probeLocalXZ;
-      for (let cell = 0; cell < DUNGEON_CONFIG.floorProbeMaxCells; cell += 1) {
-        const name = readCell(baseX + localX, baseY + cell, baseZ + localZ);
-        if (name === null) break;
-        // Bedrock is the room's own shell, not the floor a player stands on: every
-        // room has one under the floor and one over the ceiling, so skipping it is
-        // what makes this a floor probe instead of a "first solid block" probe.
-        if (name === "Air" || name === DUNGEON_CONFIG.solidBlock) continue;
-        level.floorLocalY = cell;
-        return cell;
-      }
+  function floorLocalYAt(baseX, baseY, baseZ, localX, localZ) {
+    for (let cell = 0; cell < DUNGEON_CONFIG.floorProbeMaxCells; cell += 1) {
+      const name = readCell(baseX + localX, baseY + cell, baseZ + localZ);
+      if (name === null) return null;
+      if (name === "Air" || name === DUNGEON_CONFIG.solidBlock) continue;
+      return cell;
     }
     return null;
+  }
+
+  /** Is this cell something a body can occupy? Unknown cells count as free. */
+  function isFreeCell(x, y, z) {
+    const name = readCell(x, y, z);
+    return name === null || name === "Air";
   }
 
   /**
    * Where a player lands in the entrance room.
    *
-   * `null` when no template could be read: without one there is no floor, and a
-   * position invented from a configuration value drops the player into the void.
-   * The service turns that `null` into a message the player can act on.
+   * **The column is read in the template, the position is written in the
+   * destination.** The copy preserves the room's vertical layout, so a cell that is
+   * walkable at local `(x, z, y)` in the template is walkable at the same local
+   * coordinates in the destination — and reading the destination instead would read
+   * a chunk that has not been copied yet, which is a column of Air.
+   *
+   * The height therefore comes from **the room that was actually copied into the
+   * entrance chunk**, never from the first template in the list: `templateFor` draws
+   * a room per chunk, so the entrance may be any room of the catalogue, and a floor
+   * height read from another one puts the player inside the floor. That is exactly
+   * the bug this replaces — the first room reads 2, the entrance's room reads 7, and
+   * the player spawns five blocks too low.
+   *
+   * Position: drawn at random inside `landingMargin`, which keeps it away from the
+   * room's own walls. A pillar, a step or a low ceiling inside the margin make the
+   * draw fail — the engine checks the two cells a body needs and draws again, so a
+   * player never appears inside a wall. After `landingDraws`, the middle column is
+   * used: it is the one place a room is built around.
+   *
+   * `null` means the entrance room cannot be read at all: the level cannot be built,
+   * and the caller says so instead of dropping the player into the void.
    */
   function landingPosition(difficulty) {
     const level = levelState(difficulty);
-    const floorLocalY = findFloorLocalY(level);
-    if (floorLocalY === null) return null;
-    const [localX, localZ] = DUNGEON_CONFIG.landingLocalXZ;
+    const template = level.entrance || templateAt(level, DUNGEON_CONFIG.originChunkX, DUNGEON_CONFIG.originChunkZ);
+    if (!template) return null;
+
+    const sourceX = Math.floor(template.src[0] / SIZE) * SIZE;
+    const sourceY = Math.floor(template.src[1] / SIZE) * SIZE;
+    const sourceZ = Math.floor(template.src[2] / SIZE) * SIZE;
+    const toX = DUNGEON_CONFIG.originChunkX * SIZE;
+    const toY = floorOfLayer(difficulty);
+    const toZ = DUNGEON_CONFIG.originChunkZ * SIZE;
+    const [centreX, centreZ] = DUNGEON_CONFIG.probeLocalXZ;
+    const margin = DUNGEON_CONFIG.landingMargin;
+    const span = SIZE - margin * 2;
+    // A level that has handed out every column it draws from — hundreds of entries,
+    // or a player who keeps falling out of the world — starts over rather than
+    // repeating one cell for ever.
+    if (level.landings.size >= span * span) level.landings.clear();
+
+    /** The landing for a column, or null when the room has no room to stand there. */
+    const landingAt = (localX, localZ) => {
+      const floorY = floorLocalYAt(sourceX, sourceY, sourceZ, localX, localZ);
+      if (floorY === null) return null;
+      for (let up = 1; up <= DUNGEON_CONFIG.landingFreeCells; up += 1) {
+        if (!isFreeCell(sourceX + localX, sourceY + floorY + up, sourceZ + localZ)) return null;
+      }
+      return [toX + localX + 0.5, toY + floorY + DUNGEON_CONFIG.spawnAboveFloor, toZ + localZ + 0.5];
+    };
+
+    for (let draw = 0; draw < DUNGEON_CONFIG.landingDraws; draw += 1) {
+      const localX = margin + Math.floor(Math.random() * span);
+      const localZ = margin + Math.floor(Math.random() * span);
+      // The pads live at the centre: never land on one, or the player is sent to the
+      // next difficulty before they have seen the room.
+      if (localX === centreX && localZ === centreZ) continue;
+      const key = `${localX},${localZ}`;
+      // A different column per player and per entry: two players who take the same
+      // pad must not appear on top of each other.
+      if (level.landings.has(key)) continue;
+      const landing = landingAt(localX, localZ);
+      if (!landing) continue;
+      level.landings.add(key);
+      return landing;
+    }
+
+    // Every draw hit a wall, a pillar or the pad — a room built of pillars, which is
+    // not what a room is for. Rather than refuse the level, put the player at the
+    // room's own centre: it is the cell a room is built around, and if it is blocked
+    // the room is not a room. The two cells above are then not checked, which is the
+    // only place in this engine where the answer is "best effort" — and the player
+    // sees it in the message only if there is no floor at all.
+    const middleFloor = floorLocalYAt(sourceX, sourceY, sourceZ, centreX, centreZ);
+    if (middleFloor === null) return null;
+    level.landings.add(`${centreX},${centreZ}`);
     return [
-      DUNGEON_CONFIG.originChunkX * SIZE + localX + 0.5,
-      floorOfLayer(difficulty) + floorLocalY + DUNGEON_CONFIG.spawnAboveFloor,
-      DUNGEON_CONFIG.originChunkZ * SIZE + localZ + DUNGEON_CONFIG.landingShiftZ + 0.5,
+      toX + centreX + 0.5,
+      toY + middleFloor + DUNGEON_CONFIG.spawnAboveFloor,
+      toZ + centreZ + 0.5,
     ];
   }
 
@@ -368,6 +423,9 @@ export function createLoader({ api, log }) {
     const template = templateAt(level, DUNGEON_CONFIG.originChunkX, DUNGEON_CONFIG.originChunkZ)
       || usableTemplates(level)[0];
     if (!template) return null;
+    // Which room ended up in the entrance chunk: the landing reads its floor height,
+    // and it is the draw's choice, not the catalogue's first entry.
+    level.entrance = template;
     const originX = DUNGEON_CONFIG.originChunkX;
     const originZ = DUNGEON_CONFIG.originChunkZ;
     const key = chunkKey(originX, originZ);
@@ -602,7 +660,7 @@ export function createLoader({ api, log }) {
     const probe = probeChunk(chunkX, chunkY, chunkZ);
     const bottom = readCell(chunkX * SIZE + localX, chunkY * SIZE, chunkZ * SIZE + localZ);
     const top = readCell(chunkX * SIZE + localX, chunkY * SIZE + SIZE - 1, chunkZ * SIZE + localZ);
-    const template = usableTemplates(level)[0];
+    const template = level.entrance || usableTemplates(level)[0];
     return {
       chunkX,
       chunkY,
@@ -614,7 +672,17 @@ export function createLoader({ api, log }) {
       templateIndex: template ? template.index : null,
       templateChunk: template ? template.chunk : null,
       templateSource: template ? readCell(template.src[0], template.src[1], template.src[2]) : null,
-      floorLocalY: level.floorLocalY,
+      // The floor of the room the entrance chunk got, in its own middle column: the
+      // height the landing is drawn from, and the number a builder checks against.
+      floorLocalY: template
+        ? floorLocalYAt(
+          Math.floor(template.src[0] / SIZE) * SIZE,
+          Math.floor(template.src[1] / SIZE) * SIZE,
+          Math.floor(template.src[2] / SIZE) * SIZE,
+          DUNGEON_CONFIG.probeLocalXZ[0],
+          DUNGEON_CONFIG.probeLocalXZ[1],
+        )
+        : null,
       disabled: level.disabled.size,
       failures: level.failures,
     };
@@ -652,7 +720,7 @@ export function createLoader({ api, log }) {
   return {
     levelState,
     landingPosition,
-    findFloorLocalY,
+    floorLocalYAt,
     isPlaced,
     probeChunk,
     explainEntrance,

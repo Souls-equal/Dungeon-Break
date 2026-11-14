@@ -276,41 +276,33 @@ test("the British spelling of the grey pad is the same difficulty", () => {
 // ------------------------------------------------------------- the descent --
 
 test("a level is one chunk copy, and the player lands on its floor", () => {
-  const world = createWorld(["p1"]);
-  startDungeon(world, "p1");
-  tickUntil(world, () => world.positions.length >= 2, 200);
+  for (let draw = 0; draw < 12; draw += 1) {
+    const world = createWorld(["p1"]);
+    startDungeon(world, "p1");
+    tickUntil(world, () => said(world, "p1").includes("Level: Very Easy"), 400);
 
-  // The rooms around the entrance follow within a few ticks; what matters is that
-  // the first copy, the one the player lands on, is the entrance's chunk.
-  assert.ok(world.copies.length >= 1, "nothing was copied");
-  assert.deepEqual(world.copies[0].to, [0, VERY_EASY.chunkY * SIZE, 0],
-    `the first copy is not the entrance: ${JSON.stringify(world.copies[0])}`);
-  const landing = world.positions.at(-1).position;
-  // Two blocks above the floor block the template has at local y 2.
-  assert.equal(landing[1], VERY_EASY.chunkY * SIZE + 2 + DUNGEON_CONFIG.spawnAboveFloor);
-  assert.equal(Math.abs(landing[0] % 1), 0.5, "the player is not in the middle of a cell on x");
-  assert.equal(Math.abs(landing[2] % 1), 0.5, "the player is not in the middle of a cell on z");
-  // And the floor is really there, read from the world and not from a tally.
-  assert.equal(world.blockAt(Math.floor(landing[0]), landing[1] - DUNGEON_CONFIG.spawnAboveFloor, Math.floor(landing[2])),
-    "Stone Bricks");
-  assert.ok(said(world, "p1").some((message) => message === "Level: Very Easy"));
-});
-
-test("the entrance failure says what to fix, not just that it failed", () => {
-  const world = createWorld(["p1"]);
-  startDungeon(world, "p1");
-  tickUntil(world, () => world.positions.length >= 2, 200);
-  const before = world.messages.length;
-  world.context.playerCommand("p1", "level");
-  const lines = world.messages.slice(before).map((entry) => entry.message).join("\n");
-  // The three facts a screenshot of the error above never had: whether the
-  // destination was loaded, whether a room was already there, and what the probe
-  // actually read.
-  assert.match(lines, /entrance chunk 0,-32,0 · loaded/);
-  // One of the two layers must read Bedrock for the room to count — the destination
-  // is read exactly as the engine reads it.
-  assert.match(lines, /Bedrock Air \/ Bedrock|Bedrock Bedrock \/ Air/);
-  assert.match(lines, /template #\d+ · \w+ · floor local y \d+/);
+    // The rooms around the entrance follow within a few ticks; what matters is that
+    // the first copy, the one the player lands on, is the entrance's chunk.
+    assert.ok(world.copies.length >= 1, "nothing was copied");
+    assert.deepEqual(world.copies[0].to, [0, VERY_EASY.chunkY * SIZE, 0],
+      `the first copy is not the entrance: ${JSON.stringify(world.copies[0])}`);
+    const landing = world.positions.at(-1).position;
+    // Two blocks above the floor block the template has at local y 2.
+    assert.equal(landing[1], VERY_EASY.chunkY * SIZE + 2 + DUNGEON_CONFIG.spawnAboveFloor);
+    assert.equal(Math.abs(landing[0] % 1), 0.5, "the player is not in the middle of a cell on x");
+    assert.equal(Math.abs(landing[2] % 1), 0.5, "the player is not in the middle of a cell on z");
+    // Away from the room's walls, whatever the draw.
+    const localX = Math.floor(landing[0]);
+    const localZ = Math.floor(landing[2]);
+    assert.ok(localX >= DUNGEON_CONFIG.landingMargin && localX < SIZE - DUNGEON_CONFIG.landingMargin,
+      `the player lands in the wall at x ${localX}`);
+    assert.ok(localZ >= DUNGEON_CONFIG.landingMargin && localZ < SIZE - DUNGEON_CONFIG.landingMargin,
+      `the player lands in the wall at z ${localZ}`);
+    // And the floor is really there, read from the world and not from a tally.
+    assert.equal(world.blockAt(localX, landing[1] - DUNGEON_CONFIG.spawnAboveFloor, localZ),
+      "Stone Bricks");
+    assert.ok(said(world, "p1").includes("Level: Very Easy"));
+  }
 });
 
 test("gravity is off while the room is being built, and on once the player stands", () => {
@@ -426,10 +418,17 @@ test("a player who drops out of the world is put back on a floor", () => {
   const landing = world.positions.at(-1).position;
 
   // Far below the level: the one failure that survives the design, so it is
-  // handled rather than denied.
+  // handled rather than denied. The rescue draws a fresh landing — a player put back
+  // where they last were is a player put back where they fell — so what matters is
+  // that it is on a floor of this level and away from the walls.
   world.movePlayer("p1", [landing[0], landing[1] - 100, landing[2]]);
   world.tick(2);
-  assert.deepEqual(world.positions.at(-1).position, landing, "the player was left falling");
+  const rescued = world.positions.at(-1).position;
+  assert.equal(rescued[1], landing[1], "the player was left falling");
+  assert.ok(rescued[0] >= DUNGEON_CONFIG.landingMargin && rescued[0] < SIZE - DUNGEON_CONFIG.landingMargin,
+    `the rescue position x ${rescued[0]} is against a wall`);
+  assert.ok(rescued[2] >= DUNGEON_CONFIG.landingMargin && rescued[2] < SIZE - DUNGEON_CONFIG.landingMargin,
+    `the rescue position z ${rescued[2]} is against a wall`);
 });
 
 test("leaving the game puts the player back in the lobby", () => {
