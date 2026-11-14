@@ -65,6 +65,22 @@ La hauteur du sol, elle, est lue et jamais configurée : le moteur remonte la co
 
 Le tirage est `hash(niveau, chunk) % nombre_de_salles`. Ajouter la 16ᵉ salle redistribue donc **toutes les salles des huit niveaux**. C'est accepté pendant la construction ; quand le monde vaudra la peine d'être conservé, on passera à un modulo fixe pour qu'une salle ajoutée plus tard ne déplace pas ce qui existe déjà.
 
+## Boutique : revenir au spawn
+
+Le spawn normal du jeu est désactivé dans ce monde ; c'est donc le code qui le fournit. Au chargement, le World Code crée une catégorie **Utilities** avec un seul objet, **Teleport to spawn** :
+
+| Champ | Valeur |
+| --- | --- |
+| Catégorie | `Utilities` |
+| Objet | `Teleport to spawn` |
+| Image | `Lime Concrete` |
+| Coût | `0` (gratuit, `canBuy: true`) |
+| Bouton | `Teleport` |
+
+Le clic est capté par `onPlayerBoughtShopItem`, qui fait **deux choses dans cet ordre** : téléporter en `[10, 21, 10]`, puis oublier le donjon du joueur. L'oubli est ce qui arrête la génération : le tick ne lit que les joueurs qui ont un donjon, donc la file, le plan et les copies s'arrêtent net, et la place est rendue. Un joueur au spawn n'est jamais un joueur avec un donjon — même s'il clique pendant les ticks de chargement de l'entrée.
+
+`npm run build` vérifie que `createShopItem` est bien dans le bundle : sans boutique, un joueur sorti d'un donjon n'aurait plus de retour.
+
 ## Commandes de debug
 
 | Commande | Effet |
@@ -123,8 +139,8 @@ src/worldCode.js           lobby, pads, /dbg
 - `npm ci` installe le compilateur de build.
 - `npm run build` régénère le fichier compact.
 - `npm run watch` le régénère à chaque sauvegarde dans `src/`.
-- `npm run check` vérifie que le bundle est à jour, valide les syntaxes, et refuse un bundle où `copyChunk` ou la table des modèles ont disparu au minification.
-- `npm test` lance les 71 tests : moteur, configuration, et le bundle réel exécuté dans un `vm` contre un faux serveur qui applique les règles de Bloxd.
+- `npm run check` vérifie que le bundle est à jour, valide les syntaxes, et refuse un bundle où `copyChunk`, `createShopItem` ou la table des modèles ont disparu au minification.
+- `npm test` lance les 75 tests : moteur, configuration, et le bundle réel exécuté dans un `vm` contre un faux serveur qui applique les règles de Bloxd.
 
 Le workflow GitHub vérifie la version générée sur les Pull Requests et resynchronise `world-code/` après un merge dans `main`.
 
@@ -137,6 +153,6 @@ Le workflow GitHub vérifie la version générée sur les Pull Requests et resyn
 
 ## Documentation Bloxd utilisée
 
-- [API Reference](https://bloxd.io/docs/api-reference) — `copyChunk`, `setBlock`, `getBlock`, `setPosition`, `setClientOptions`, `isNearInterrupt`
-- [Callbacks](https://bloxd.io/docs/callbacks) — `onBlockStandStart`, `onBlockStandStop`, `onPlayerJoin`, `onPlayerLeave`, `onRespawnRequest`, `tick`
+- [API Reference](https://bloxd.io/docs/api-reference) — `copyChunk`, `setBlock`, `getBlock`, `setPosition`, `setClientOptions`, `setClientOption`, `createShopItem`, `isNearInterrupt`
+- [Callbacks](https://bloxd.io/docs/callbacks) — `onBlockStandStart`, `onBlockStandStop`, `onPlayerBoughtShopItem`, `onPlayerJoin`, `onPlayerLeave`, `onRespawnRequest`, `tick`
 - [Client Options](https://bloxd.io/docs/client-options) — `gravityMultiplier`, `middleTextUpper`

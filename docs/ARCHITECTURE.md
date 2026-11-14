@@ -1,6 +1,6 @@
 # Architecture — génération par copies de chunks
 
-**Statut : livré.** 4 modules, 71 tests verts, bundle de 21 k caractères sur les 512 k autorisés.
+**Statut : livré.** 4 modules, 75 tests verts, bundle de 21 k caractères sur les 512 k autorisés.
 
 Ce document remplace l'architecture par ouvertures des Phases 0 à 4, supprimée avec son moteur. Il décrit ce qui existe, pas ce qui est prévu : toute divergence entre ce texte et le code est un défaut du texte.
 
@@ -118,6 +118,37 @@ La colonne est lue **dans le modèle**, pas dans la destination : au moment du t
 
 Rien n'est annoncé avant que le sol existe, et aucune plaque n'est posée : celle qui mène au niveau suivant est dans la salle.
 
+## 6bis. Sortir : le spawn est une boutique, et le donjon s'arrête là
+
+Le spawn normal du jeu est désactivé dans ce monde, et le propriétaire l'a confirmé : il n'y a
+pas de sol, rien que de l'air. Le retour au spawn est donc une chose que le code doit fournir,
+et c'est **un objet de boutique**.
+
+- Une catégorie **`Utilities`**, un objet `Teleport to spawn`, image `Lime Concrete`, coût `0`,
+  `canBuy: true`, bouton `Teleport`. Créé au chargement du World Code, et recréé dans
+  `onPlayerJoin` — un objet créé quand personne n'est connecté n'est pas toujours proposé au
+  premier arrivant, et recréer un objet existant le remplace (comportement documenté de
+  `createShopItem`).
+- `onPlayerBoughtShopItem` ne répond qu'à cette catégorie et à cet objet ; tout le reste est
+  laissé au jeu.
+- Le clic fait **deux choses, dans cet ordre** : `setPosition` vers `[10, 21, 10]`, puis
+  `stopBuilding`.
+
+**Pourquoi cet ordre, et pourquoi l'oubli est le vrai sujet.** Le tick ne parcourt que
+`playerDungeons` : c'est ce dictionnaire qui dit « ce joueur a un donjon ». Le supprimer arrête
+donc net le scan, la file, le plan et les copies de ce joueur, et `release` rend la place. Le
+téléport passe en premier pour que le dernier enregistrement contienne encore l'origine du
+donjon : un enregistrement qui contiendrait la position du lobby serait un tick de scan pointé
+sur le spawn — exactement la fuite que ce bouton ferme.
+
+**Et pendant les ticks de chargement de l'entrée ?** L'entrée est une chaîne de `scheduleTimeout`
+(2 ticks, puis 1 tick, puis `entryMaxTicks`). Chaque étape commence par « ce joueur a-t-il encore
+un donjon ? » et s'arrête sinon : un joueur qui clique sur la boutique au milieu de l'entrée est
+laissé au spawn, sans copie et sans message de niveau.
+
+Ce que la boutique **ne fait pas** : elle ne détruit rien dans le monde. Les salles restent où
+elles sont, et c'est le jeu qui vide la carte quand le propriétaire active son réglage.
+
 ## 7. Ce qui est lu et écrit dans le monde, et pourquoi
 
 | Opération | Quand | Ce qu'elle remplace |
@@ -180,11 +211,11 @@ C'est la réponse à un vrai rapport de bug : « The room could not be built » 
 
 ## 11. Tests
 
-`npm test` — 71 tests.
+`npm test` — 75 tests.
 
 - `tests/dungeon/config.test.js` — une difficulté est un ordre et ne porte **aucune** hauteur ; la plage verticale tirée commence au-dessus de `y = 0` et couvre bien 1 000 à 100 000 blocs ; un pad = une difficulté ; Hell est le dernier ; le tirage de salle est stable et étalé ; les huit niveaux tirent dans la même liste ; les salles d'un niveau passent avant les communes ; une salle malformée est ignorée sans casser le niveau ; **la conversion chunk → bloc, y compris sur les coordonnées négatives** ; les 15 salles livrées occupent 15 chunks distincts ; une salle ne porte aucune propriété.
 - `tests/dungeon/loader.test.js` — un état par entrée : chaque entrée tire sa propre place dans le carré configuré, deux entrées vivantes restent à `spawnSeparation` l'une de l'autre, une place n'est tirée qu'une fois, `newOrigin` en donne une autre, un départ la rend et ne laisse rien en mémoire, deux joueurs de la même difficulté ne partagent ni place ni plan ; et un faux serveur où **`copyChunk` depuis un chunk non chargé ne fait rien**, où une copie dans un chunk non envoyé est ignorée, et où **un `getBlock` de chunk non envoyé déclenche l'envoi, deux ticks plus tard** : une salle est une seule copie, la sonde distingue « pas envoyé » / « vide » / « salle déjà là », **et seul le Bedrock compte** : du terrain ordinaire à la même profondeur ne passe pas pour une salle, une salle du redémarrage précédent n'est pas recopiée, une copie est confirmée au tick suivant et jamais dans le sien, la file est bornée, une salle illisible est désactivée puis retirée de la file, **aucun bloc n'est écrit nulle part**, la hauteur de sol est lue et non configurée, un niveau vide ne coûte rien.
-- `tests/world-code.test.js` — le bundle réel, dans un contexte `vm`, sur un faux serveur qui compte chaque `setBlock` comme une violation : compte à rebours, entrée, atterrissage sur le sol, gravité coupée puis rendue, une plaque Concrete construite dans la salle qui mène au niveau suivant, ordre des copies, joueur qui tombe et qui est reposé, aucun bloc écrit par le code, `/dbg level` qui dit pourquoi une entrée a échoué, commandes `/dbg`.
+- `tests/world-code.test.js` — la boutique `Utilities` (créée, gratuite, avec une image), un clic qui ramène au spawn **et** arrête le donjon — plus aucune salle n'est copiée ensuite et `/dbg` ne voit plus de donjon —, un clic pendant l'entrée qui abandonne l'entrée au lieu de reposer le joueur, et un achat d'autre chose qui ne fait rien ; le bundle réel, dans un contexte `vm`, sur un faux serveur qui compte chaque `setBlock` comme une violation : compte à rebours, entrée, atterrissage sur le sol, gravité coupée puis rendue, une plaque Concrete construite dans la salle qui mène au niveau suivant, ordre des copies, joueur qui tombe et qui est reposé, aucun bloc écrit par le code, `/dbg level` qui dit pourquoi une entrée a échoué, commandes `/dbg`.
 
 Ce qui n'est **pas** testé, faute de pouvoir l'être hors du jeu : le délai exact au bout duquel un chunk lu devient écrivable — `chunkLoadTicks: 2` vient de la mesure faite **en jeu** par le propriétaire du projet, pas d'une simulation. Le coût d'une copie, lui, est connu : moins d'un tick.
 
