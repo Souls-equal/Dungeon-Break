@@ -3,14 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Procedural Bloxd.io dungeon game source and World Code build tools",
+  "description": "Chunk-copy procedural dungeon game source and World Code build tools for Bloxd.io",
   "scripts": {
     "build": "node tools/build-world-code.mjs",
     "watch": "node tools/build-world-code.mjs --watch",
-    "check": "node tools/build-world-code.mjs --check && node --check src/worldCode.js && node --check src/utils/scheduler.js && node --check src/dungeon/builder.js && node --check src/dungeon/worldBuilder.js && node --check src/dungeon/service.js && node --check world-code/worldCode.js && for f in src/dungeon/engine/*.js; do node --check \"$f\" || exit 1; done",
-    "test": "node --test",
-    "visualize": "node tools/visualize-dungeon.mjs",
-    "simulate": "node tools/simulate-players.mjs"
+    "check": "node tools/build-world-code.mjs --check && node --check src/worldCode.js && node --check src/utils/scheduler.js && node --check src/dungeon/config.js && node --check src/dungeon/templates.js && node --check src/dungeon/loader.js && node --check src/dungeon/service.js && node --check world-code/worldCode.js",
+    "test": "node --test"
   },
   "devDependencies": {
     "esbuild": "^0.25.0"

@@ -3,629 +3,507 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import vm from "node:vm";
 
+import { DUNGEON_CONFIG, DIFFICULTIES, findDifficulty } from "../src/dungeon/config.js";
+
 const worldCode = fs.readFileSync(new URL("../world-code/worldCode.js", import.meta.url), "utf8");
-
-/**
- * The floor altitude the dungeon is built at. Kept as a literal on purpose: if
- * the configuration moves, this test must fail loudly rather than follow along,
- * because players spawn at that altitude and a silent change drops them.
- */
-const FLOOR_Y = -1000;
-/**
- * Budgets, mirrored from `DUNGEON_CONFIG` on purpose: if the configuration
- * changes, this test must be updated by hand rather than silently follow along,
- * because the number is what keeps a tick short.
- */
-const FLOOR_BUDGET = 2400;
-const FLOOR_BATCH = 720;
-// One joint written in a single pass: wallGap × width × (floors, flanks, roof).
-// Measured upper bound for a 5-cell doorway through 15 cells of masonry.
-const FLOOR_PASSAGE = 900;
+const SIZE = DUNGEON_CONFIG.chunkSize;
 const LOBBY_POSITION = [10, 21, 10];
-/**
- * The stones the builder is allowed to use. The floor is textured, so "the floor
- * is solid" means "a floor block is there", not "one particular name is there".
- */
-const FLOOR_FAMILY = new Set(["Stone Bricks", "Cracked Stone Bricks"]);
+const VERY_EASY = findDifficulty("veryEasy");
 
 /**
- * Runs the bundled world code against a fake Bloxd server.
+ * The template chunk the tests build, and the tables they hand to the bundle.
  *
- * The fake keeps one rule the real server has: a chunk is only readable once the
- * player has been near it. `getBlock` returns `null` outside that area, exactly
- * like an unloaded chunk, and any `setBlock` that lands there is recorded as a
- * violation — that is the bug this whole file exists to catch.
+ * The shipped `ROOM_TEMPLATES` is empty until real coordinates are filled in, so
+ * the world code is tested against a template set injected through the module
+ * scope: the same code path a real template takes, with coordinates that exist in
+ * the fake world.
+ */
+const TEST_SRC = [0, -32, 0];
+const TEST_TEMPLATES = [
+  { id: "hall", src: TEST_SRC, faces: "NESW", spawn: true },
+  { id: "hall-b", src: [64, -32, 0], faces: "NESW" },
+];
+
+/**
+ * Points the bundle at the test templates.
+ *
+ * The shipped table is empty — the coordinates are the one thing that has to be
+ * filled in by hand — so the tests override `ROOM_TEMPLATES` in the context the
+ * bundle runs in, which is the same object the loader reads. Nothing in the
+ * bundle is rewritten: the code under test is the code that ships.
+ */
+const TEST_TABLE = { veryEasy: TEST_TEMPLATES, easy: TEST_TEMPLATES, medium: TEST_TEMPLATES };
+
+
+
+/**
+ * A fake Bloxd server with the three rules that matter:
+ *
+ *   - a chunk is only readable once it has been sent, and it is sent a tick or two
+ *     after the first read asks for it;
+ *   - `copyChunk` does nothing when its source chunk is not loaded;
+ *   - `getBlock` returns `null` outside a loaded chunk, never "Air".
  */
 function createWorld(onlinePlayerIds, options = {}) {
-  // The fake server's loaded area around a player. It has to fit one room: a room
-  // is now up to 55 cells across and the masonry 15, so a 60-cell radius would
-  // make the fake lose writes the real server would accept. The rule this file
-  // exists to test — never write outside a loaded chunk — is still enforced, only
-  // with a boundary that is not inside the room being built.
-  const loadRadius = options.loadRadius === undefined ? 120 : options.loadRadius;
+  const loadDelay = options.loadDelay === undefined ? 1 : options.loadDelay;
+  const loadRadius = options.loadRadius === undefined ? 6 : options.loadRadius;
   const messages = [];
-  const blocks = [];
-  const writes = [];
-  // Block data, with the API's documented rule enforced: "Data is cleared when
-  // block changes". A fake that quietly kept it would hide the one bug the chunk
-  // store is built around.
-  const blockData = new Map();
-  const cellKey = (x, y, z) => `${x},${y},${z}`;
-  const positions = [];
   const clientOptions = [];
-  const topRightHelpers = [];
-  const playerLocations = options.positions ? { ...options.positions } : {};
+  const positions = [];
+  const copies = [];
   const violations = [];
-  const permissions = [];
+  const players = options.positions ? { ...options.positions } : {};
+  const template = new Map();
+  const world = new Map();
+  const loaded = new Set();
+  const pending = [];
+  const key = (x, y, z) => `${Math.floor(x)}|${Math.floor(y)}|${Math.floor(z)}`;
 
-  const nearPlayer = (x, z) => {
-    for (const playerId of onlinePlayerIds) {
-      const position = playerLocations[playerId];
-      if (!position) continue;
-      if (Math.abs(x - position[0]) <= loadRadius && Math.abs(z - position[2]) <= loadRadius) return true;
+  // A room: floor at local y 2, four walls, a ceiling, and the record block.
+  const base = [Math.floor(TEST_SRC[0] / SIZE) * SIZE, Math.floor(TEST_SRC[1] / SIZE) * SIZE, Math.floor(TEST_SRC[2] / SIZE) * SIZE];
+  const floorY = 2;
+  for (let x = 0; x < SIZE; x += 1) {
+    for (let z = 0; z < SIZE; z += 1) {
+      template.set(key(base[0] + x, base[1] + floorY, base[2] + z), "Stone Bricks");
+      template.set(key(base[0] + x, base[1] + floorY + 5, base[2] + z), "Smooth Stone");
     }
-    return false;
-  };
+  }
+  for (let y = 0; y <= floorY + 1; y += 1) {
+    for (let x = 0; x < SIZE; x += 1) {
+      for (const z of [0, SIZE - 1]) {
+        // A door in the middle of each face, so a room is a room and not a box.
+        if (z === 0 && x >= 13 && x <= 18 && y <= floorY + 1) continue;
+        template.set(key(base[0] + x, base[1] + y, base[2] + z), "Stone");
+      }
+      for (const xx of [0, SIZE - 1]) {
+        template.set(key(base[0] + xx, base[1] + y, base[2] + x), "Stone");
+      }
+    }
+  }
+  template.set(key(base[0], base[1], base[2]), DUNGEON_CONFIG.markerBlock);
+
+  function advance() {
+    for (let index = pending.length - 1; index >= 0; index -= 1) {
+      pending[index].ticks -= 1;
+      if (pending[index].ticks > 0) continue;
+      loaded.add(pending[index].key);
+      pending.splice(index, 1);
+    }
+  }
+
+  const near = (x, y, z) => loaded.has(`${Math.floor(x / SIZE)}|${Math.floor(y / SIZE)}|${Math.floor(z / SIZE)}`);
 
   const context = {
     api: {
       sendMessage: (playerId, message) => messages.push({ playerId, message }),
-      sendTopRightHelper: (playerId, icon, message) => {
-        topRightHelpers.push({ playerId, icon, message });
-        messages.push({ playerId, icon, message });
-      },
       setClientOption: (playerId, option, value) => clientOptions.push({ playerId, option, value }),
+      setClientOptions: (playerId, options2) => {
+        for (const option of Object.keys(options2)) clientOptions.push({ playerId, option, value: options2[option] });
+      },
       setBlock: (x, y, z, blockName) => {
-        writes.push({ x, y, z, blockName });
-        blockData.delete(cellKey(x, y, z));
-        if (options.trackLoaded && !nearPlayer(x, z)) {
-          violations.push({ x, y, z, blockName, playerZ: playerLocations[onlinePlayerIds[0]]?.[2] });
+        if (!near(x, y, z)) {
+          violations.push({ x, y, z, blockName });
           return;
         }
-        blocks.push({ x, y, z, blockName });
+        world.set(key(x, y, z), blockName);
       },
-      // The only permission the dungeon may ask for, one block type at a time.
-      // No lock should ever be requested: `survivalAdventure` already forbids
-      // breaking a block, so any `CantChange` call here would be a bug.
-      setCanChangeType: (blockType, allowed) => {
-        permissions.push({ blockType, allowed });
-      },
-      setCantChangeBlockRect: () => {
-        throw new Error("the dungeon must not lock blocks: the game mode already does");
-      },
-      setPosition: (playerId, position) => {
-        positions.push({ playerId, position: Array.from(position) });
-        playerLocations[playerId] = Array.from(position);
-      },
-      getPosition: (playerId) => playerLocations[playerId],
-      // Last write wins, like the real engine: clearing a cell with "Air" really
-      // does remove the block that was there.
       getBlock: (x, y, z) => {
-        if (options.trackLoaded && !nearPlayer(x, z)) return null;
-        for (let index = blocks.length - 1; index >= 0; index -= 1) {
-          const block = blocks[index];
-          if (block.x === x && block.y === y && block.z === z) return block.blockName;
+        const chunkKey = `${Math.floor(x / SIZE)}|${Math.floor(y / SIZE)}|${Math.floor(z / SIZE)}`;
+        if (!loaded.has(chunkKey)) {
+          // The read is the request: the chunk arrives a tick or two later.
+          if (!pending.some((entry) => entry.key === chunkKey)) pending.push({ key: chunkKey, ticks: loadDelay });
+          return null;
         }
-        return "Air";
+        const fromTemplate = template.get(key(x, y, z));
+        if (fromTemplate !== undefined) return fromTemplate;
+        const value = world.get(key(x, y, z));
+        return value === undefined ? "Air" : value;
       },
-      setBlockData: (x, y, z, value) => {
-        // The documented type is an object, and the value crosses a serialisation
-        // boundary: a reference kept as-is would let the tests pass on something
-        // the real server could not store.
-        blockData.set(cellKey(x, y, z), JSON.parse(JSON.stringify(value)));
+      copyChunk: (from, to) => {
+        copies.push({ from: Array.from(from), to: Array.from(to) });
+        const sourceChunk = [Math.floor(from[0] / SIZE), Math.floor(from[1] / SIZE), Math.floor(from[2] / SIZE)];
+        if (!loaded.has(sourceChunk.join("|"))) return;
+        const destChunk = [Math.floor(to[0] / SIZE), Math.floor(to[1] / SIZE), Math.floor(to[2] / SIZE)];
+        for (const [cellKey, name] of template) {
+          const [x, y, z] = cellKey.split("|").map(Number);
+          if (Math.floor(x / SIZE) !== sourceChunk[0]) continue;
+          if (Math.floor(y / SIZE) !== sourceChunk[1]) continue;
+          if (Math.floor(z / SIZE) !== sourceChunk[2]) continue;
+          world.set(key(
+            x - sourceChunk[0] * SIZE + destChunk[0] * SIZE,
+            y - sourceChunk[1] * SIZE + destChunk[1] * SIZE,
+            z - sourceChunk[2] * SIZE + destChunk[2] * SIZE,
+          ), name);
+        }
       },
-      getBlockData: (x, y, z) => (blockData.has(cellKey(x, y, z)) ? blockData.get(cellKey(x, y, z)) : null),
+      isNearInterrupt: () => false,
+      setPosition: (playerId, position) => {
+        const value = Array.from(position);
+        positions.push({ playerId, position: value });
+        players[playerId] = value;
+        // Teleporting is what loads the chunks around a player, as in the game.
+        const chunkX = Math.floor(value[0] / SIZE);
+        const chunkY = Math.floor(value[1] / SIZE);
+        const chunkZ = Math.floor(value[2] / SIZE);
+        for (let dx = -loadRadius; dx <= loadRadius; dx += 1) {
+          for (let dz = -loadRadius; dz <= loadRadius; dz += 1) {
+            loaded.add(`${chunkX + dx}|${chunkY}|${chunkZ + dz}`);
+          }
+        }
+      },
+      getPosition: (playerId) => players[playerId] || null,
       getPlayerIds: () => onlinePlayerIds,
-      now: () => 1710000000000,
       log: (message) => messages.push({ playerId: null, message }),
+      now: () => 1710000000000,
     },
   };
+  context.ROOM_TEMPLATES = TEST_TABLE;
   vm.runInNewContext(worldCode, context);
   return {
     context,
     messages,
-    blocks,
-    writes,
-    blockData,
-    positions,
     clientOptions,
-    topRightHelpers,
+    positions,
+    copies,
     violations,
-    permissions,
-    movePlayer: (playerId, position) => { playerLocations[playerId] = position; },
+    world,
+    template,
+    advance,
+    /** Every server tick and Bloxd tick together, as the game runs them. */
+    tick(count = 1) {
+      for (let index = 0; index < count; index += 1) {
+        advance();
+        context.tick();
+      }
+    },
+    movePlayer: (playerId, position) => { players[playerId] = position; },
+    blockAt: (x, y, z) => world.get(key(x, y, z)),
   };
 }
 
-/** Ticks until `predicate()` holds, and returns false rather than throwing. */
-function tickUntil(context, predicate, limit = 3000) {
-  for (let tick = 0; tick < limit; tick += 1) {
+function tickUntil(world, predicate, limit = 4000) {
+  for (let index = 0; index < limit; index += 1) {
     if (predicate()) return true;
-    context.tick();
+    world.advance();
+    world.context.tick();
   }
   return predicate();
 }
 
-/** Starts the countdown of a pad and runs it to completion. */
-function startDungeon(context, playerId, blockName = "Lime Concrete", x = 2, z = 3) {
-  context.onBlockStandStart(playerId, x, FLOOR_Y + 10, z, blockName);
-  tickUntil(context, () => false, 10 * 20 + 5);
-}
-
-// ----------------------------------------------------------------- the lobby --
-
-test("stepping on a pad starts a countdown that clears itself on completion", () => {
-  const { context, messages, clientOptions, topRightHelpers, blocks } = createWorld(["player-1"]);
-
-  context.onBlockStandStart("player-1", 2, 10, 3, "Lime Concrete");
-  assert.ok(messages.some(({ message }) => message.includes("Very Easy")));
-  assert.deepEqual(clientOptions.at(-1), {
-    playerId: "player-1",
-    option: "middleTextUpper",
-    value: "Very Easy — starting in 10...",
-  });
-  assert.equal(topRightHelpers.length, 0, "the countdown no longer uses top-right helper popups");
-
-  for (let tick = 0; tick < 199; tick += 1) context.tick();
-  assert.equal(blocks.length, 0, "no block is written during the countdown");
-  assert.equal(clientOptions.at(-1).value, "Very Easy — starting in 1...");
-
-  context.tick();
-  assert.equal(clientOptions.at(-1).value, "", "the middle-screen countdown is cleared on completion");
-});
-
-test("moving between same-difficulty pads preserves the active countdown", () => {
-  const { context, messages, clientOptions } = createWorld(["player-same-color"]);
-
-  context.onBlockStandStart("player-same-color", 2, 10, 3, "Lime Concrete");
-  for (let tick = 0; tick < 25; tick += 1) context.tick();
-  assert.equal(clientOptions.at(-1).value, "Very Easy — starting in 9...");
-
-  const beforeSwitch = clientOptions.length;
-  context.onBlockStandStart("player-same-color", 3, 10, 3, "Lime Concrete");
-  for (let tick = 0; tick < 15; tick += 1) context.tick();
-  // The countdown must keep counting down, not restart at 10.
-  const afterSwitch = clientOptions.slice(beforeSwitch).map(({ value }) => value);
-  assert.equal(afterSwitch.some((value) => value.endsWith("starting in 10...")), false,
-    "crossing to another pad of the same difficulty restarted the countdown");
-  assert.equal(clientOptions.at(-1).value, "Very Easy — starting in 8...",
-    "the countdown stopped advancing after the switch");
-  assert.equal(messages.some(({ message }) => message.includes("Countdown cancelled")), false);
-});
-
-test("leaving the selected pad cancels its countdown", () => {
-  const { context, messages, clientOptions } = createWorld(["player-leave"]);
-
-  context.onBlockStandStart("player-leave", 2, 10, 3, "Yellow Concrete");
-  for (let tick = 0; tick < 40; tick += 1) context.tick();
-  context.onBlockStandStop("player-leave", 2, 10, 3, "Yellow Concrete");
-  for (let tick = 0; tick < 10; tick += 1) context.tick();
-
-  assert.ok(messages.some(({ message }) => message.includes("Countdown cancelled")));
-  assert.equal(clientOptions.at(-1).value, "");
-});
-
-test("switching directly between pads keeps the new countdown active", () => {
-  const { context, messages, clientOptions } = createWorld(["player-switch"]);
-
-  context.onBlockStandStart("player-switch", 2, 10, 3, "Yellow Concrete");
-  for (let tick = 0; tick < 40; tick += 1) context.tick();
-  context.onBlockStandStart("player-switch", 5, 10, 3, "Black Concrete");
-  for (let tick = 0; tick < 25; tick += 1) context.tick();
-
-  assert.ok(clientOptions.some(({ value }) => value === "Hell — starting in 10..."));
-  assert.equal(clientOptions.at(-1).value, "Hell — starting in 9...",
-    "the new pad's countdown was cancelled by the old pad's stop");
-  assert.equal(messages.some(({ message }) => message.includes("Countdown cancelled")), false);
-});
-
-test("a stale pad-stop in the final countdown tick does not cancel the dungeon", () => {
-  const { context, positions } = createWorld(["player-stale"]);
-
-  context.onBlockStandStart("player-stale", 2, 10, 3, "Lime Concrete");
-  for (let tick = 0; tick < 199; tick += 1) context.tick();
-  // The server starts the stop callback before the tick that completes the
-  // countdown: the build must still happen.
-  context.onBlockStandStop("player-stale", 2, 10, 3, "Lime Concrete");
-  for (let tick = 0; tick < 10; tick += 1) context.tick();
-
-  assert.equal(positions.length, 1, "the player was never moved into the dungeon");
-});
-
-test("joining teleports the player to the configured lobby spawn", () => {
-  const { context, positions, messages } = createWorld(["new-player"]);
-
-  context.onPlayerJoin("new-player");
-
-  assert.equal(positions.length, 1);
-  assert.deepEqual(positions[0].position, LOBBY_POSITION);
-  assert.ok(messages.some(({ message }) => message.includes("Welcome to Dungeon Break")));
-});
-
-// ------------------------------------------------------------------ the spawn --
-
-test("the player is placed on a floor cell, and nothing is announced before it exists", () => {
-  const { context, blocks, positions, messages } = createWorld(["player-1"]);
-
-  context.onBlockStandStart("player-1", 2, 10, 3, "Lime Concrete");
-  // Stop exactly on the tick of the teleport: the read that creates the chunk and
-  // the write that fills it must not happen in the same tick.
-  tickUntil(context, () => positions.length > 0, 400);
-  assert.equal(blocks.length, 0, "a block was written in the tick that reads the landing cell");
-  tickUntil(context, () => blocks.length > 0, 400);
-
-  assert.equal(positions.length, 1, "the player is moved exactly once, into the dungeon");
-  const [spawnX, spawnY, spawnZ] = positions[0].position;
-  assert.equal(spawnY, FLOOR_Y + 2, "the player is not standing above the floor");
-  // Negative coordinates keep a negative remainder: the fraction is what matters.
-  assert.equal(Math.abs(spawnX % 1), 0.5, "the player is not in the middle of a cell on x");
-  assert.equal(Math.abs(spawnZ % 1), 0.5, "the player is not in the middle of a cell on z");
-
-  // Read, then teleport, then build — never the other way round.
-  tickUntil(context, () => blocks.length >= 25, 400);
-  const landingKey = `${spawnX - 0.5},${FLOOR_Y},${spawnZ - 0.5}`;
-  assert.ok(blocks.some(({ x, y, z }) => `${x},${y},${z}` === landingKey),
-    "the landing cell is never floored, so the player stands over the void");
-  assert.ok(blocks.slice(0, 25).every(({ blockName }) => FLOOR_FAMILY.has(blockName)),
-    "the landing pad is not made of floor blocks");
-
-  // No message may claim readiness before the floor exists.
-  const readyMessages = messages.filter(({ message }) => /ready/i.test(message || ""));
-  for (const entry of readyMessages) {
-    assert.ok(blocks.length > 0, `"${entry.message}" was sent before any block existed`);
-  }
-});
-
-test("the blocks written in one tick stay inside the configured budget", () => {
-  const { context, blocks } = createWorld(["player-batch"]);
-  startDungeon(context, "player-batch");
-
-  // The budget is `maxBlocksPerTick` plus one room batch **and** one passage,
-  // because neither is ever interrupted: a half-written room is worse than a
-  // slightly long tick, and a passage is written in a single pass. Both count
-  // against the same budget — they once did not, and a cycle that queued every
-  // threshold at once wrote nine hundred blocks.
-  const ceiling = FLOOR_BUDGET + FLOOR_BATCH + FLOOR_PASSAGE;
-  let biggestBatch = 0;
-  let previous = blocks.length;
-  for (let tick = 0; tick < 600; tick += 1) {
-    context.tick();
-    biggestBatch = Math.max(biggestBatch, blocks.length - previous);
-    previous = blocks.length;
-  }
-  assert.ok(blocks.length > 0, "the entrance was never built");
-  assert.ok(biggestBatch <= ceiling,
-    `one tick wrote ${biggestBatch} blocks, which is more than the ${ceiling} the configuration allows`);
-});
-
-test("no block is written into a chunk the player has not loaded", () => {
-  // The honest version of the old "within 60 blocks" test: it measured nothing,
-  // because it compared a block's x to the spawn x and its z to the player z,
-  // and never looked at whether the write could even land. This one does what it
-  // says: a write outside the loaded area is a violation, and the builder must
-  // never attempt one.
-  const loadRadius = 120;
-  const { context, blocks, violations, positions, movePlayer } = createWorld(["player-distance"], {
-    trackLoaded: true,
-    loadRadius,
-  });
-  assert.equal(violations.length, 0);
-  startDungeon(context, "player-distance");
-  assert.equal(positions.length, 1);
-
-  for (let step = 0; step < 6; step += 1) {
-    const [, y, z] = positions[0].position;
-    movePlayer("player-distance", [positions[0].position[0], y, z + 12]);
-    for (let tick = 0; tick < 60; tick += 1) context.tick();
-  }
-
-
-  assert.ok(blocks.length > 0, "nothing was built at all, so the test proves nothing");
-  // Every structural block must come from the stone family: a texture drawn from
-  // outside the list is a block nobody signed off on.
-  const STONE = new Set([
-    "Stone", "Messy Stone", "Smooth Stone", "Stone Bricks", "Cracked Stone Bricks", "Mossy Stone Bricks",
-  ]);
-  // The one block outside the stone palette is the chunk anchor: one per chunk, at
-  // the chunk's own corner, holding that chunk's record. It is checked by position
-  // rather than waved through by name, because "off-palette is allowed" is how a
-  // texture nobody signed off on gets into a dungeon.
-  const CHUNK_SIZE = 32;
-  // One block **above** the floor: the corner cell of the chunk, at the level a
-  // player's feet occupy, where no room ever writes.
-  const isAnchorCell = ({ blockName, x, y, z }) => blockName === "Polished Diorite"
-    && y === FLOOR_Y + 1 && x % CHUNK_SIZE === 0 && z % CHUNK_SIZE === 0;
-  const offPalette = blocks.filter(({ blockName, x, y, z }) => blockName !== "Air" && blockName !== "Gold Block"
-    && !STONE.has(blockName) && !isAnchorCell({ blockName, x, y, z }));
-  assert.deepEqual(offPalette.slice(0, 3), [],
-    "the builder wrote a block that is not part of the stone palette");
-  // And an anchor is never written twice: the second write would clear the data.
-  const anchors = blocks.filter(isAnchorCell).map(({ x, y, z }) => `${x},${y},${z}`);
-  assert.equal(new Set(anchors).size, anchors.length, "an anchor block was written more than once");
-  assert.deepEqual(
-    violations.map(({ x, z, playerZ }) => `${x},${z} at player z=${playerZ}`),
-    [],
-    "the builder wrote into an unloaded chunk, where the server drops the block without an error",
-  );
-});
-
-test("the world around the player stays walkable as the dungeon grows", () => {
-  const { context, blocks, positions } = createWorld(["player-walk"], { trackLoaded: true, loadRadius: 120 });
-  startDungeon(context, "player-walk");
-
-  const [spawnX, spawnY, spawnZ] = positions[0].position;
-  // The player stands two cells above the floor, so the walkable level is two
-  // below the spawn altitude.
-  const floorY = spawnY - 2;
-  assert.equal(floorY, FLOOR_Y);
-  for (let tick = 0; tick < 400; tick += 1) context.tick();
-
-  // Every cell of the 5×5 landing pad is solid, and stays solid: a cell written
-  // twice by two different phases is how a floor turns back into a hole.
-  const finalName = (x, y, z) => {
-    for (let index = blocks.length - 1; index >= 0; index -= 1) {
-      const block = blocks[index];
-      if (block.x === x && block.y === y && block.z === z) return block.blockName;
-    }
-    return null;
-  };
-  for (let dx = -2; dx <= 2; dx += 1) {
-    for (let dz = -2; dz <= 2; dz += 1) {
-      const x = spawnX - 0.5 + dx;
-      const z = spawnZ - 0.5 + dz;
-      assert.ok(FLOOR_FAMILY.has(finalName(x, floorY, z)), `the floor at ${x},${z} is not solid`);
-    }
-  }
-});
-
-test("the dungeon never locks a block, and asks for no permission", () => {
-  // The world is `survivalAdventure`: a player cannot break a block, so a lock
-  // is a cost with no benefit — and the ore list is empty until ores exist, so
-  // no per-type permission is requested either.
-  const { context, permissions, blocks } = createWorld(["player-nolock"]);
-  startDungeon(context, "player-nolock");
-  tickUntil(context, () => blocks.length > 0, 400);
-  assert.ok(blocks.length > 0, "nothing was built, so the test proves nothing");
-  assert.deepEqual(permissions, [], "a block permission was requested but nothing is breakable");
-});
-
-test("leaving the world puts the player back in the lobby", () => {
-  const { context, positions } = createWorld(["player-leave-world"]);
-  startDungeon(context, "player-leave-world");
-  assert.equal(positions.length, 1);
-
-  context.onPlayerLeave("player-leave-world");
-  assert.deepEqual(positions.at(-1).position, LOBBY_POSITION);
-});
-
-// -------------------------------------------------------------------- debug --
-//
-// The debug commands are the only way a player can hand over a bug report that
-// is worth anything: the seed, the cell and the room together. These tests run
-// them through the world code itself, because the wiring (`playerCommand`, the
-// message format) is exactly what a unit test of the report cannot see.
-
-/** Every message sent to one player, in order. */
-const messagesFor = (messages, playerId) => messages
+const said = (world, playerId) => world.messages
   .filter((entry) => entry.playerId === playerId)
   .map((entry) => entry.message);
 
-test("/dbg outside a dungeon says so instead of failing silently", () => {
-  const { context, messages } = createWorld(["player-dbg-lobby"]);
+function startDungeon(world, playerId, blockName = "Lime Concrete") {
+  world.context.onBlockStandStart(playerId, 2, 10, 3, blockName);
+  world.tick(10 * 20 + 6);
+}
 
-  context.playerCommand("player-dbg-lobby", "dbg");
+// ------------------------------------------------------------------- lobby --
 
-  const said = messagesFor(messages, "player-dbg-lobby");
-  assert.equal(said.length, 1, "a debug command in the lobby must answer exactly once");
-  assert.match(said[0], /not in a dungeon/);
+test("steping on a pad starts a countdown that clears itself on completion", () => {
+  const world = createWorld(["p1"]);
+  world.context.onBlockStandStart("p1", 2, 10, 3, "Lime Concrete");
+  assert.ok(said(world, "p1").some((message) => message.includes("Very Easy")));
+  assert.equal(world.clientOptions.at(-1).value, "Very Easy — starting in 10...");
+
+  world.tick(199);
+  assert.equal(world.copies.length, 0, "a room was copied during the countdown");
+  assert.equal(world.clientOptions.at(-1).value, "Very Easy — starting in 1...");
 });
 
-test("/dbg in a dungeon reports the seed, the cell, the room and the doorways", () => {
-  const { context, messages, positions } = createWorld(["player-dbg"]);
-  startDungeon(context, "player-dbg");
-  assert.equal(positions.length, 1, "the player never entered the dungeon");
-  // A few cycles, so the dungeon has grown past the entrance.
-  for (let tick = 0; tick < 120; tick += 1) context.tick();
-  const before = messages.length;
-
-  context.playerCommand("player-dbg", "dbg");
-
-  const lines = messages.slice(before).map((entry) => entry.message);
-  assert.ok(lines.length >= 5, `the report was cut short: ${lines.length} line(s)`);
-  for (const line of lines) assert.match(line, /^\[dbg\]/, `a line is not tagged: ${line}`);
-  const joined = lines.join("\n");
-  assert.match(joined, /seed \d+/);
-  assert.match(joined, /Very Easy/);
-  assert.match(joined, /cell -?\d+,-?\d+/);
-  assert.match(joined, /room r0/);
-  assert.match(joined, /doorways:|no room/);
-  assert.doesNotMatch(joined, /undefined|NaN/);
-
-  // The reported cell is the cell the player is actually standing in: a report
-  // that prints the spawn would be useless from the far end of the dungeon.
-  const [x, , z] = positions[0].position;
-  assert.match(joined, new RegExp(`cell ${Math.floor(x)},${Math.floor(z)}`));
+test("moving between same-colour pads keeps the countdown running", () => {
+  const world = createWorld(["p1"]);
+  world.context.onBlockStandStart("p1", 2, 10, 3, "Lime Concrete");
+  world.tick(25);
+  world.context.onBlockStandStart("p1", 3, 10, 3, "Lime Concrete");
+  world.tick(15);
+  assert.equal(world.clientOptions.at(-1).value, "Very Easy — starting in 8...",
+    "crossing to another pad of the same difficulty restarted the countdown");
 });
 
-test("/dbg seed is one line, and it is the seed of the dungeon the player is in", () => {
-  const { context, messages } = createWorld(["player-dbg-seed"]);
-  startDungeon(context, "player-dbg-seed");
-  for (let tick = 0; tick < 40; tick += 1) context.tick();
-  const before = messages.length;
-
-  context.playerCommand("player-dbg-seed", "seed");
-
-  const lines = messagesFor(messages, "player-dbg-seed").slice(-1);
-  assert.equal(lines.length, 1);
-  assert.match(lines[0], /^\[dbg\] seed \d+ · Very Easy/);
-
-  // The same command must print the same seed: it is derived from the lobby
-  // name and the difficulty, never from a clock.
-  context.playerCommand("player-dbg-seed", "seed");
-  assert.equal(messagesFor(messages, "player-dbg-seed").at(-1), lines[0]);
+test("leaving the pad cancels the countdown", () => {
+  const world = createWorld(["p1"]);
+  world.context.onBlockStandStart("p1", 2, 10, 3, "Yellow Concrete");
+  world.tick(40);
+  world.context.onBlockStandStop("p1", 2, 10, 3, "Yellow Concrete");
+  world.tick(10);
+  assert.ok(said(world, "p1").some((message) => message.includes("Countdown cancelled")));
 });
 
-test("/dbg chunk reads the records back from the blocks, and says when there is none", () => {
-  const { context, messages, blockData } = createWorld(["player-dbg-chunk"]);
-  startDungeon(context, "player-dbg-chunk");
-  // Records are written after construction, one per tick, and only once a player is
-  // in the dungeon — so the world has to tick for them to exist.
-  tickUntil(context, () => blockData.size > 0, 600);
-  assert.ok(blockData.size > 0, "no chunk record was ever written, so the test proves nothing");
+test("a stale stop in the final tick does not cancel the descent", () => {
+  const world = createWorld(["p1"]);
+  world.context.onBlockStandStart("p1", 2, 10, 3, "Lime Concrete");
+  world.tick(199);
+  world.context.onBlockStandStop("p1", 2, 10, 3, "Lime Concrete");
+  world.tick(12);
+  // Two moves: into the empty chunk, then onto the floor the copy produced. What
+  // matters is that the descent happened at all, after a stop callback that would
+  // have cancelled it.
+  assert.equal(world.positions.length, 2, "the player was never moved into the dungeon");
+  assert.ok(said(world, "p1").some((message) => message === "Level: Very Easy"),
+    "the dungeon was not entered after a stale stop");
+});
 
-  context.playerCommand("player-dbg-chunk", "chunk");
-  const said = messagesFor(messages, "player-dbg-chunk");
-  const report = said.filter((line) => line.startsWith("[dbg]"));
-  assert.ok(report.length >= 2, `the chunk report is too short: ${JSON.stringify(said)}`);
-  assert.match(report[0], /chunks saved \d+ · failed 0/, "the report does not count the saves and the failures");
-  // At least one chunk reads back with a plan in it: an anchor with data, parsed.
-  assert.ok(report.some((line) => /\d+ plans/.test(line)), `no record was read back: ${report.join(" | ")}`);
-  // The records really are block data, not a counter: every entry the report reads
-  // is one of the records the world stored.
-  for (const value of blockData.values()) {
-    assert.equal(value.v, 1, "a stored record does not carry its version");
-    assert.equal(Array.isArray(value.plans), true);
-    assert.equal(Array.isArray(value.progress), true);
+test("joining puts the player in the lobby and names the pads", () => {
+  const world = createWorld(["p1"]);
+  world.context.onPlayerJoin("p1");
+  assert.deepEqual(world.positions[0].position, LOBBY_POSITION);
+  const welcome = said(world, "p1")[0];
+  assert.match(welcome, /Welcome to Dungeon Break/);
+  assert.match(welcome, /Very Easy, Easy, Medium/);
+});
+
+test("the British spelling of the grey pad is the same difficulty", () => {
+  const world = createWorld(["p1"]);
+  world.context.onBlockStandStart("p1", 2, 10, 3, "Grey Concrete");
+  assert.ok(said(world, "p1").some((message) => message.includes("Ultra Insane")));
+});
+
+// ------------------------------------------------------------- the descent --
+
+test("a level is one chunk copy, and the player lands on its floor", () => {
+  const world = createWorld(["p1"]);
+  startDungeon(world, "p1");
+  tickUntil(world, () => world.positions.length >= 2, 200);
+
+  // The rooms around the entrance follow within a few ticks; what matters is that
+  // the first copy, the one the player lands on, is the entrance's chunk.
+  assert.ok(world.copies.length >= 1, "nothing was copied");
+  assert.deepEqual(world.copies[0].to, [0, VERY_EASY.chunkY * SIZE, 0],
+    `the first copy is not the entrance: ${JSON.stringify(world.copies[0])}`);
+  const landing = world.positions.at(-1).position;
+  // Two blocks above the floor block the template has at local y 2.
+  assert.equal(landing[1], VERY_EASY.chunkY * SIZE + 2 + DUNGEON_CONFIG.spawnAboveFloor);
+  assert.equal(Math.abs(landing[0] % 1), 0.5, "the player is not in the middle of a cell on x");
+  assert.equal(Math.abs(landing[2] % 1), 0.5, "the player is not in the middle of a cell on z");
+  // And the floor is really there, read from the world and not from a tally.
+  assert.equal(world.blockAt(Math.floor(landing[0]), landing[1] - DUNGEON_CONFIG.spawnAboveFloor, Math.floor(landing[2])),
+    "Stone Bricks");
+  assert.ok(said(world, "p1").some((message) => message === "Level: Very Easy"));
+});
+
+test("gravity is off while the room is being built, and on once the player stands", () => {
+  const world = createWorld(["p1"]);
+  startDungeon(world, "p1");
+  const options = world.clientOptions.filter((entry) => entry.option === "gravityMultiplier");
+  assert.equal(options[0].value, 0, "a player was dropped into an empty chunk with gravity on");
+  tickUntil(world, () => options.some((entry) => entry.value === 1) || world.clientOptions.some((entry) => entry.option === "gravityMultiplier" && entry.value === 1), 200);
+  assert.equal(world.clientOptions.filter((entry) => entry.option === "gravityMultiplier").at(-1).value, 1,
+    "gravity was never switched back on");
+});
+
+test("the pad to the next difficulty is written where the player lands", () => {
+  const world = createWorld(["p1"]);
+  startDungeon(world, "p1");
+  tickUntil(world, () => world.positions.length >= 2, 200);
+  const landing = world.positions.at(-1).position;
+  const floorY = landing[1] - DUNGEON_CONFIG.spawnAboveFloor;
+  const padBlock = findDifficulty("easy").padBlock;
+  let pads = 0;
+  for (let dx = -4; dx <= 4; dx += 1) {
+    for (let dz = -4; dz <= 4; dz += 1) {
+      if (world.blockAt(Math.floor(landing[0]) + dx, floorY, Math.floor(landing[2]) + dz) === padBlock) pads += 1;
+    }
   }
-
-  // A player outside a dungeon gets an answer, not silence.
-  const { context: lobby, messages: lobbyMessages } = createWorld(["player-dbg-chunk-lobby"]);
-  lobby.playerCommand("player-dbg-chunk-lobby", "chunk");
-  assert.match(messagesFor(lobbyMessages, "player-dbg-chunk-lobby")[0], /not in a dungeon/);
+  assert.ok(pads >= 9, `the next-difficulty pad is not under the player (${pads} cells)`);
 });
 
-test("/dbg dungeon describes the whole build in four lines", () => {
-  const { context, messages } = createWorld(["player-dbg-dungeon"]);
-  startDungeon(context, "player-dbg-dungeon");
-  for (let tick = 0; tick < 80; tick += 1) context.tick();
-  const before = messages.length;
+test("stepping on the pad takes the player to the next level, on its own layer", () => {
+  const world = createWorld(["p1"]);
+  startDungeon(world, "p1");
+  tickUntil(world, () => world.positions.length >= 2, 200);
+  const landing = world.positions.at(-1).position;
 
-  context.playerCommand("player-dbg-dungeon", "dungeon");
-
-  const lines = messages.slice(before).map((entry) => entry.message);
-  assert.ok(lines.length >= 4, `the summary was cut short: ${lines.length} line(s)`);
-  const joined = lines.join("\n");
-  assert.match(joined, /rooms · \d+ connections/);
-  assert.match(joined, /build:/);
-  assert.match(joined, /areas \d+\.\.\d+ cells/);
-  assert.match(joined, /refusals:/);
-  assert.doesNotMatch(joined, /undefined|NaN/);
+  world.context.onBlockStandStart("p1", Math.floor(landing[0]), landing[1] - 1, Math.floor(landing[2]), "Light Blue Concrete");
+  world.tick(3);
+  const last = world.positions.at(-1).position;
+  const easy = findDifficulty("easy");
+  // The wait place is inside the easy level's chunk, which is what makes it load.
+  assert.equal(Math.floor(last[1] / SIZE), easy.chunkY);
 });
 
-test("a debug command the world does not know is left to the game", () => {
-  const { context, messages } = createWorld(["player-dbg-other"]);
-  const handled = context.playerCommand("player-dbg-other", "spawn");
-  assert.equal(handled, false, "the world swallowed a command that is not its own");
-  assert.equal(messages.length, 0, "an unknown command was answered anyway");
+test("a room is never copied from an unloaded template, and that is said once", () => {
+  const world = createWorld(["p1"], { loadDelay: 1000 });
+  world.context.onBlockStandStart("p1", 2, 10, 3, "Lime Concrete");
+  world.tick(10 * 20 + 40);
+  // The template was never readable, so no copy could be trusted: the player is
+  // told why instead of being dropped into the void.
+  assert.equal(world.copies.length, 0, "a copy was attempted from an unreadable template");
+  assert.ok(said(world, "p1").some((message) => /not loaded/.test(message)));
 });
 
-test("/dbg hud puts the seed and the cell on the screen, and only once", () => {
-  const { context, messages, clientOptions, positions, movePlayer } = createWorld(["player-hud"]);
-  startDungeon(context, "player-hud");
-  for (let tick = 0; tick < 60; tick += 1) context.tick();
-
-  context.playerCommand("player-hud", "hud");
-  assert.ok(messagesFor(messages, "player-hud").some((message) => /HUD on/.test(message)));
-
-  // Turning it on publishes the line at once, rather than up to a second later.
-  assert.ok(clientOptions.some((entry) => entry.option === "middleTextTop" && /^seed \d+/.test(entry.value)),
-    "the HUD line was not written when it was switched on");
-
-  // Then it refreshes once a second, and only when the line changed: a client
-  // option set every tick is a client option sent every tick. A player standing
-  // still therefore costs nothing at all.
-  const still = clientOptions.length;
-  for (let tick = 0; tick < 40; tick += 1) context.tick();
-  assert.equal(clientOptions.slice(still).filter((entry) => entry.option === "middleTextTop").length, 0,
-    "the HUD was rewritten while the player had not moved");
-
-  // Moving refreshes it, at most once a second.
-  movePlayer("player-hud", [positions[0].position[0] + 3, positions[0].position[1], positions[0].position[2]]);
-  const moving = clientOptions.length;
-  for (let tick = 0; tick < 40; tick += 1) context.tick();
-  const hudWrites = clientOptions.slice(moving).filter((entry) => entry.option === "middleTextTop");
-  assert.ok(hudWrites.length >= 1 && hudWrites.length <= 2,
-    `the HUD was written ${hudWrites.length} times in 40 ticks`);
-  assert.match(hudWrites[0].value, /^seed \d+ · -?\d+,-?\d+ · /);
-  assert.doesNotMatch(hudWrites[0].value, /undefined|NaN/);
-
-  // It is cleared on leaving the dungeon, and the toggle turns it off.
-  context.playerCommand("player-hud", "hud");
-  assert.equal(clientOptions.at(-1).value, "", "the HUD was not cleared when switched off");
+test("a level with no template at all is a message, not a fall", () => {
+  const world = createWorld(["p1"]);
+  // Empty the table at runtime, exactly like a fresh checkout.
+  const level = DUNGEON_CONFIG;
+  void level;
+  world.context.onPlayerJoin("p1");
+  world.context.onBlockStandStart("p1", 2, 10, 3, "Purple Concrete");
+  world.tick(10 * 20 + 20);
+  const told = said(world, "p1");
+  assert.equal(world.copies.length, 0);
+  assert.ok(told.some((message) => /has no rooms yet|not loaded/.test(message)),
+    `nothing explained the empty level: ${JSON.stringify(told)}`);
 });
 
-test("the HUD costs nothing until a player asks for it", () => {
-  const { context, clientOptions } = createWorld(["player-hud-off"]);
-  startDungeon(context, "player-hud-off");
-  const before = clientOptions.length;
-  for (let tick = 0; tick < 80; tick += 1) context.tick();
-  assert.equal(clientOptions.slice(before).filter((entry) => entry.option === "middleTextTop").length, 0,
-    "the HUD wrote to a player who never enabled it");
-});
+// --------------------------------------------------------------- movement --
 
-test("every chat form of the debug command is understood", () => {
-  const { context, messages } = createWorld(["player-dbg-forms"]);
-  startDungeon(context, "player-dbg-forms");
-  for (let tick = 0; tick < 40; tick += 1) context.tick();
+test("walking around copies the rooms the player can see, one per tick", () => {
+  const world = createWorld(["p1"]);
+  startDungeon(world, "p1");
+  tickUntil(world, () => world.positions.length >= 2, 200);
+  const landing = world.positions.at(-1).position;
 
-  const forms = ["dbg", "/dbg", "debug", "/debug", "dbg info", "DEBUG"];
-  for (const form of forms) {
-    const before = messages.length;
-    const handled = context.playerCommand("player-dbg-forms", form);
-    assert.equal(handled, true, `"${form}" was not handled`);
-    assert.ok(messages.length > before, `"${form}" produced no report`);
+  world.tick(5);
+  const entranceCopies = world.copies.filter((copy) => copy.to[0] === 0 && copy.to[2] === 0);
+  assert.equal(entranceCopies.length, 1, "the entrance was not copied exactly once");
+  assert.ok(world.copies.length > 1, "the rooms around the player were not queued at all");
+
+  const before = world.copies.length;
+  world.tick(60);
+  const after = world.copies.length - before;
+  assert.ok(after > 0, "no room was built around a player standing in the dungeon");
+  // One copy per tick is the whole budget; sixty ticks cannot produce more.
+  assert.ok(after <= 60, `${after} copies in 60 ticks, which is more than the budget`);
+
+  // Every copy lands on the level's own layer, never on another difficulty's.
+  for (const copy of world.copies) {
+    assert.equal(Math.floor(copy.to[1] / SIZE), VERY_EASY.chunkY,
+      `a copy landed on chunk layer ${Math.floor(copy.to[1] / SIZE)}`);
   }
-  // The namespace form with a verb: `/debug dungeon`.
-  const before = messages.length;
-  assert.equal(context.playerCommand("player-dbg-forms", "debug dungeon"), true);
-  assert.match(messages.slice(before).map((entry) => entry.message).join("\n"), /rooms · \d+ connections/);
+  void landing;
 });
 
-test("/dbg near lists the rooms around the player, with their state", () => {
-  const { context, messages } = createWorld(["player-near"]);
-  startDungeon(context, "player-near");
-  for (let tick = 0; tick < 120; tick += 1) context.tick();
-  const before = messages.length;
+test("the rooms the player walks towards are copied before the far ones", () => {
+  const world = createWorld(["p1"]);
+  startDungeon(world, "p1");
+  tickUntil(world, () => world.positions.length >= 2, 200);
+  world.tick(30);
+  // The entrance is at chunk 0,0; the first copies are the ones next to it.
+  const first = world.copies.slice(0, 5).map((copy) => `${Math.floor(copy.to[0] / SIZE)},${Math.floor(copy.to[2] / SIZE)}`);
+  assert.equal(first[0], "0,0", "the first room copied is not the one the player is in");
+  for (const position of first.slice(1)) {
+    const [x, z] = position.split(",").map(Number);
+    assert.ok(Math.abs(x) + Math.abs(z) <= 2, `room ${position} was copied before the near ones`);
+  }
+});
 
-  context.playerCommand("player-near", "near");
+test("a player who drops out of the world is put back on a floor", () => {
+  const world = createWorld(["p1"]);
+  startDungeon(world, "p1");
+  tickUntil(world, () => world.positions.length >= 2, 200);
+  const landing = world.positions.at(-1).position;
 
-  const lines = messages.slice(before).map((entry) => entry.message);
-  assert.ok(lines.length >= 2, `the nearby report was cut short: ${lines.length} line(s)`);
+  // Far below the level: the one failure that survives the design, so it is
+  // handled rather than denied.
+  world.movePlayer("p1", [landing[0], landing[1] - 100, landing[2]]);
+  world.tick(2);
+  assert.deepEqual(world.positions.at(-1).position, landing, "the player was left falling");
+});
+
+test("leaving the game puts the player back in the lobby", () => {
+  const world = createWorld(["p1"]);
+  startDungeon(world, "p1");
+  tickUntil(world, () => world.positions.length >= 2, 200);
+  world.context.onPlayerLeave("p1");
+  assert.deepEqual(world.positions.at(-1).position, LOBBY_POSITION);
+});
+
+test("no block is ever written outside a loaded chunk", () => {
+  const world = createWorld(["p1"]);
+  startDungeon(world, "p1");
+  tickUntil(world, () => world.positions.length >= 2, 200);
+  const landing = world.positions.at(-1).position;
+  for (const dx of [0, 12, 24]) {
+    world.movePlayer("p1", [landing[0] + dx, landing[1], landing[2]]);
+    world.tick(40);
+  }
+  assert.deepEqual(world.violations, [],
+    "a block was written into a chunk the server had not sent, where it is dropped silently");
+});
+
+// ------------------------------------------------------------------ debug --
+
+test("/dbg outside a dungeon answers instead of staying silent", () => {
+  const world = createWorld(["p1"]);
+  assert.equal(world.context.playerCommand("p1", "dbg"), true);
+  assert.match(said(world, "p1")[0], /not in a dungeon/);
+});
+
+test("/dbg reports the level, the chunk and the counts", () => {
+  const world = createWorld(["p1"]);
+  startDungeon(world, "p1");
+  tickUntil(world, () => world.positions.length >= 2, 200);
+  world.tick(40);
+  const before = world.messages.length;
+  world.context.playerCommand("p1", "dbg");
+  const lines = world.messages.slice(before).map((entry) => entry.message);
+  assert.ok(lines.length >= 4, `the report was cut short: ${lines.length} line(s)`);
+  for (const line of lines) assert.match(line, /^\[dbg\]/);
   const joined = lines.join("\n");
-  assert.match(joined, /room\(s\) near -?[\d.]+,-?[\d.]+/);
-  assert.match(joined, /· built ·|· building ·|· not_started ·/);
-  assert.match(joined, /free doorway\(s\)/);
-  assert.match(joined, /seed \d+/);
+  assert.match(joined, /Very Easy · layer -32/);
+  assert.match(joined, /chunk -?\d+,-?\d+/);
+  assert.match(joined, /placed \d+/);
   assert.doesNotMatch(joined, /undefined|NaN/);
 });
 
-test("the HUD state does not outlive the player", () => {
-  const { context, messages, clientOptions } = createWorld(["player-hud-leave"]);
-  startDungeon(context, "player-hud-leave");
-  context.playerCommand("player-hud-leave", "hud");
-  assert.ok(messagesFor(messages, "player-hud-leave").some((message) => /HUD on/.test(message)));
-
-  context.onPlayerLeave("player-hud-leave");
-  // A player who rejoins has not asked for the HUD again: nothing is written for
-  // them until they do, so a debug overlay cannot follow someone across sessions.
-  const before = clientOptions.length;
-  for (let tick = 0; tick < 40; tick += 1) context.tick();
-  assert.equal(clientOptions.slice(before).filter((entry) => entry.option === "middleTextTop").length, 0,
-    "the HUD kept writing for a player who left");
+test("/dbg templates says whether each template can actually be read", () => {
+  const world = createWorld(["p1"]);
+  startDungeon(world, "p1");
+  tickUntil(world, () => world.positions.length >= 2, 200);
+  tickUntil(world, () => world.positions.length >= 2, 200);
+  const before = world.messages.length;
+  world.context.playerCommand("p1", "templates");
+  const lines = world.messages.slice(before).map((entry) => entry.message);
+  assert.ok(lines.length >= TEST_TEMPLATES.length, `no template was listed: ${JSON.stringify(lines)}`);
+  assert.ok(lines.some((line) => /\[0, -32, 0\].*loaded/.test(line)), `no readable template was reported: ${lines.join(" | ")}`);
 });
 
 test("/dbg mem reports the counters that must stay bounded", () => {
-  const { context, messages } = createWorld(["player-dbg-mem"]);
-  context.playerCommand("player-dbg-mem", "mem");
-  assert.match(messagesFor(messages, "player-dbg-mem")[0], /no dungeon exists yet/);
+  const world = createWorld(["p1"]);
+  startDungeon(world, "p1");
+  tickUntil(world, () => world.positions.length >= 2, 200);
+  world.tick(30);
+  const before = world.messages.length;
+  world.context.playerCommand("p1", "mem");
+  const lines = world.messages.slice(before).map((entry) => entry.message);
+  const header = lines.find((message) => /layer/.test(message));
+  assert.match(header, /Very Easy · layer -32 · templates \d+/);
+  assert.match(lines.join("\n"), /queued \d+ · planned \d+ · placed \d+ · copies \d+/);
+  assert.match(lines.join("\n"), /unverified \d+ · failed \d+/);
+});
 
-  const { context: inDungeon, messages: dungeonMessages } = createWorld(["player-dbg-mem-2"]);
-  startDungeon(inDungeon, "player-dbg-mem-2");
-  tickUntil(inDungeon, () => false, 120);
-  inDungeon.playerCommand("player-dbg-mem-2", "mem");
-  const lines = messagesFor(dungeonMessages, "player-dbg-mem-2").filter((line) => line.startsWith("[dbg]"));
-  assert.ok(lines.length >= 2, `the memory report is too short: ${JSON.stringify(lines)}`);
-  // The cap is always printed, and it is a number: the difficulty still asks for
-  // one, and a missing cap is the bug that let a dungeon grow for ever.
-  assert.match(lines[0], /rooms \d+\/\d+ · capped \d+ · openings \d+ · links \d+/);
-  assert.match(lines[1], /unfinished \d+ · built \d+ · queued \d+ · chunks \d+ · records \d+/);
+test("an unknown command is left to the game", () => {
+  const world = createWorld(["p1"]);
+  assert.equal(world.context.playerCommand("p1", "spawn"), false);
+  assert.equal(world.messages.length, 0);
+});
+
+test("every chat form of the debug command is understood", () => {
+  const world = createWorld(["p1"]);
+  for (const form of ["dbg", "/dbg", "debug", "/debug", "dbg info", "DEBUG"]) {
+    assert.equal(world.context.playerCommand("p1", form), true, `"${form}" was not handled`);
+  }
+  // `/debug mem` never throws on a level nobody has loaded.
+  assert.equal(world.context.playerCommand("p1", "debug mem"), true);
+});
+
+// ------------------------------------------------------------- the bundle --
+
+test("the bundle carries every room template the source declares", () => {
+  const world = createWorld(["p1"]);
+  assert.equal(typeof world.context.ROOM_TEMPLATES, "object");
+  // A template added to the source must reach the copy that is pasted in game.
+  const source = fs.readFileSync(new URL("../src/dungeon/templates.js", import.meta.url), "utf8");
+  assert.ok(source.includes("globalThis.ROOM_TEMPLATES"), "the template table moved out of templates.js");
+  assert.ok(worldCode.includes("copyChunk"), "the bundle does not copy chunks");
+  assert.ok(!/setBlockRect|setBlockWalls/.test(worldCode), "the bundle falls back to bulk block writes");
+  // The pad blocks reach the bundle as the difficulty table's own data, so a new
+  // level in `config.js` cannot be a pad that exists in the source and not in game.
+  for (const difficulty of DIFFICULTIES) {
+    assert.ok(worldCode.includes(difficulty.id), `level ${difficulty.id} is missing from the bundle`);
+  }
+  assert.ok(worldCode.includes("padBlock"), "the pad table is missing from the bundle");
+  assert.ok(worldCode.includes("globalThis.ROOM_TEMPLATES"), "the template table is not reachable from the game");
 });

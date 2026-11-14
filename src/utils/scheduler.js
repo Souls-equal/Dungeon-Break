@@ -45,6 +45,18 @@ export function setInterval(callback, intervalTicks) {
   return createTimer(callback, interval, interval);
 }
 
+/**
+ * Drops every pending timer and rewind the clock.
+ *
+ * Only the tests call this: one `node --test` file exercises several worlds in
+ * a row, and a module-level timer list that survives from one world to the next
+ * is a test that passes for the wrong reason.
+ */
+export function reset() {
+  currentTick = 0;
+  timers.length = 0;
+}
+
 function logTimerError(error) {
   try {
     const message = error && error.message ? error.message : String(error);
