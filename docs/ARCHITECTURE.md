@@ -1,6 +1,6 @@
 # Architecture — génération par copies de chunks
 
-**Statut : livré.** 4 modules, 54 tests verts, bundle de 17 k caractères sur les 512 k autorisés.
+**Statut : livré.** 4 modules, 58 tests verts, bundle de 17 k caractères sur les 512 k autorisés.
 
 Ce document remplace l'architecture par ouvertures des Phases 0 à 4, supprimée avec son moteur. Il décrit ce qui existe, pas ce qui est prévu : toute divergence entre ce texte et le code est un défaut du texte.
 
@@ -117,11 +117,13 @@ Aucune de ces lectures n'est sur le chemin chaud : un scan lit un bloc par chunk
 
 Aucune de ces structures ne dépend du nombre de salles construites.
 
-## 9. Les coordonnées des modèles
+## 9. Les coordonnées des salles : des chunks
 
-Elles viennent d'une série fournie par le propriétaire du projet : `-2 1 0`, `-4 1 0`, `-6 1 0`… **Cette série n'est pas utilisable telle quelle**, et c'est une contrainte de la plateforme, pas un choix : `copyChunk` copie un chunk de 32 blocs, et les 15 coordonnées tombent toutes dans le même chunk (celui de x −32 à −1). Il faut une coordonnée par chunk — la série doit progresser de 32 en 32.
+Elles viennent d'une série fournie par le propriétaire du projet : `-2 1 0`, `-4 1 0`, `-6 1 0`…, **en coordonnées de chunk**. Un pas de 1 vaut 32 blocs, donc deux salles voisines sont à 64 blocs et la série est valide telle quelle : chaque salle est un chunk distinct, ce que `copyChunk` exige.
 
-Le code ne dépend pas de la réponse : `src` est n'importe quelle case du chunk, et le moteur copie le chunk qui la contient. Changer la série ne demande donc aucune modification de code, seulement d'éditer `READY_ROOMS`.
+La conversion chunk → bloc se fait dans `chunkToBlock`, à un seul endroit, une seule fois, quand la table est lue : tout le reste du moteur travaille en blocs, parce que c'est ce que `copyChunk` et `getBlock` prennent. Les cas négatifs sont testés explicitement (`-2` → bloc `-64`, et la case `-65` appartient bien au chunk `-3`) : une erreur de frontière décalerait une salle d'un bloc et le joueur atterrirait dans un mur.
+
+Une salle n'a **aucune propriété** : ni portes, ni entrée désignée, ni hauteur. Le tirage est un simple `hash % nombre_de_salles`, et aucune contrainte de connexion n'est vérifiée — le propriétaire du projet a confirmé que les salles se posent au hasard.
 
 ## 10. Les deux limites honnêtes
 
@@ -131,9 +133,9 @@ Le code ne dépend pas de la réponse : `src` est n'importe quelle case du chunk
 
 ## 11. Tests
 
-`npm test` — 54 tests.
+`npm test` — 58 tests.
 
-- `tests/dungeon/config.test.js` — une couche par difficulté, deux chunks d'écart ; un pad = une difficulté ; Hell est le dernier ; le tirage de salle est stable et étalé ; les huit niveaux tirent dans la même liste ; les salles d'un niveau passent avant les communes ; une salle malformée est ignorée sans casser le niveau.
+- `tests/dungeon/config.test.js` — une couche par difficulté, deux chunks d'écart ; un pad = une difficulté ; Hell est le dernier ; le tirage de salle est stable et étalé ; les huit niveaux tirent dans la même liste ; les salles d'un niveau passent avant les communes ; une salle malformée est ignorée sans casser le niveau ; **la conversion chunk → bloc, y compris sur les coordonnées négatives** ; les 15 salles livrées occupent 15 chunks distincts ; une salle ne porte aucune propriété.
 - `tests/dungeon/loader.test.js` — un faux serveur où **`copyChunk` depuis un chunk non chargé ne fait rien** et où `getBlock` renvoie `null` hors chunk chargé : la copie est une seule, la file est bornée, une copie n'est jamais rejouée, une salle illisible est désactivée puis retirée de la file, une salle qui ne se vérifie pas est oubliée, la hauteur de sol est lue et non configurée, le témoin est écrit par le moteur dans le plafond et non pris au modèle, un niveau vide ne coûte rien.
 - `tests/world-code.test.js` — le bundle réel, dans un contexte `vm`, sur un faux serveur : compte à rebours, entrée, atterrissage sur le sol, gravité coupée puis rendue, pad vers la difficulté suivante, ordre des copies, joueur qui tombe et qui est reposé, aucun bloc écrit hors chunk chargé, commandes `/dbg`.
 

@@ -131,6 +131,13 @@ export function createLoader({ api, log }) {
    * Chunk-local Y of a template's floor, found by walking up from the bottom of
    * the chunk.
    *
+   * Only the templates **of this level's horizontal area** are probed: rooms are
+   * moved onto the level's own layer when they are copied, so the Y of the chunk
+   * they are stored at says nothing about where the floor will be once copied. The
+   * copy keeps the room's vertical layout intact — the floor stays at the same
+   * offset from the bottom of the chunk — which is what makes this value reusable
+   * at the destination.
+   *
    * Read from the world rather than configured: a hand-written floor height is
    * wrong for the one template out of ten whose builder put the floor one cell
    * higher, and the symptom is a player landing inside the floor or two blocks
@@ -264,10 +271,11 @@ export function createLoader({ api, log }) {
   /**
    * Places the entrance room, alone and first.
    *
-   * The player is already standing in that chunk — it is the read that loaded
-   * it — so this is the one copy whose template is certainly readable, and the
-   * one the player's landing depends on. It is therefore also the only copy whose
-   * verification the service waits for.
+   * The entrance is the room the draw gives the origin chunk, like any other: no
+   * room declares itself the entrance, because a room is just a chunk and the
+   * first one a player sees should be an ordinary room. What makes this copy
+   * special is only that it happens before the rest, and that the player's landing
+   * depends on it.
    */
   function placeEntrance(difficulty) {
     const level = levelState(difficulty);

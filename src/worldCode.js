@@ -224,9 +224,12 @@ function runDebugCommand(playerId, verb) {
       return;
     }
     for (const row of rows) {
-      const where = `[${row.src.join(", ")}]`;
       const state = row.disabled ? "DISABLED" : row.loaded ? "loaded" : "NOT LOADED";
-      debugSay(playerId, `[dbg] ${row.difficulty} · #${row.index} ${where} faces ${row.faces || "-"} · ${state}`);
+      debugSay(
+        playerId,
+        `[dbg] ${row.difficulty} · #${row.index} chunk ${row.chunk.join(",")}`
+          + ` → block ${row.src.join(",")} · ${state}`,
+      );
     }
     return;
   }
@@ -264,7 +267,7 @@ function runDebugCommand(playerId, verb) {
       + ` · chunk ${report.chunk.x},${report.chunk.z}`,
     `[dbg] rooms planned ${report.planned} · queued ${report.queued} · placed ${report.placed}`
       + ` · templates ${report.templates} (off ${report.disabled})`,
-    `[dbg] template example ${report.exampleSrc ? `[${report.exampleSrc.join(", ")}]` : "none"} — /dbg templates`,
+    `[dbg] room example chunk ${report.exampleChunk ? report.exampleChunk.join(",") : "none"} — /dbg templates`,
   ]);
 }
 
