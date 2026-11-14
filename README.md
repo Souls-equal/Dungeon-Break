@@ -117,11 +117,23 @@ Tous les textes visibles par les joueurs sont en anglais.
 - **Une sonde par chunk candidat.** Un `getBlock` sur le Bedrock du chunk répond à tout : pas envoyé → il est demandé et prêt **2 ticks** plus tard ; déjà bâti → on passe ; vide → il est mis en file.
 - **Une copie par tick et par donjon.** La copie elle-même se fait en moins d'un tick ; elle n'est jamais doublée dans un tick.
 - **Un scan toutes les 4 ticks**, borné à 8 nouvelles salles par scan. Un joueur immobile dont les salles sont faites ne coûte aucune lecture.
-- **Rien n'est écrit dans un chunk.** Le moteur ne connaît que `copyChunk` et des lectures : c'est ce qui rend les salles sûres à construire à la main.
+- **Rien n'est écrit dans un chunk.** Le moteur ne connaît que `copyChunk` et des lectures : c'est ce qui rend les salles sûres à construire à la main. **Une seule exception**, demandée par le propriétaire : le record « salle nettoyée » de la section *Mobs*, posé avec `setBlockData` — des données **sur** un bloc, jamais un bloc.
 - **Une salle est reconnue par son Bedrock**, pas par un compteur : le tick suivant la copie, la sonde relit la destination et c'est le monde qui confirme. `/dbg mem` sépare les salles vues (`rooms`), celles en vol (`in flight`) et les chunks en cours de chargement.
 - **Entrée.** Demande des modèles, téléportation au centre du chunk d'entrée, `chunkLoadTicks: 2`, copie de la salle d'entrée (si elle n'y est pas déjà), tirage de l'atterrissage, puis le joueur y est posé. La gravité est coupée pendant ces ticks, ce qui remplace la boîte de murs de l'ancien moteur. Un sol qui ne vient pas est réessayé `entryMaxTicks` fois, puis c'est un message — jamais un joueur dans le vide.
 - **Un donjon par entrée, à une place tirée au hasard dans les trois directions.** Chaque entrée tire `x` et `z` en chunks dans `-3125..3124` (**±100 000 blocs**) et `y` dans `32..3124` (**blocs 1 000 à 100 000**, `spawnChunkYMin/Max`), à au moins `spawnSeparation: 20 000` blocs de toute autre entrée vivante dans **les trois directions** (`spawnDraws: 24` essais, la plus éloignée l'emporte). Quitter libère la place. Deux joueurs ne peuvent donc pas se croiser, et rien n'est écrit dans les chunks : c'est le jeu qui vide la carte quand le propriétaire active le réglage. `/dbg` affiche l'origine `x,y,z`, `/dbg mem` celle de chaque donjon.
 - **Atterrissage testé là où le joueur sera.** La salle d'entrée est copiée d'abord, puis le sol est lu **dans le chunk de destination** : la position de départ est ce sol + `spawnAboveFloor = 7` (la mesure en jeu, plus les 5 blocs demandés). Ensuite le moteur ne suppose plus rien : il teste la case du milieu puis **le tour** (8 cases), en exigeant que la case **et celle au-dessus** soient de l'Air — les deux cases d'un joueur debout. Si rien ne passe, il monte de **+1** (2 fois) ; si tout est bloqué, il tire **une autre colonne dans le même chunk** (3 fois). Rien ne marche → un message, jamais un joueur dans la pierre. Le joueur reçoit `Landed at y … · floor block at y …`, et le bloc sous ses pieds est relu après la téléportation.
+
+## Mobs : des salles à nettoyer
+
+- **Le donjon est une série de salles à vider.** À l'entrée dans une salle, les **quatre salles autour** (x+1, x−1, z+1, z−1) reçoivent leurs mobs. Les salles déjà nettoyées n'en reçoivent jamais.
+- **Entrer dans une salle laisse ses mobs vivants** et tue ceux des **autres** salles : on ne perd pas le combat qu'on vient de commencer, on ne traîne pas celui qu'on a laissé derrière.
+- **Tuer le dernier mob d'une salle la rend *clear*.** Le record est écrit **dans la salle**, sur le bloc du coin (`mobClearCell`), avec `setBlockData` : il survit à un redémarrage et à un retour plus tard, et une salle clear ne se remplit plus jamais. Le joueur reçoit `CLEAR — nothing left in this room.`
+- **La salle du spawn est clear d'emblée** : un run ne commence jamais par un combat.
+- **Le bon Y est celui du joueur.** Sa position d'atterrissage est vérifiée une fois, et c'est cette hauteur (`spawnY`) que prennent tous les mobs du run : aucun sol n'est recalculé. Une case n'est retenue que si **elle et celle au-dessus ne sont pas solides** — `api.getBlockSolidity`, pas « est-ce de l'Air » : le donjon contient des plantes, et on les traverse. Les plaques de difficulté sont exclues.
+- **Une salle doit exister** avant de recevoir des mobs : le moteur ne connaît pas la réponse (« chunk vide » et « air d'une salle » se lisent pareil), il ne spawn que dans les chunks que sa propre sonde a confirmés (`placed`).
+- **Le type est tiré au hasard à chaque mob** entre `Draugr Zombie` et `Zombie` (`mobTypes`) ; un type que le jeu refuse — une exception, ou un `null` dans une salle où l'autre type a marché — est abandonné pour la session au lieu d'être retenté à chaque salle. Les statistiques de base du jeu sont **multipliées** par la ligne de `MOB_TUNING` de la difficulté — `count`, `health`, `damage`, `speed`, de Very Easy (2 mobs, ×1) à Hell (5 mobs, ×5 PV, ×3 dégâts, ×1,5 vitesse).
+- **Un spawn est asynchrone** : `attemptSpawnMob` rend un id avant que le mob existe, donc les statistiques sont appliquées **au tick suivant** (file `pendingTuning`).
+- **Quitter un donjon tue ses mobs** ; un mob que le jeu retire tout seul (trop loin, trop de mobs pour le nombre de joueurs) est oublié **sans** compter comme une salle nettoyée.
 
 ## Sources et version compacte
 
@@ -140,7 +152,7 @@ src/worldCode.js           lobby, pads, /dbg
 - `npm run build` régénère le fichier compact.
 - `npm run watch` le régénère à chaque sauvegarde dans `src/`.
 - `npm run check` vérifie que le bundle est à jour, valide les syntaxes, et refuse un bundle où `copyChunk`, `createShopItem` ou la table des modèles ont disparu au minification.
-- `npm test` lance les 78 tests : moteur, configuration, et le bundle réel exécuté dans un `vm` contre un faux serveur qui applique les règles de Bloxd.
+- `npm test` lance les 93 tests : moteur, configuration, et le bundle réel exécuté dans un `vm` contre un faux serveur qui applique les règles de Bloxd.
 
 Le workflow GitHub vérifie la version générée sur les Pull Requests et resynchronise `world-code/` après un merge dans `main`.
 

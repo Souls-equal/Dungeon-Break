@@ -62,6 +62,12 @@ function createWorld(onlinePlayerIds, options = {}) {
   const players = options.positions ? { ...options.positions } : {};
   const template = new Map();
   const world = new Map();
+  // Mobs and the per-block data the code reads back: a cleared room is a record on a block.
+  const mobs = new Map();
+  const mobSpawns = [];
+  const mobDespawns = [];
+  const blockData = new Map();
+  const blockDataWrites = [];
   const loaded = new Set();
   const pending = [];
   const key = (x, y, z) => `${Math.floor(x)}|${Math.floor(y)}|${Math.floor(z)}`;
@@ -164,6 +170,42 @@ function createWorld(onlinePlayerIds, options = {}) {
           ), name);
         }
       },
+      // --- mobs -------------------------------------------------------------
+      // A spawn hands back an id at once, but the mob only exists one tick later: the
+      // fake keeps that delay, because applying a setting too early is the bug the
+      // docs warn about.
+      attemptSpawnMob: (mobType, x, y, z, opts = {}) => {
+        mobSpawns.push({ mobType, x, y, z, opts });
+        const mobId = `mob-${mobSpawns.length}`;
+        mobs.set(mobId, { type: mobType, settings: new Map(), pending: true });
+        return mobId;
+      },
+      despawnMob: (mobId) => {
+        mobDespawns.push(mobId);
+        mobs.delete(mobId);
+      },
+      getMobIds: () => Array.from(mobs.keys()),
+      getMobSetting: (mobId, setting) => {
+        const mob = mobs.get(mobId);
+        if (!mob || mob.pending) return undefined;
+        return mob.settings.has(setting) ? mob.settings.get(setting) : 150;
+      },
+      setMobSetting: (mobId, setting, value) => {
+        const mob = mobs.get(mobId);
+        if (!mob || mob.pending) return;
+        mob.settings.set(setting, value);
+      },
+      // Solid, and solid for an unloaded chunk — the documented trap.
+      getBlockSolidity: (x, y, z) => {
+        if (!near(x, y, z)) return true;
+        const name = context.api.getBlock(x, y, z);
+        return !(name === "Air" || name === "Short Grass");
+      },
+      getBlockData: (x, y, z) => blockData.get(key(x, y, z)) || null,
+      setBlockData: (x, y, z, data) => {
+        blockData.set(key(x, y, z), data);
+        blockDataWrites.push({ x, y, z, data });
+      },
       isNearInterrupt: () => false,
       setPosition: (playerId, position) => {
         const value = Array.from(position);
@@ -190,6 +232,11 @@ function createWorld(onlinePlayerIds, options = {}) {
   return {
     context,
     messages,
+    mobs,
+    mobSpawns,
+    mobDespawns,
+    blockData,
+    blockDataWrites,
     clientOptions,
     positions,
     copies,
@@ -202,6 +249,8 @@ function createWorld(onlinePlayerIds, options = {}) {
     tick(count = 1) {
       for (let index = 0; index < count; index += 1) {
         advance();
+        // A mob spawned on the previous tick exists now, which is when its stats apply.
+        for (const mob of mobs.values()) mob.pending = false;
         context.tick();
       }
     },
@@ -672,4 +721,53 @@ test("buying anything else does nothing", () => {
   assert.deepEqual(world.positions.at(-1).position, lastDungeonPosition);
   assert.ok(world.context.playerCommand("p1", "level"));
   assert.ok(!said(world, "p1").some((message) => /not in a dungeon/.test(message)));
+});
+
+// -------------------------------------------------------------------- mobs --
+
+test("entering a dungeon puts mobs in the rooms around, and writes the entrance clear", () => {
+  const world = createWorld(["p1"]);
+  startDungeon(world, "p1");
+  world.tick(80);
+
+  assert.ok(world.mobSpawns.length > 0, "no mob was spawned around the entrance");
+  // The record is written on a block of the room, not in the code's memory.
+  const records = world.blockDataWrites.filter((write) => write.data && write.data.clear);
+  assert.ok(records.length > 0, "the entrance room was never written as clear");
+  // The first record is the room the player is standing in.
+  const position = world.positions.at(-1).position;
+  const entranceX = Math.floor(position[0] / SIZE) * SIZE;
+  const entranceZ = Math.floor(position[2] / SIZE) * SIZE;
+  assert.ok(records.some((write) => write.x === entranceX && write.z === entranceZ),
+    "the room the player landed in is not the one recorded as clear");
+  // Nothing is written as a block: only the corner record, which is data on a block.
+  assert.deepEqual(world.violations, [], "the mob code wrote a block into a room");
+});
+
+test("killing the last mob of a room says CLEAR and records the room", () => {
+  const world = createWorld(["p1"]);
+  startDungeon(world, "p1");
+  world.tick(80);
+
+  const roomIds = Array.from(world.mobs.keys());
+  assert.ok(roomIds.length > 0, "there was nothing to kill");
+  // Kill them one by one, as the game calls back.
+  const before = world.blockDataWrites.length;
+  for (const mobId of roomIds) {
+    world.context.onPlayerKilledMob("p1", mobId);
+    world.mobs.delete(mobId);
+  }
+  assert.ok(world.blockDataWrites.length > before, "the rooms cleared by the last kill were not recorded");
+  assert.ok(said(world, "p1").some((message) => message.includes("CLEAR")),
+    "the player was never told the room is clear");
+});
+
+test("going back to spawn despawns the mobs of the dungeon", () => {
+  const world = createWorld(["p1"]);
+  startDungeon(world, "p1");
+  world.tick(80);
+  assert.ok(world.mobs.size > 0, "no mob was spawned, so there is nothing to clean up");
+  world.context.onPlayerBoughtShopItem("p1", "Utilities", "Teleport to spawn");
+  assert.equal(world.mobs.size, 0, "a mob of the dungeon survived the way back to spawn");
+  assert.equal(world.context.DUNGEON_LEVELS.length, 8);
 });

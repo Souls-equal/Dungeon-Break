@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { DUNGEON_CONFIG, findDifficulty, floorOfLayer } from "../../src/dungeon/config.js";
+import { DUNGEON_CONFIG, MOB_TUNING, findDifficulty, floorOfLayer } from "../../src/dungeon/config.js";
 import { createLoader, chunkOfWorld } from "../../src/dungeon/loader.js";
 import { reset as resetScheduler } from "../../src/utils/scheduler.js";
 
@@ -24,8 +24,34 @@ function createServer(options = {}) {
   const world = new Map();
   const loadedChunks = new Set();
   const pendingLoads = [];
-  const calls = { copy: [], getBlock: [], setBlock: [], setPosition: [] };
+  const calls = {
+    copy: [],
+    getBlock: [],
+    setBlock: [],
+    setPosition: [],
+    spawnMob: [],
+    despawnMob: [],
+    setMobSetting: [],
+    getMobSetting: [],
+    getBlockSolidity: [],
+    setBlockData: [],
+  };
   const players = new Map();
+  // Mob state: the ids the game holds, the data written on blocks, and the mob types
+  // this fake world refuses (the documented `null` of an unknown name).
+  const mobs = new Map();
+  const blockData = new Map();
+  const refusedTypes = new Set(options.refusedMobTypes || []);
+  const mobLimit = options.mobLimit === undefined ? 64 : options.mobLimit;
+  let spawnCounter = 0;
+  const MOB_BASE = options.mobBase || {
+    maxHealth: 150,
+    initialHealth: 150,
+    attackDamage: 5,
+    baseRunningSpeed: 4.2,
+    baseWalkingSpeed: 3.5,
+  };
+  const PLANT_BLOCKS = new Set(["Grass", "Short Grass", "Fern", "Dandelion", "Poppy"]);
   const loadDelay = options.loadDelay === undefined ? 2 : options.loadDelay;
   const loadRadius = options.loadRadius === undefined ? 3 : options.loadRadius;
 
@@ -100,6 +126,60 @@ function createServer(options = {}) {
         }
       }
     },
+    // --- mobs, with the three behaviours this code depends on -------------------
+    // A spawn is **asynchronous**: the id is handed back at once, but the mob only
+    // exists at the next tick, and reading or setting anything about it before then is
+    // the mistake the docs warn about.
+    attemptSpawnMob(mobType, x, y, z, opts = {}) {
+      calls.spawnMob.push({ mobType, x, y, z, opts });
+      if (refusedTypes.has(mobType)) return null;
+      if (mobs.size >= mobLimit) return null;
+      const mobId = `mob${mobs.size + 1}-${spawnCounter += 1}`;
+      mobs.set(mobId, { type: mobType, x, y, z, pending: true, settings: new Map() });
+      return mobId;
+    },
+    despawnMob(mobId) {
+      calls.despawnMob.push(mobId);
+      mobs.delete(mobId);
+    },
+    getMobIds() { return Array.from(mobs.keys()); },
+    getMobSetting(mobId, setting) {
+      calls.getMobSetting.push({ mobId, setting });
+      const mob = mobs.get(mobId);
+      if (!mob || mob.pending) return undefined;
+      return mob.settings.has(setting) ? mob.settings.get(setting) : MOB_BASE[setting];
+    },
+    setMobSetting(mobId, setting, value) {
+      calls.setMobSetting.push({ mobId, setting, value });
+      const mob = mobs.get(mobId);
+      if (!mob || mob.pending) return;
+      mob.settings.set(setting, value);
+    },
+    /**
+     * Solid, and **solid when the chunk is unloaded** — the trap documented in the API
+     * reference, kept in the fake so a spawn in the void cannot pass a test.
+     */
+    getBlockSolidity(x, y, z) {
+      calls.getBlockSolidity.push({ x, y, z });
+      if (!loadedChunks.has(chunkKeyOf(x, y, z))) return true;
+      const name = this.getBlock(x, y, z);
+      return !(name === "Air" || PLANT_BLOCKS.has(name));
+    },
+    getBlockData(x, y, z) {
+      if (!loadedChunks.has(chunkKeyOf(x, y, z))) return null;
+      return blockData.get(cellKey(x, y, z)) || null;
+    },
+    /** Data about a block: it does not create the block, and it dies with the block. */
+    setBlockData(x, y, z, data) {
+      calls.setBlockData.push({ x, y, z, data });
+      blockData.set(cellKey(x, y, z), data);
+    },
+    setBlock(x, y, z, name) {
+      calls.setBlock.push({ x, y, z, name });
+      world.set(cellKey(x, y, z), name);
+      // Documented: the data of a block is cleared when the block changes.
+      blockData.delete(cellKey(x, y, z));
+    },
     isNearInterrupt() { return false; },
     log() {},
   };
@@ -110,6 +190,18 @@ function createServer(options = {}) {
     templateBlocks,
     calls,
     loadedChunks,
+    mobs,
+    blockData,
+    refusedTypes,
+    /** One server tick: the mobs spawned during the previous one now exist. */
+    existMobs() {
+      for (const mob of mobs.values()) {
+        if (mob.pending) {
+          mob.pending = false;
+          mob.settings = new Map();
+        }
+      }
+    },
     /** One server tick: delayed chunk loads complete here. */
     advance() { tickLoads(); },
     /** Fills a template chunk with a room the way a builder would. */
@@ -780,4 +872,279 @@ test("the rooms around an entry are copied on the layer the entry drew", () => {
   const landing = loader.landingPosition(VERY_EASY, entryId);
   assert.ok(landing, "no landing was drawn");
   assert.equal(Math.floor(landing[1] / SIZE), 700);
+});
+
+// -------------------------------------------------------------------- mobs --
+
+// The platformes a room floor the tests build stands on: `addTemplate` puts the floor at
+// local y 2 and Bedrock under it, so a body stands at local y 3 and the entrance layer
+// starts at y 0. These tests use the same numbers as the landing tests.
+const FLOOR_LOCAL_Y = 2;
+const STAND_Y = FLOOR_LOCAL_Y + 1;
+
+/**
+ * A loader whose entrance room has been copied, with the player standing in it.
+ *
+ * `rooms` are extra chunks the world code would have copied around the entrance; they
+ * are copied here through the same `placeOne` path, once the chunk has been sent.
+ */
+function withEntranceRoom(server, options = {}) {
+  server.addTemplate(TEMPLATE_A);
+  const difficulty = options.difficulty || VERY_EASY;
+  const { loader, level, entryId } = createTestLoader(server, ROOMS, difficulty);
+  loader.warmTemplates(difficulty, entryId);
+  server.api.setPosition("player", [16, floorOfLayer(TEST_ORIGIN.y), 16]);
+  for (let tick = 0; tick < 5; tick += 1) server.advance();
+  loader.placeEntrance(difficulty, entryId);
+  for (let tick = 0; tick < 3; tick += 1) server.advance();
+  loader.tick([{ difficulty, entryId, chunks: [{ x: 0, z: 0 }] }]);
+
+  for (const [x, z] of options.rooms || []) {
+    // A room is queued behind whatever is already queued: `placeOne` copies the **front**
+    // of the queue, which is the engine's own rule, so the queue is drained here rather
+    // than assumed to hold one entry.
+    readyNow(level, x, z);
+    level.queue.push({ chunkX: x, chunkZ: z, template: level.templates[0] });
+    level.planned.delete(`${x}|${z}`);
+    while (level.queue.length > 0) loader.placeOne(level);
+    for (let tick = 0; tick < 2; tick += 1) server.advance();
+    loader.tick([{ difficulty, entryId, chunks: [{ x, z }] }]);
+    // The world now shows the room: that is what `placed` records, and what a room must
+    // be before it can hold mobs. Confirmed through the loader's own probe where the
+    // template allows it, and stated here otherwise — the copy *did* happen, and the
+    // test server is a whole room.
+    if (level.planned.get(`${x}|${z}`) !== "placed") level.planned.set(`${x}|${z}`, "placed");
+  }
+  return { loader, level, entryId };
+}
+
+test("entering a room puts mobs in the four rooms around it, never in the room itself", () => {
+  const server = createServer();
+  const { loader, level } = withEntranceRoom(server, { rooms: [[1, 0], [-1, 0], [0, 1], [0, -1]] });
+
+  loader.enterRoom(level, 0, 0, STAND_Y);
+  server.existMobs();
+
+  assert.equal(level.mobs.size, 4, "the four rooms around the player are not the ones with mobs");
+  for (const key of ["1|0", "-1|0", "0|1", "0|-1"]) {
+    const ids = level.mobs.get(key);
+    assert.ok(Array.isArray(ids), `room ${key} holds no mob list`);
+    assert.equal(ids.length, 2, `room ${key} does not hold the Very Easy count of 2 mobs`);
+  }
+  assert.equal(level.mobs.has("0|0"), false, "the room the player is in was populated");
+  // Nothing is marked clear by entering a room: a room is clear when its last mob dies.
+  assert.deepEqual(server.calls.setBlockData, [], "entering a room wrote a clear record");
+});
+
+test("the mobs stand at the player's height, and never inside a plant or a wall", () => {
+  const server = createServer();
+  const { loader, level } = withEntranceRoom(server, { rooms: [[1, 0], [-1, 0], [0, 1], [0, -1]] });
+
+  const before = server.calls.spawnMob.length;
+  loader.enterRoom(level, 0, 0, STAND_Y);
+  const spawned = server.calls.spawnMob.slice(before);
+
+  assert.equal(spawned.length, 8, "the rooms around did not each get their two mobs");
+  for (const spawn of spawned) {
+    // The height is the player's, unchanged: nothing is searched again.
+    assert.equal(spawn.y, STAND_Y, "a mob was spawned at a height the player does not stand at");
+    // And the cell is a cell a body fits in, read with `getBlockSolidity` — not with "Air".
+    assert.equal(server.api.getBlockSolidity(Math.floor(spawn.x), spawn.y, Math.floor(spawn.z)), false,
+      "a mob was spawned in a solid block");
+    assert.equal(server.api.getBlockSolidity(Math.floor(spawn.x), spawn.y + 1, Math.floor(spawn.z)), false,
+      "a mob was spawned with no headroom");
+    // Never on the pads' own cell: that would send the player to the next level.
+    const localX = ((spawn.x % SIZE) + SIZE) % SIZE;
+    const localZ = ((spawn.z % SIZE) + SIZE) % SIZE;
+    assert.ok(Math.abs(localX - DUNGEON_CONFIG.probeLocalXZ[0]) > 1 || Math.abs(localZ - DUNGEON_CONFIG.probeLocalXZ[1]) > 1,
+      "a mob was spawned on the pads");
+  }
+});
+
+test("a mob spawned with no headroom or in a plant is not counted", () => {
+  const server = createServer();
+  const { loader, level } = withEntranceRoom(server, { rooms: [[1, 0]] });
+
+  // A plant is not solid: a mob may stand in one. A wall is.
+  const baseX = 1 * SIZE;
+  server.api.setBlock(baseX + 5, STAND_Y, 5, "Short Grass");
+  const before = server.calls.spawnMob.length;
+  loader.enterRoom(level, 0, 0, STAND_Y);
+  loader.spawnRoomMobs(level, 1, 0, STAND_Y);
+  assert.ok(server.calls.spawnMob.length > before, "no mob was spawned in a room of plants");
+  // And the plant cell really is usable: the question asked is solidity, not "Air".
+  assert.equal(server.api.getBlockSolidity(baseX + 5, STAND_Y, 5), false,
+    "a plant counts as solid: a mob could not use the cells a player can");
+});
+
+test("moving to a room kills the mobs of the rooms left behind", () => {
+  const server = createServer();
+  const { loader, level } = withEntranceRoom(server, {
+    rooms: [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [2, 0]],
+  });
+
+  loader.enterRoom(level, 0, 0, STAND_Y);
+  const firstRound = Array.from(level.mobs.values()).flat();
+  assert.equal(firstRound.length, 8);
+
+  // The player walks into the room at x+1: its neighbours are populated, the rest die.
+  const before = server.calls.despawnMob.length;
+  loader.enterRoom(level, 1, 0, STAND_Y);
+  const despawned = server.calls.despawnMob.slice(before);
+
+  for (const mobId of despawned) {
+    assert.ok(firstRound.includes(mobId), "a mob that was never spawned was despawned");
+  }
+  // 0|0, 0|1, 0|-1 are no longer wanted; 1|0 is where the player is (its mobs die too).
+  for (const key of ["0|1", "0|-1"]) {
+    assert.equal(level.mobs.has(key), false, `room ${key} kept its mobs after the player walked away`);
+  }
+  // The room the player walked into keeps its mobs: that is the room they are fighting in.
+  const walkedInto = level.mobs.get("1|0");
+  assert.equal(walkedInto.length, 2, "the mobs of the room the player walked into were removed");
+  assert.equal(despawned.some((mobId) => walkedInto.includes(mobId)), false,
+    "a mob of the room the player is standing in was despawned");
+});
+
+test("killing every mob of a room writes the record in its corner block", () => {
+  const server = createServer();
+  const { loader, level } = withEntranceRoom(server, { rooms: [[1, 0]] });
+  loader.enterRoom(level, 0, 0, STAND_Y);
+
+  // A copy: `mobKilled` removes the dead mob from the room's own list.
+  const ids = [...level.mobs.get("1|0")];
+  assert.equal(ids.length, 2);
+  // The game despawns a killed mob itself; the code only hears the callback.
+  server.api.despawnMob(ids[0]);
+
+  // One down, one to go: the room is not clear yet.
+  assert.equal(loader.mobKilled(level, ids[0]), null, "a room with a mob left was reported clear");
+  server.api.despawnMob(ids[1]);
+  const cleared = loader.mobKilled(level, ids[1]);
+  assert.deepEqual(cleared, { chunkX: 1, chunkZ: 0 });
+
+  const [cx, cy, cz] = DUNGEON_CONFIG.mobClearCell;
+  const floorLayer = floorOfLayer(TEST_ORIGIN.y);
+  assert.equal(server.api.getBlockData(SIZE + cx, floorLayer + cy, 0 + cz).clear, true,
+    "the cleared room has no record in its corner block");
+  // And the record is **in the room**, not just in memory: a fresh read says so.
+  assert.equal(loader.isRoomClear(level, 1, 0), true);
+});
+
+test("a cleared room is never populated again", () => {
+  const server = createServer();
+  const { loader, level } = withEntranceRoom(server, { rooms: [[1, 0]] });
+
+  loader.markRoomClear(level, 1, 0);
+  const before = server.calls.spawnMob.length;
+  loader.enterRoom(level, 0, 0, STAND_Y);
+  assert.equal(server.calls.spawnMob.slice(before)
+    .filter((spawn) => Math.floor(spawn.x / SIZE) === 1).length, 0,
+  "a room already recorded as clear was populated again");
+});
+
+test("a mob type the game refuses is dropped, and the other one still spawns", () => {
+  const server = createServer({ refusedMobTypes: ["Zombie"] });
+  const { loader, level } = withEntranceRoom(server, { rooms: [[1, 0]] });
+
+  const before = server.calls.spawnMob.length;
+  loader.enterRoom(level, 0, 0, STAND_Y);
+  const attempted = server.calls.spawnMob.slice(before);
+  assert.ok(attempted.length > 0, "nothing was spawned with one of the two types refused");
+  // The refused type is still *asked for* — it is drawn and the game says no — but it
+  // never becomes a mob, and the working type still fills the room.
+  assert.deepEqual([...new Set(Array.from(server.mobs.values()).map((mob) => mob.type))],
+    ["Draugr Zombie"], "a refused type was still used");
+  assert.equal(level.mobs.get("1|0").length, 2, "the room did not get its count from the working type");
+});
+
+test("the difficulty multiplies the stats of the mobs it spawns", () => {
+  const server = createServer();
+  const difficulty = findDifficulty("hell");
+  const { loader, level, entryId } = withEntranceRoom(server, { difficulty, rooms: [[1, 0]] });
+  loader.enterRoom(level, 0, 0, STAND_Y);
+  // The spawn is asynchronous: the mobs exist one tick later, which is also when their
+  // stats are applied.
+  server.existMobs();
+  loader.tick([{ difficulty, entryId, chunks: [{ x: 1, z: 0 }] }]);
+
+  const ids = [...level.mobs.get("1|0")];
+  assert.equal(ids.length, 5, "Hell does not hold its five mobs");
+  for (const mobId of ids) {
+    const mob = server.mobs.get(mobId);
+    const health = mob.settings.get("maxHealth");
+    assert.equal(health, 150 * MOB_TUNING.hell.health, "the health multiplier was not applied");
+  }
+});
+
+test("a mob the game removes on its own is forgotten but does not clear the room", () => {
+  const server = createServer();
+  const { loader, level } = withEntranceRoom(server, { rooms: [[1, 0]] });
+  loader.enterRoom(level, 0, 0, STAND_Y);
+
+  const ids = [...level.mobs.get("1|0")];
+  assert.equal(loader.mobGone(level, ids[0]), true);
+  assert.equal(loader.mobGone(level, ids[1]), true);
+  // Both mobs are gone, but neither was killed: the room must not be recorded as clear.
+  assert.equal(level.mobs.has("1|0"), false, "the empty room was not forgotten");
+  assert.equal(loader.isRoomClear(level, 1, 0), false,
+    "a room emptied by the game was recorded as cleared by the player");
+});
+
+test("a room whose mobs were all killed is not repopulated when the player comes back", () => {
+  const server = createServer();
+  const { loader, level } = withEntranceRoom(server, { rooms: [[1, 0]] });
+  // The service writes the entrance clear before anything reads it; done here the same way.
+  loader.markRoomClear(level, 0, 0);
+  loader.enterRoom(level, 0, 0, STAND_Y);
+  // Fight the room, and win it.
+  const ids = [...level.mobs.get("1|0")];
+  for (const mobId of ids) loader.mobKilled(level, mobId);
+  assert.equal(loader.isRoomClear(level, 1, 0), true);
+
+  // Step away, then back in: the record in the room is what answers, not our memory.
+  level.mobs.delete("1|0");
+  level.populated.delete("1|0");
+  const before = server.calls.spawnMob.length;
+  loader.enterRoom(level, 1, 0, STAND_Y);
+  assert.equal(server.calls.spawnMob.length, before, "a cleared room was populated again");
+  assert.equal(level.mobs.has("1|0"), false);
+});
+
+test("the mob type is drawn per mob, not taken from the top of the list", () => {
+  const server = createServer();
+  const { loader, level } = withEntranceRoom(server, { rooms: [[1, 0]] });
+  // Four rooms in a row is 8 mobs a room: enough draws to see both types, and a fixed
+  // order would give the same one every time.
+  for (const [x, z] of [[1, 0], [0, 1], [0, -1], [-1, 0]]) {
+    loader.spawnRoomMobs(level, x, z, STAND_Y);
+  }
+  const types = new Set(server.calls.spawnMob.map((spawn) => spawn.mobType));
+  assert.deepEqual([...types].sort(), ["Draugr Zombie", "Zombie"],
+    "only one mob type was ever spawned from a two-type list");
+});
+
+test("a type that never answers in a room where the other worked is dropped for the session", () => {
+  const server = createServer({
+    // `null` for one type only, which is what a full world does not do: this is a name
+    // that exists but cannot be placed.
+    mobBase: { maxHealth: 150, initialHealth: 150, attackDamage: 5, baseRunningSpeed: 4.2, baseWalkingSpeed: 3.5 },
+  });
+  const attemptSpawnMob = server.api.attemptSpawnMob;
+  server.api.attemptSpawnMob = (mobType, x, y, z, opts) => (
+    mobType === "Zombie" ? null : attemptSpawnMob(mobType, x, y, z, opts)
+  );
+  const { loader, level } = withEntranceRoom(server, { rooms: [[1, 0]] });
+
+  loader.spawnRoomMobs(level, 1, 0, STAND_Y);
+  assert.equal(level.refusedMobs.has("Zombie"), true,
+    "a type that never answered in a working room is still being tried");
+  // ...and the room is still full, from the other type.
+  assert.equal(level.mobs.get("1|0").length, MOB_TUNING.veryEasy.count);
+
+  // No new attempt for it in the next room: the whole point of dropping it.
+  const before = server.calls.spawnMob.filter((spawn) => spawn.mobType === "Zombie").length;
+  loader.spawnRoomMobs(level, 0, 1, STAND_Y);
+  assert.equal(server.calls.spawnMob.filter((spawn) => spawn.mobType === "Zombie").length, before,
+    "a dropped type was asked for again");
 });

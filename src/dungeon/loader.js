@@ -27,7 +27,7 @@
  * the whole thing small enough to trust.
  */
 
-import { DUNGEON_CONFIG, floorOfLayer } from "./config.js";
+import { DUNGEON_CONFIG, floorOfLayer, mobTuningFor } from "./config.js";
 import { templateFor, templatesFor } from "./templates.js";
 
 const SIZE = DUNGEON_CONFIG.chunkSize;
@@ -91,6 +91,18 @@ export function createLoader({ api, log }) {
       entrance: null,
       /** Landing positions already handed out, "x,z", for this dungeon's life. */
       landings: new Set(),
+      /** chunkX|chunkZ → the mobs spawned in that room, `null` while the game catches up. */
+      mobs: new Map(),
+      /** Rooms that have been asked for mobs, so one room is never populated twice. */
+      populated: new Set(),
+      /** Mob types the game refused, with the reason: never tried again this session. */
+      refusedMobs: new Map(),
+      /** Mob type → how many times a spawn answered nothing, to tell a full world from a bad name. */
+      mobRefusals: new Map(),
+      /** Mob type → refusals counted before the current room, to judge a room at a time. */
+      mobRefusalsAtRoomStart: new Map(),
+      /** Mobs whose stats are still to be applied: a spawn is async, the id is not ready. */
+      pendingTuning: [],
       /** Was this difficulty's template set already requested? */
       warmed: false,
     };
@@ -320,6 +332,72 @@ export function createLoader({ api, log }) {
   }
 
   /**
+   * Is this room already cleared?
+   *
+   * The record is **in the room**, in the corner block of its bottom layer, written with
+   * `setBlockData` — so it survives a restart, a relog and a walk away, and it is the
+   * world that answers instead of our memory. `setBlockData` stores data about a block;
+   * it does not write a block, which is why it is allowed at all.
+   *
+   * A room whose cell answers nothing is not cleared: an old room, a fresh copy, or a
+   * block that has been replaced all read `null`.
+   */
+  function isRoomClear(level, chunkX, chunkZ) {
+    const [localX, localY, localZ] = DUNGEON_CONFIG.mobClearCell;
+    const data = api.getBlockData(chunkX * SIZE + localX, floorOfLayer(level.origin.y) + localY, chunkZ * SIZE + localZ);
+    return Boolean(data && data.clear);
+  }
+
+  /** Writes the record of a cleared room. Idempotent, and cheap enough to repeat. */
+  function markRoomClear(level, chunkX, chunkZ) {
+    const [localX, localY, localZ] = DUNGEON_CONFIG.mobClearCell;
+    api.setBlockData(
+      chunkX * SIZE + localX,
+      floorOfLayer(level.origin.y) + localY,
+      chunkZ * SIZE + localZ,
+      { clear: true },
+    );
+  }
+
+  /** Kills every mob of a dungeon: called when its player leaves, so nothing is orphaned. */
+  function forgetMobs(level) {
+    for (const roomKey of Array.from(level.mobs.keys())) {
+      const [x, z] = roomKey.split("|").map(Number);
+      despawnRoomMobs(level, x, z);
+    }
+    level.mobs.clear();
+  }
+
+  /** Kills the mobs of a room without waiting for them to die. */
+  function despawnRoomMobs(level, chunkX, chunkZ) {
+    const key = chunkKey(chunkX, chunkZ);
+    const mobs = level.mobs.get(key);
+    if (!mobs) return 0;
+    // Forgotten first: the game may call back into `mobGone` for each despawn, and a list
+    // that is already gone cannot be walked twice.
+    level.mobs.delete(key);
+    for (const mobId of mobs) {
+      try {
+        api.despawnMob(mobId);
+      } catch (_) {
+        // A mob the game already removed is not an error worth stopping a tick for.
+      }
+    }
+    return mobs.length;
+  }
+
+  /**
+   * Records the mobs a room got, so a copy of this room can kill them later.
+   *
+   * `null` entries are kept on purpose: `attemptSpawnMob` returns before the mob exists,
+   * so a spawn that answers nothing yet is not a failed spawn — it is a mob we cannot
+   * name, and it is dropped when the room is cleared.
+   */
+  function trackRoomMobs(level, chunkX, chunkZ, mobIds) {
+    level.mobs.set(chunkKey(chunkX, chunkZ), mobIds);
+  }
+
+  /**
    * Records when a copy into this chunk may land.
    *
    * The probe that just ran is the request: if the chunk answered, `level.tick` is
@@ -478,6 +556,271 @@ export function createLoader({ api, log }) {
     // Nothing worked anywhere: say so rather than place a player in stone. The caller
     // turns this into a message, and the block it names is the one to look at.
     return null;
+  }
+
+  /**
+   * Puts `count` mobs in a room, on the floor the player is standing on.
+   *
+   * The cells are found exactly like the player's landing, and for the same reason: a
+   * cell is only usable when **its own block and the one above are not solid**.
+   *
+   * Solid, not air — and that is the owner's correction: the dungeon has plants, and a
+   * player (or a mob) walks through them. `getBlockSolidity` is the question to ask, and
+   * it answers `true` for a chunk that has not been sent, which errs on the side of
+   * "not a place to stand" rather than spawning a mob in the void.
+   *
+   * The height is **the player's own height**, passed in: their landing was verified,
+   * every room of a level is the same template on the same layer, so that height is valid
+   * here too and no floor is searched a second time. A cell that is blocked is skipped and
+   * another one is drawn (`mobSpawnTries`), which keeps the count honest.
+   */
+  function spawnRoomMobs(level, chunkX, chunkZ, spawnY) {
+    const difficulty = level.difficulty;
+    const tuning = mobTuningFor(difficulty);
+    if (tuning.count <= 0) return [];
+
+    const baseX = chunkX * SIZE;
+    const baseZ = chunkZ * SIZE;
+    const margin = DUNGEON_CONFIG.mobSpawnMargin;
+    const span = SIZE - margin * 2;
+    const mobIds = [];
+
+    /**
+     * Can a body stand here? Its own cell and the one above, neither solid.
+     *
+     * Block coordinates, not the player's: `getBlockSolidity` takes x and z with a
+     * fractional part as a hint (the API says so), and a hint is not a coordinate.
+     */
+    const bodyFits = (x, y, z) => !api.getBlockSolidity(Math.floor(x), y, Math.floor(z))
+      && !api.getBlockSolidity(Math.floor(x), y + 1, Math.floor(z));
+
+    for (let spawned = 0, tries = 0; spawned < tuning.count && tries < DUNGEON_CONFIG.mobSpawnTries; tries += 1) {
+      const localX = margin + Math.floor(Math.random() * span);
+      const localZ = margin + Math.floor(Math.random() * span);
+      const x = baseX + localX;
+      const z = baseZ + localZ;
+      // The pads live at the centre of a room: a mob standing there would send the player
+      // to the next level the moment they touch it. Never spawn on the pads, and not on
+      // the cell beside them either — a mob paces.
+      const [centreX, centreZ] = DUNGEON_CONFIG.probeLocalXZ;
+      if (Math.abs(localX - centreX) <= 1 && Math.abs(localZ - centreZ) <= 1) continue;
+      if (!bodyFits(x, spawnY, z)) continue;
+
+      const mob = spawnOneMob(level, x, spawnY, z);
+      if (!mob) continue;
+      mobIds.push(mob.mobId);
+      spawned += 1;
+    }
+
+    // A type that was asked for and never answered, in a room where another type worked,
+    // is dropped for the session: `null` still means "a full world", so a type is only
+    // condemned when the room proves the world accepts *some* mob at this moment.
+    for (const mobType of DUNGEON_CONFIG.mobTypes) {
+      if (level.refusedMobs.has(mobType)) continue;
+      if (spawnableMobTypes(level).length <= 1) break;
+      const refusals = level.mobRefusals.get(mobType) || 0;
+      const before = level.mobRefusalsAtRoomStart.get(mobType) || 0;
+      level.mobRefusalsAtRoomStart.set(mobType, refusals);
+      if (refusals > before && mobIds.length > 0) {
+        level.refusedMobs.set(mobType, "attemptSpawnMob answered null in a room that worked");
+      }
+    }
+
+    trackRoomMobs(level, chunkX, chunkZ, mobIds);
+    return mobIds;
+  }
+
+  /**
+   * The mob types this level can still spawn.
+   *
+   * A type that made the game **throw** is dropped for the session on the spot: that is a
+   * name the game does not know, and every room of every dungeon would pay for it again.
+   * A type that merely answered `null` is not: `null` also means "too many mobs for the
+   * number of players online", so a type is only dropped when it refused every attempt of
+   * a room while another type worked (see the end of `spawnRoomMobs`).
+   */
+  function spawnableMobTypes(level) {
+    return DUNGEON_CONFIG.mobTypes.filter((mobType) => !level.refusedMobs.has(mobType));
+  }
+
+  /**
+   * Spawns one mob, **at random** among the types this level can still use.
+   *
+   * The rotation starts at a drawn type and walks the rest, so an unlucky type never
+   * blocks a slot: the owner asked for a random type per mob, and a fixed order would make
+   * the first type of the list the only one ever spawned.
+   *
+   * Stats are queued, not applied: `attemptSpawnMob` is asynchronous, and a `setMobSetting`
+   * written in the same frame can be lost (see `flushMobTuning`).
+   */
+  function spawnOneMob(level, x, y, z) {
+    const tuning = mobTuningFor(level.difficulty);
+    const types = spawnableMobTypes(level);
+    if (types.length === 0) return null;
+    const first = Math.floor(Math.random() * types.length);
+
+    for (let step = 0; step < types.length; step += 1) {
+      const mobType = types[(first + step) % types.length];
+      let mobId;
+      try {
+        mobId = api.attemptSpawnMob(mobType, x, y, z, {});
+      } catch (error) {
+        // A throw is a name the game does not know: never tried again this session.
+        level.refusedMobs.set(mobType, error && error.message ? error.message : "threw");
+        continue;
+      }
+      if (!mobId) {
+        level.mobRefusals.set(mobType, (level.mobRefusals.get(mobType) || 0) + 1);
+        continue;
+      }
+      level.pendingTuning.push({ mobId, tuning });
+      return { mobId, mobType };
+    }
+    return null;
+  }
+
+  /**
+   * Applies the queued stats of mobs that have just been spawned.
+   *
+   * One tick after the spawn, the mob exists and `setMobSetting` sticks. A mob whose
+   * settings cannot be read — one the game refused after all, or one that died in the
+   * meantime — is dropped silently: there is nothing to fix and nothing to report.
+   */
+  function flushMobTuning(level) {
+    if (level.pendingTuning.length === 0) return 0;
+    const queue = level.pendingTuning;
+    level.pendingTuning = [];
+    for (const { mobId, tuning } of queue) applyMobTuning(mobId, tuning);
+    return queue.length;
+  }
+
+  /** Multiplies the stats of one mob by the difficulty's row. Never subtracts. */
+  function applyMobTuning(mobId, tuning) {
+    const scale = (setting, factor) => {
+      if (factor === 1) return;
+      const base = api.getMobSetting(mobId, setting, true);
+      if (typeof base !== "number" || !Number.isFinite(base)) return;
+      // Health is a pool with a current value: scaling only `maxHealth` would leave the
+      // mob on its old health, and scaling only `initialHealth` would leave it capped.
+      api.setMobSetting(mobId, setting, Math.round(base * factor * 10) / 10);
+    };
+    scale("maxHealth", tuning.health);
+    scale("initialHealth", tuning.health);
+    scale("attackDamage", tuning.damage);
+    scale("baseRunningSpeed", tuning.speed);
+    scale("baseWalkingSpeed", tuning.speed);
+  }
+
+  /**
+   * A player entered a room: its four neighbours get mobs, the others lose theirs.
+   *
+   * This is the owner's rule, and it is also the only memory-safe version of it: mobs
+   * exist only for the rooms next to the player, so a dungeon can never accumulate them.
+   *
+   * The room the player is in keeps its mobs — that is the room they are fighting in —
+   * and every other room of the dungeon loses them. **Nothing is marked clear here**: a
+   * room is clear when its last mob dies, and the entrance is marked clear by the caller,
+   * which is the one room the owner wants clear from the start.
+   *
+   * `playerY` is the height the player is standing at, and it is used **as it is**: every
+   * room of a level is a copy of the same template at the same layer, so the height that
+   * was verified for the player is a valid height for their neighbours. No floor is
+   * searched again, and that is the owner's instruction.
+   */
+  function enterRoom(level, chunkX, chunkZ, playerY) {
+    flushMobTuning(level);
+    const spawnY = Math.floor(Number(playerY));
+    if (!Number.isFinite(spawnY)) return;
+
+    const key = chunkKey(chunkX, chunkZ);
+    // The room the player is in is wanted **with its mobs**: walking into a room full of
+    // zombies is the fight, and killing the mobs of the other rooms is what the owner
+    // asked for — not killing the ones in front of the player.
+    const wanted = new Set([key]);
+
+    for (const [dx, dz] of DUNGEON_CONFIG.mobRoomsAround) {
+      const x = chunkX + dx;
+      const z = chunkZ + dz;
+      const roomKey = chunkKey(x, z);
+      wanted.add(roomKey);
+      // A room already holding mobs, or already cleared, is left alone: the record is in
+      // the room, so this is the world's answer and not a session's memory.
+      if (level.mobs.has(roomKey) || isRoomClear(level, x, z)) continue;
+      // The room is not copied yet: `enterRoom` runs again while the player stays put
+      // (`mobRetryTicks`), and this is how a room copied two ticks after the entrance
+      // still gets its mobs.
+      if (level.populated.has(roomKey)) continue;
+      // **A room, not just a chunk.** `placed` is the loader's own probe answering "a room
+      // is there", so a neighbouring chunk that is merely loaded — an empty chunk of the
+      // undeveloped dungeon — never gets mobs floating in the void. A read cannot say
+      // this: an empty chunk answers "Air", exactly like a room's air.
+      if (level.planned.get(roomKey) !== "placed") continue;
+      level.populated.add(roomKey);
+      spawnRoomMobs(level, x, z, spawnY);
+    }
+
+    // Every other room of this dungeon loses its mobs: the ones the player walked away
+    // from, and the ones behind the door they came in by.
+    for (const roomKey of Array.from(level.mobs.keys())) {
+      if (wanted.has(roomKey)) continue;
+      const [x, z] = roomKey.split("|").map(Number);
+      despawnRoomMobs(level, x, z);
+    }
+  }
+
+  /**
+   * A mob vanished without being killed. It is forgotten, and the room is **not** cleared.
+   *
+   * The game despawns mobs for its own reasons — too far from a player, too many mobs for
+   * the number of players online — and reading any of those as "the player won this room"
+   * would hand out a cleared room for free.
+   */
+  function mobGone(level, mobId) {
+    for (const [roomKey, mobs] of level.mobs.entries()) {
+      const index = mobs.indexOf(mobId);
+      if (index === -1) continue;
+      mobs.splice(index, 1);
+      if (mobs.length === 0) level.mobs.delete(roomKey);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * The last mob of a room died. Returns the room, or `null` when it was not the last.
+   *
+   * The mob is forgotten either way: a dead mob must not be despawned again.
+   */
+  function mobKilled(level, mobId) {
+    for (const [roomKey, mobs] of level.mobs.entries()) {
+      const index = mobs.indexOf(mobId);
+      if (index === -1) continue;
+      mobs.splice(index, 1);
+      if (mobs.length > 0) return null;
+      const [x, z] = roomKey.split("|").map(Number);
+      level.mobs.delete(roomKey);
+      markRoomClear(level, x, z);
+      return { chunkX: x, chunkZ: z };
+    }
+    return null;
+  }
+
+  /**
+   * What a dungeon's rooms hold, for `/dbg`.
+   *
+   * Three numbers: rooms with mobs, mobs alive, rooms already cleared. A player who
+   * reports a room that never fills needs exactly these, and they cost nothing.
+   */
+  function mobReport(difficulty, entryId) {
+    const level = levelState(difficulty, entryId);
+    let mobs = 0;
+    for (const ids of level.mobs.values()) mobs += ids.length;
+    return {
+      rooms: level.mobs.size,
+      mobs,
+      cleared: level.populated.size,
+      types: Array.from(level.refusedMobs.entries()).map(([type, reason]) => `${type}: ${reason}`),
+    };
   }
 
   /**
@@ -818,6 +1161,9 @@ export function createLoader({ api, log }) {
       if (chunks.length === 0) continue;
 
       level.tick += 1;
+      // The mobs spawned on the previous tick are real now: their stats are applied here,
+      // which is the first moment `setMobSetting` can stick.
+      flushMobTuning(level);
 
       // What the world already shows, then one copy: the check costs one read for
       // the rooms in flight, and a copy is the expensive step, so it is budgeted.
@@ -913,6 +1259,15 @@ export function createLoader({ api, log }) {
     levelState,
     landingPosition,
     floorBlockYAt,
+    isRoomClear,
+    markRoomClear,
+    enterRoom,
+    spawnRoomMobs,
+    mobKilled,
+    mobGone,
+    forgetMobs,
+    flushMobTuning,
+    mobReport,
     isPlaced,
     probeChunk,
     claimOrigin,
