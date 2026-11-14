@@ -15,6 +15,13 @@
 
 import { setTimeout as scheduleTimeout } from "../utils/scheduler.js";
 import {
+  chestOfClick,
+  drawChestKey,
+  isChestOpened,
+  markChestOpened,
+} from "./loot.js";
+import { keyItemName } from "./reward.js";
+import {
   DUNGEON_CONFIG,
   findDifficulty,
   floorOfLayer,
@@ -387,6 +394,44 @@ export function createDungeonService(options) {
   }
 
   /**
+   * A player clicked somewhere in their dungeon. If it was a chest, it pays out once.
+   *
+   * The order is deliberate: **identify, then check, then pay**. A chest already marked
+   * opened answers nothing, whatever the draw would have given — a player who walks back to
+   * a chest they already emptied must not get a second key, and the mark lives on the
+   * chest's own block, so it is the world that says so.
+   *
+   * The key is drawn from **the level the player is in**, which is what makes a deeper
+   * dungeon worth its mobs, and it goes straight into the inventory: a drop could roll
+   * under a mob or off a ledge, and a key that disappears is worse than a key that was
+   * never given.
+   */
+  function clickPosition(playerId, position) {
+    const dungeon = dungeonOf(playerId);
+    if (!dungeon || !position) return null;
+    const level = loader.levelState(dungeon.difficulty, playerId);
+    const chest = chestOfClick(api, level, position);
+    if (!chest) return null;
+    if (isChestOpened(api, chest.x, chest.y, chest.z)) {
+      api.sendMessage(playerId, "This chest is already empty.");
+      return null;
+    }
+
+    markChestOpened(api, chest.x, chest.y, chest.z);
+    const drawn = drawChestKey(dungeon.difficulty);
+    const given = api.giveItem(playerId, keyItemName(drawn.label), 1) || 0;
+    if (given <= 0) {
+      // A full inventory is not a wasted chest: the mark is undone, so the chest still has
+      // its key when there is room for it.
+      api.setBlockData(chest.x, chest.y, chest.z, {});
+      api.sendMessage(playerId, "Your inventory is full — the chest is still there.");
+      return null;
+    }
+    api.sendMessage(playerId, `You found a ${drawn.label} Key! (${drawn.rarity})`);
+    return { ...chest, key: drawn };
+  }
+
+  /**
    * A player killed a mob. The last one of a room clears it, for good.
    *
    * The record lives in the room, not in this process: `markRoomClear` writes the corner
@@ -493,6 +538,13 @@ export function createDungeonService(options) {
     };
   }
 
+  /** The level state a player's dungeon lives in, for a report that has to read the world. */
+  function levelStateOf(playerId) {
+    const dungeon = dungeonOf(playerId);
+    if (!dungeon) return null;
+    return loader.levelState(dungeon.difficulty, playerId);
+  }
+
   /** Every template of every level, with the answer "is it readable". */
   function templatesReport() {
     const rows = [];
@@ -544,11 +596,13 @@ export function createDungeonService(options) {
     stopBuilding,
     mobKilled,
     mobGone,
+    clickPosition,
     resetMobs,
     tick,
     dungeonOf,
     inDungeon,
     reportOf,
+    levelStateOf,
     templatesReport,
     memoryReport,
     get ticks() { return ticks; },

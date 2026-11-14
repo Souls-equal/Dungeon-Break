@@ -149,6 +149,27 @@ Tous les textes visibles par les joueurs sont en anglais.
 - **Un spawn est asynchrone** : `attemptSpawnMob` rend un id avant que le mob existe, donc les statistiques sont appliquées **au tick suivant** (file `pendingTuning`).
 - **Quitter un donjon tue ses mobs**, et **mourir aussi** : un mob que le jeu retire tout seul (trop loin, trop de mobs pour le nombre de joueurs) est oublié **sans** compter comme une salle nettoyée.
 
+### Coffres : une clé par coffre
+
+- **Cliquer sur un coffre donne une clé**, tirée selon la difficulté du donjon. Cinq raretés, qui **sont cinq items distincts** du jeu (`Wooden Key`, `Stone Key`, `Iron Key`, `Gold Key`, `Diamond Key` — il n'existe pas de `Key` générique).
+- **Un coffre ne s'ouvre qu'une fois.** La preuve est `setBlockData` sur le bloc du coffre : les données sont effacées quand le bloc change, donc une salle recopiée rend ses coffres, et une nouvelle entrée (nouvelle place) repart avec tout plein. Revenir sur un coffre déjà ouvert dit `This chest is already empty.`
+- **La clé va dans l'inventaire**, pas au sol : un drop peut rouler sous un mob ou tomber d'une corniche, et une clé perdue est pire qu'une clé jamais donnée. Inventaire plein → message, et **le coffre reste fermé** pour être rouvert plus tard.
+- **Les chances penchent vers le rare quand la difficulté monte** (tirage pondéré, chaque clé reste possible partout) :
+
+  | Niveau | Wooden | Stone | Iron | Gold | Diamond |
+  | --- | --- | --- | --- | --- | --- |
+  | Very Easy | 60 % | 24 % | 10 % | 5 % | 1 % |
+  | Easy | 53 % | 23 % | 12 % | 8 % | 5 % |
+  | Medium | 45 % | 22 % | 13 % | 11 % | 9 % |
+  | Normal | 38 % | 21 % | 15 % | 14 % | 13 % |
+  | Hard | 30 % | 19 % | 17 % | 17 % | 16 % |
+  | Insane | 23 % | 18 % | 19 % | 20 % | 20 % |
+  | Ultra Insane | 15 % | 17 % | 20 % | 23 % | 24 % |
+  | Hell | 8 % | 16 % | 22 % | 26 % | 28 % |
+
+- **Un coffre, c'est une case dans la boîte de la salle** (`chestBox` : le milieu de la salle, de `y+2` à `y+12`). Un coffre construit dans un mur ou dans un coin est de la décoration : le clic ne paie pas. `/dbg chests` compte les coffres des neuf salles autour du joueur et dit quelles salles n'étaient pas lisibles.
+- **Le clic est celui du jeu** : `onPlayerClick(playerId, wasAltClick, x, y, z, block, targetEId)`, une seule lecture de bloc, aucun scan.
+
 ### Mourir, et revenir
 
 - **La mort ne coûte pas le donjon.** `onRespawnRequest` rend **la position** de l'atterrissage d'entrée — vérifiée à l'arrivée, et jamais recalculée : on revient à l'entrée du **même** niveau, mêmes salles, mêmes salles nettoyées, même hauteur. Rien n'est retiré ni redessiné. (Rendre `true` aurait voulu dire « je téléporte moi-même » : le joueur serait resté là où il est mort.)
@@ -164,6 +185,8 @@ src/dungeon/config.js      constantes, table des difficultés
 src/dungeon/templates.js   coordonnées des modèles, tirage déterministe
 src/dungeon/loader.js      file, copie
 src/dungeon/service.js     entrée, atterrissage, pad, rapports
+src/dungeon/loot.js        coffres, clés, tirage par difficulté
+src/dungeon/reward.js      noms d’items vérifiés par le build
 src/utils/scheduler.js     scheduler piloté par le callback tick
 src/worldCode.js           lobby, pads, /dbg
 ```
@@ -172,7 +195,7 @@ src/worldCode.js           lobby, pads, /dbg
 - `npm run build` régénère le fichier compact.
 - `npm run watch` le régénère à chaque sauvegarde dans `src/`.
 - `npm run check` vérifie que le bundle est à jour, valide les syntaxes, et refuse un bundle où `copyChunk`, `createShopItem` ou la table des modèles ont disparu au minification.
-- `npm test` lance les 97 tests : moteur, configuration, et le bundle réel exécuté dans un `vm` contre un faux serveur qui applique les règles de Bloxd.
+- `npm test` lance les 111 tests : moteur, configuration, et le bundle réel exécuté dans un `vm` contre un faux serveur qui applique les règles de Bloxd.
 
 Le workflow GitHub vérifie la version générée sur les Pull Requests et resynchronise `world-code/` après un merge dans `main`.
 
@@ -181,11 +204,12 @@ Le workflow GitHub vérifie la version générée sur les Pull Requests et resyn
 - **`chunkLoadTicks: 2`** vient d'une mesure en jeu : deux ticks après un `getBlock`, le chunk est là et accepte une copie. Si une salle n'apparaît pas, c'est le premier chiffre à augmenter — et il n'y a qu'un endroit à changer.
 - **Chaque salle doit avoir son Bedrock en bas et en haut.** C'est le seul contrat, et c'est ce qui permet au moteur de charger, de reconnaître et de ne jamais recopier une salle.
 - **Une salle sans Concrete du niveau suivant est un cul-de-sac.** Le code ne pose aucune plaque : il lit le bloc sous les pieds du joueur.
+- **Les clés ne servent encore à rien** : elles s'empilent dans l'inventaire. La serrure viendra avec les portes verrouillées.
 - **Pas encore de minerais, de butin, ni de fin de partie.**
 - **Les dix noms du bestiaire sont ceux du jeu, à sa casse près.** Six sont confirmés par la documentation Bloxd (`Draugr Zombie`, `Draugr Skeleton`, `Cave Golem`, `Draugr Knight`, `Zombie`, `Skeleton` — les deux derniers cités par l'encyclopédie, pas par la table des variations) ; `Armour Collector`, `Furnace Knight`, `Lil Knight` et `Scorpion` viennent de la liste des mobs hostiles du jeu, sans confirmation d'API. Un nom refusé ne casse rien : il est abandonné pour ce niveau, et `/dbg level` dit lequel.
 
 ## Documentation Bloxd utilisée
 
 - [API Reference](https://bloxd.io/docs/api-reference) — `copyChunk`, `setBlock`, `getBlock`, `setPosition`, `setClientOptions`, `setClientOption`, `createShopItem`, `isNearInterrupt`
-- [Callbacks](https://bloxd.io/docs/callbacks) — `onBlockStandStart`, `onBlockStandStop`, `onPlayerBoughtShopItem`, `onPlayerJoin`, `onPlayerLeave`, `onRespawnRequest`, `tick`
+- [Callbacks](https://bloxd.io/docs/callbacks) — `onBlockStandStart`, `onBlockStandStop`, `onPlayerBoughtShopItem`, `onPlayerJoin`, `onPlayerLeave`, `onRespawnRequest`, `onPlayerClick`, `onPlayerKilledMob`, `onMobDespawned`, `tick`
 - [Client Options](https://bloxd.io/docs/client-options) — `gravityMultiplier`, `middleTextUpper`

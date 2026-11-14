@@ -68,6 +68,8 @@ function createWorld(onlinePlayerIds, options = {}) {
   const mobDespawns = [];
   const blockData = new Map();
   const blockDataWrites = [];
+  // Items handed to players, and where they land.
+  const itemsGiven = [];
   const loaded = new Set();
   const pending = [];
   const key = (x, y, z) => `${Math.floor(x)}|${Math.floor(y)}|${Math.floor(z)}`;
@@ -201,6 +203,10 @@ function createWorld(onlinePlayerIds, options = {}) {
         const name = context.api.getBlock(x, y, z);
         return !(name === "Air" || name === "Short Grass");
       },
+      giveItem: (playerId, itemName, itemAmount) => {
+        itemsGiven.push({ playerId, itemName, itemAmount });
+        return itemAmount;
+      },
       getBlockData: (x, y, z) => blockData.get(key(x, y, z)) || null,
       setBlockData: (x, y, z, data) => {
         blockData.set(key(x, y, z), data);
@@ -237,6 +243,7 @@ function createWorld(onlinePlayerIds, options = {}) {
     mobDespawns,
     blockData,
     blockDataWrites,
+    itemsGiven,
     clientOptions,
     positions,
     copies,
@@ -809,4 +816,97 @@ test("respawning outside a dungeon is left to the game", () => {
   world.context.onPlayerJoin("p1");
   assert.equal(world.context.onRespawnRequest("p1"), false,
     "the code took over a respawn it had no dungeon for");
+});
+
+// ------------------------------------------------------------------ chests --
+
+/** The entrance landing, read from the message the player got on the way in. */
+function landingOf(world, playerId) {
+  const line = said(world, playerId).find((message) => message.startsWith("Landed at y "));
+  const y = Number(line.split(" ")[3]);
+  // The landing is the last position **on the floor**: a rescue puts the player back, and
+  // the last recorded position is not necessarily the one this test is about.
+  const position = world.positions.at(-1).position;
+  return [position[0], y, position[2]];
+}
+
+/**
+ * A chest the test puts in the room the player landed in, inside `chestBox`.
+ *
+ * Placed on the **first free cell** of the room's middle, not at a guessed offset: the
+ * landing is drawn at random inside the room, and a fixed `+4` can land in the room next
+ * door — which is a chest outside the box, and correctly refused.
+ */
+function chestInRoom(world, playerId) {
+  const [x, y, z] = landingOf(world, playerId);
+  const size = SIZE;
+  const box = DUNGEON_CONFIG.chestBox;
+  const chunkX = Math.floor(x / size);
+  const chunkZ = Math.floor(z / size);
+  for (let localX = box.minX; localX <= box.maxX; localX += 1) {
+    for (let localZ = box.minZ; localZ <= box.maxZ; localZ += 1) {
+      const cell = [chunkX * size + localX, Math.floor(y) - 1, chunkZ * size + localZ];
+      const cellKey = cell.join("|");
+      if (world.world.has(cellKey) || world.template.has(cellKey)) continue;
+      world.world.set(cellKey, "Chest");
+      return cell;
+    }
+  }
+  throw new Error("no free cell for a chest in the room the player landed in");
+}
+
+test("a chest in a dungeon gives a key, once", () => {
+  const world = createWorld(["p1"]);
+  startDungeon(world, "p1");
+  world.tick(40);
+  const chest = chestInRoom(world, "p1");
+
+  world.context.onPlayerClick("p1", false, chest[0], chest[1], chest[2], "Chest", null);
+  assert.equal(world.itemsGiven.length, 1, "the chest gave nothing");
+  assert.equal(world.itemsGiven[0].playerId, "p1");
+  assert.match(world.itemsGiven[0].itemName, /^(Wooden|Stone|Iron|Gold|Diamond) Key$/,
+    "the chest gave something that is not one of the five keys");
+  assert.ok(said(world, "p1").some((message) => message.includes("You found a")),
+    "the player was not told what they found");
+
+  // The same chest, again: the mark on the block is what says no.
+  world.context.onPlayerClick("p1", false, chest[0], chest[1], chest[2], "Chest", null);
+  assert.equal(world.itemsGiven.length, 1, "the same chest gave a second key");
+  assert.ok(said(world, "p1").some((message) => message.includes("already empty")));
+});
+
+test("a click that is not a chest of the dungeon gives nothing", () => {
+  const world = createWorld(["p1"]);
+  startDungeon(world, "p1");
+  world.tick(40);
+  const [x, y, z] = landingOf(world, "p1");
+
+  // A block that is not a chest.
+  world.world.set(`${Math.floor(x) + 2}|${y - 1}|${Math.floor(z)}`, "Stone");
+  world.context.onPlayerClick("p1", false, Math.floor(x) + 2, y - 1, Math.floor(z), "Stone", null);
+  // A chest outside the room's box: a decoration, not loot.
+  world.world.set(`1|${y - 1}|1`, "Chest");
+  world.context.onPlayerClick("p1", false, 1, y - 1, 1, "Chest", null);
+  // A chest-shaped click on an entity.
+  world.context.onPlayerClick("p1", false, Math.floor(x), y - 1, Math.floor(z), "Chest", "entity1");
+  assert.deepEqual(world.itemsGiven, [], "a click that was not a chest of the dungeon gave a key");
+});
+
+test("a closed chest stays closed when the inventory is full", () => {
+  const world = createWorld(["p1"]);
+  startDungeon(world, "p1");
+  world.tick(40);
+  const chest = chestInRoom(world, "p1");
+
+  // The game answers 0 when nothing could be added.
+  world.context.api.giveItem = () => 0;
+  world.context.onPlayerClick("p1", false, chest[0], chest[1], chest[2], "Chest", null);
+  assert.ok(said(world, "p1").some((message) => message.includes("inventory is full")));
+  // And the chest is open again as soon as there is room.
+  world.context.api.giveItem = (playerId, itemName, amount) => {
+    world.itemsGiven.push({ playerId, itemName, itemAmount: amount });
+    return amount;
+  };
+  world.context.onPlayerClick("p1", false, chest[0], chest[1], chest[2], "Chest", null);
+  assert.equal(world.itemsGiven.length, 1, "a chest refused for a full inventory stayed refused");
 });
