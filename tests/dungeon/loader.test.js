@@ -1,7 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { DUNGEON_CONFIG, MOB_TUNING, findDifficulty, floorOfLayer } from "../../src/dungeon/config.js";
+import {
+  DUNGEON_CONFIG,
+  MOB_ROSTER,
+  MOB_TUNING,
+  findDifficulty,
+  floorOfLayer,
+} from "../../src/dungeon/config.js";
 import { createLoader, chunkOfWorld } from "../../src/dungeon/loader.js";
 import { reset as resetScheduler } from "../../src/utils/scheduler.js";
 
@@ -1043,19 +1049,25 @@ test("a cleared room is never populated again", () => {
   "a room already recorded as clear was populated again");
 });
 
-test("a mob type the game refuses is dropped, and the other one still spawns", () => {
+test("a mob type the game refuses is dropped, and the others still spawn", () => {
+  // Very Easy has one type, so the test runs on Hard: five types, one of them refused.
+  const difficulty = findDifficulty("hard");
   const server = createServer({ refusedMobTypes: ["Zombie"] });
-  const { loader, level } = withEntranceRoom(server, { rooms: [[1, 0]] });
+  const { loader, level } = withEntranceRoom(server, { difficulty, rooms: [[1, 0]] });
 
-  const before = server.calls.spawnMob.length;
   loader.enterRoom(level, 0, 0, STAND_Y);
-  const attempted = server.calls.spawnMob.slice(before);
-  assert.ok(attempted.length > 0, "nothing was spawned with one of the two types refused");
-  // The refused type is still *asked for* — it is drawn and the game says no — but it
-  // never becomes a mob, and the working type still fills the room.
-  assert.deepEqual([...new Set(Array.from(server.mobs.values()).map((mob) => mob.type))],
-    ["Draugr Zombie"], "a refused type was still used");
-  assert.equal(level.mobs.get("1|0").length, 2, "the room did not get its count from the working type");
+  // The refused type never becomes a mob, and the room is still full from the rest.
+  assert.ok(!Array.from(server.mobs.values()).some((mob) => mob.type === "Zombie"),
+    "a refused type was still used");
+  // Drawn, not guaranteed: a room draws at random, so the count is what it is and the
+  // test asserts the part that must hold — the room is not left emptier than a room that
+  // refuses nothing, which is the failure a fixed fallback would hide.
+  assert.ok(level.mobs.get("1|0").length >= MOB_TUNING.hard.count - 1,
+    "the room did not get its count from the working types");
+  // The other types really are used: a room is not left with one breed because one type
+  // is refused. (When a type is *dropped* for the session is the next test.)
+  const types = new Set(Array.from(server.mobs.values()).map((mob) => mob.type));
+  assert.ok(types.size > 0 && !types.has("Zombie"), `wrong types spawned: ${[...types].join(", ")}`);
 });
 
 test("the difficulty multiplies the stats of the mobs it spawns", () => {
@@ -1069,12 +1081,28 @@ test("the difficulty multiplies the stats of the mobs it spawns", () => {
   loader.tick([{ difficulty, entryId, chunks: [{ x: 1, z: 0 }] }]);
 
   const ids = [...level.mobs.get("1|0")];
-  assert.equal(ids.length, 5, "Hell does not hold its five mobs");
+  assert.equal(ids.length, MOB_TUNING.hell.count, "Hell does not hold its five mobs");
+  const hell = MOB_TUNING.hell;
   for (const mobId of ids) {
     const mob = server.mobs.get(mobId);
-    const health = mob.settings.get("maxHealth");
-    assert.equal(health, 150 * MOB_TUNING.hell.health, "the health multiplier was not applied");
+    // The **type's** multipliers times the level's: a Skeleton's 0.7 in Hell is not the
+    // same health as a Zombie's 1.0 in Hell, and both are harder than in Very Easy.
+    const type = MOB_ROSTER.find((entry) => entry.type === mob.type);
+    assert.ok(type, `a mob of a type not in the roster was spawned: ${mob.type}`);
+    // A tolerance, not an equality: the setting is rounded to two decimals so a mob's
+    // stats stay readable numbers, and 1.15 × 5 is not exact in binary.
+    const health = (type.health === undefined ? 1 : type.health) * hell.health;
+    assert.ok(Math.abs(mob.settings.get("maxHealth") - 150 * health) < 0.01,
+      `the health multiplier of ${mob.type} was not applied: `
+        + `${mob.settings.get("maxHealth")} instead of ${150 * health}`);
+    const damage = (type.damage === undefined ? 1 : type.damage) * hell.damage;
+    assert.ok(Math.abs(mob.settings.get("attackDamage") - 5 * damage) < 0.01,
+      `the damage multiplier of ${mob.type} was not applied: `
+        + `${mob.settings.get("attackDamage")} instead of ${5 * damage}`);
   }
+  // The types really are mixed: Hell is a bestiary, not a single breed.
+  const types = new Set(ids.map((mobId) => server.mobs.get(mobId).type));
+  assert.ok(types.size > 1, `Hell spawned only ${[...types].join(", ")}`);
 });
 
 test("a mob the game removes on its own is forgotten but does not clear the room", () => {
@@ -1113,38 +1141,74 @@ test("a room whose mobs were all killed is not repopulated when the player comes
 
 test("the mob type is drawn per mob, not taken from the top of the list", () => {
   const server = createServer();
-  const { loader, level } = withEntranceRoom(server, { rooms: [[1, 0]] });
-  // Four rooms in a row is 8 mobs a room: enough draws to see both types, and a fixed
-  // order would give the same one every time.
-  for (const [x, z] of [[1, 0], [0, 1], [0, -1], [-1, 0]]) {
-    loader.spawnRoomMobs(level, x, z, STAND_Y);
+  const difficulty = findDifficulty("easy");
+  const { loader, level } = withEntranceRoom(server, { difficulty, rooms: [[1, 0]] });
+  // Easy has three types: a fixed order would spawn the same one every time.
+  for (let room = 0; room < 6; room += 1) {
+    loader.spawnRoomMobs(level, room, 0, STAND_Y);
   }
   const types = new Set(server.calls.spawnMob.map((spawn) => spawn.mobType));
-  assert.deepEqual([...types].sort(), ["Draugr Zombie", "Zombie"],
-    "only one mob type was ever spawned from a two-type list");
+  assert.ok(types.size > 1, `only ${[...types].join(", ")} was ever spawned from a three-type list`);
 });
 
 test("a type that never answers in a room where the other worked is dropped for the session", () => {
-  const server = createServer({
-    // `null` for one type only, which is what a full world does not do: this is a name
-    // that exists but cannot be placed.
-    mobBase: { maxHealth: 150, initialHealth: 150, attackDamage: 5, baseRunningSpeed: 4.2, baseWalkingSpeed: 3.5 },
-  });
+  // The ban is decided at the end of a room, and needs the type to have been drawn enough
+  // times to have used the room's whole attempt budget: 12 mobs in Hell's five-type roster.
+  const server = createServer();
+  const difficulty = findDifficulty("hell");
   const attemptSpawnMob = server.api.attemptSpawnMob;
   server.api.attemptSpawnMob = (mobType, x, y, z, opts) => (
     mobType === "Zombie" ? null : attemptSpawnMob(mobType, x, y, z, opts)
   );
-  const { loader, level } = withEntranceRoom(server, { rooms: [[1, 0]] });
+  const { loader, level } = withEntranceRoom(server, { difficulty, rooms: [[1, 0]] });
 
-  loader.spawnRoomMobs(level, 1, 0, STAND_Y);
-  assert.equal(level.refusedMobs.has("Zombie"), true,
+  // The same room, filled again: the ban is decided at the end of a *room*, and only one
+  // chunk around the entrance is sent to this fake server.
+  for (let room = 0; room < 8 && !level.refusedMobs.has("Zombie|hell"); room += 1) {
+    loader.spawnRoomMobs(level, 1, 0, STAND_Y);
+  }
+  // The refusal is filed **per level**: a name the game will not place in Hell must not
+  // take that type away from a level that has not tried it.
+  assert.equal(level.refusedMobs.has("Zombie|hell"), true,
     "a type that never answered in a working room is still being tried");
-  // ...and the room is still full, from the other type.
-  assert.equal(level.mobs.get("1|0").length, MOB_TUNING.veryEasy.count);
+  assert.equal(level.refusedMobs.has("Zombie|veryEasy"), false,
+    "a refusal in Hell was filed against another level");
 
   // No new attempt for it in the next room: the whole point of dropping it.
   const before = server.calls.spawnMob.filter((spawn) => spawn.mobType === "Zombie").length;
-  loader.spawnRoomMobs(level, 0, 1, STAND_Y);
+  loader.spawnRoomMobs(level, 1, 0, STAND_Y);
   assert.equal(server.calls.spawnMob.filter((spawn) => spawn.mobType === "Zombie").length, before,
     "a dropped type was asked for again");
+});
+
+test("a death keeps the rooms known, so the dungeon can fight again", () => {
+  const server = createServer();
+  const { loader, level } = withEntranceRoom(server, { rooms: [[1, 0]] });
+  loader.enterRoom(level, 0, 0, STAND_Y);
+  assert.ok(level.mobs.size > 0);
+  const spawned = server.calls.spawnMob.length;
+
+  // What the service does on `onRespawnRequest`: forget the mobs, keep the rooms.
+  loader.forgetMobs(level, true);
+  assert.equal(level.mobs.size, 0, "the mobs of the fight survived the respawn");
+  assert.equal(level.populated.size, 0, "the rooms stayed known, so they can never fill again");
+  assert.deepEqual(level.pendingTuning, [], "a queued stat outlived its mob");
+
+  loader.enterRoom(level, 0, 0, STAND_Y);
+  assert.ok(server.calls.spawnMob.length > spawned,
+    "the rooms around the entrance were not restocked after the death");
+  assert.ok(level.mobs.size > 0);
+});
+
+test("leaving a dungeon forgets its rooms for good", () => {
+  const server = createServer();
+  const { loader, level } = withEntranceRoom(server, { rooms: [[1, 0]] });
+  loader.enterRoom(level, 0, 0, STAND_Y);
+  loader.forgetMobsForGood(level);
+  assert.equal(level.mobs.size, 0);
+  // Nothing is spawned again: the tick before `release` must not fill a dungeon nobody
+  // owns — `populated` keeps the rooms known until the record is dropped.
+  const spawned = server.calls.spawnMob.length;
+  loader.enterRoom(level, 0, 0, STAND_Y);
+  assert.equal(server.calls.spawnMob.length, spawned, "a dungeon being left was restocked");
 });

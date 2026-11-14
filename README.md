@@ -131,9 +131,29 @@ Tous les textes visibles par les joueurs sont en anglais.
 - **La salle du spawn est clear d'emblée** : un run ne commence jamais par un combat.
 - **Le bon Y est celui du joueur.** Sa position d'atterrissage est vérifiée une fois, et c'est cette hauteur (`spawnY`) que prennent tous les mobs du run : aucun sol n'est recalculé. Une case n'est retenue que si **elle et celle au-dessus ne sont pas solides** — `api.getBlockSolidity`, pas « est-ce de l'Air » : le donjon contient des plantes, et on les traverse. Les plaques de difficulté sont exclues.
 - **Une salle doit exister** avant de recevoir des mobs : le moteur ne connaît pas la réponse (« chunk vide » et « air d'une salle » se lisent pareil), il ne spawn que dans les chunks que sa propre sonde a confirmés (`placed`).
-- **Le type est tiré au hasard à chaque mob** entre `Draugr Zombie` et `Zombie` (`mobTypes`) ; un type que le jeu refuse — une exception, ou un `null` dans une salle où l'autre type a marché — est abandonné pour la session au lieu d'être retenté à chaque salle. Les statistiques de base du jeu sont **multipliées** par la ligne de `MOB_TUNING` de la difficulté — `count`, `health`, `damage`, `speed`, de Very Easy (2 mobs, ×1) à Hell (5 mobs, ×5 PV, ×3 dégâts, ×1,5 vitesse).
+- **Le bestiaire s'ouvre avec la difficulté** (`MOB_ROSTER`). Chaque niveau tire parmi **tous** les mobs débloqués jusqu'à lui — une salle de Hell est un mélange, pas une seule espèce :
+
+  | Niveau | Ajoute | Total |
+  | --- | --- | --- |
+  | Very Easy | Zombie | 1 |
+  | Easy | Draugr Zombie, Skeleton | 3 |
+  | Medium | Draugr Skeleton | 4 |
+  | Normal | Cave Golem | 5 |
+  | Hard | Armour Collector | 6 |
+  | Insane | Furnace Knight, Lil Knight | 8 |
+  | Ultra Insane | Draugr Knight | 9 |
+  | Hell | Scorpion | 10 |
+
+- **Chaque mob a ses propres multiplicateurs**, appliqués **avant** ceux du niveau : Zombie ×1 partout, Draugr Zombie PV ×1,15 / dégâts ×1,2, Skeleton PV ×0,7, Draugr Skeleton PV ×0,8 / dégâts ×1,2, Cave Golem PV ×1,4 / vitesse ×0,95, Armour Collector PV ×2 / dégâts ×1,75 / vitesse ×0,95, Furnace Knight PV ×2 / dégâts ×2 / vitesse ×0,95, Lil Knight PV ×1,75 / dégâts ×1,8 / vitesse ×1,25, Draugr Knight dégâts ×2 / vitesse ×1,6, Scorpion PV ×1,75 / dégâts ×1,6 / vitesse ×1,15. Un Skeleton en Hell, c'est donc 0,7 × 5 de PV — fragile **et** dur.
+- **Le type est tiré au hasard à chaque mob** ; un type que le jeu refuse — une exception, ou un `null` dans une salle où un autre type a marché — est abandonné **pour ce niveau seulement** : un nom que Hell refuse ne prive pas Very Easy de son seul mob. Les multiplicateurs de `MOB_TUNING` (`count`, `health`, `damage`, `speed`) vont de Very Easy (2 mobs, ×1) à Hell (5 mobs, ×5 PV, ×3 dégâts, ×1,5 vitesse).
 - **Un spawn est asynchrone** : `attemptSpawnMob` rend un id avant que le mob existe, donc les statistiques sont appliquées **au tick suivant** (file `pendingTuning`).
-- **Quitter un donjon tue ses mobs** ; un mob que le jeu retire tout seul (trop loin, trop de mobs pour le nombre de joueurs) est oublié **sans** compter comme une salle nettoyée.
+- **Quitter un donjon tue ses mobs**, et **mourir aussi** : un mob que le jeu retire tout seul (trop loin, trop de mobs pour le nombre de joueurs) est oublié **sans** compter comme une salle nettoyée.
+
+### Mourir, et revenir
+
+- **La mort ne coûte pas le donjon.** `onRespawnRequest` rend **la position** de l'atterrissage d'entrée — vérifiée à l'arrivée, et jamais recalculée : on revient à l'entrée du **même** niveau, mêmes salles, mêmes salles nettoyées, même hauteur. Rien n'est retiré ni redessiné. (Rendre `true` aurait voulu dire « je téléporte moi-même » : le joueur serait resté là où il est mort.)
+- **Les mobs du donjon meurent avec le joueur**, et **les quatre salles autour de l'entrée sont repeuplées**. Sans ça, on revient dans le tas qui vient de nous tuer, collé à l'entrée — ou dans un donjon où il ne peut plus y avoir de combat. Message : `Back at the entrance — the rooms around you have been restocked.`
+- **Entrer dans un niveau ne ressuscite plus les vieux mobs** : l'ancien donjon est nettoyé avant d'être libéré, et le tick ne prend plus la téléportation d'arrivée pour « le joueur vient d'entrer dans une salle » (l'entrée est déjà clear).
 
 ## Sources et version compacte
 
@@ -152,7 +172,7 @@ src/worldCode.js           lobby, pads, /dbg
 - `npm run build` régénère le fichier compact.
 - `npm run watch` le régénère à chaque sauvegarde dans `src/`.
 - `npm run check` vérifie que le bundle est à jour, valide les syntaxes, et refuse un bundle où `copyChunk`, `createShopItem` ou la table des modèles ont disparu au minification.
-- `npm test` lance les 93 tests : moteur, configuration, et le bundle réel exécuté dans un `vm` contre un faux serveur qui applique les règles de Bloxd.
+- `npm test` lance les 97 tests : moteur, configuration, et le bundle réel exécuté dans un `vm` contre un faux serveur qui applique les règles de Bloxd.
 
 Le workflow GitHub vérifie la version générée sur les Pull Requests et resynchronise `world-code/` après un merge dans `main`.
 
@@ -161,7 +181,8 @@ Le workflow GitHub vérifie la version générée sur les Pull Requests et resyn
 - **`chunkLoadTicks: 2`** vient d'une mesure en jeu : deux ticks après un `getBlock`, le chunk est là et accepte une copie. Si une salle n'apparaît pas, c'est le premier chiffre à augmenter — et il n'y a qu'un endroit à changer.
 - **Chaque salle doit avoir son Bedrock en bas et en haut.** C'est le seul contrat, et c'est ce qui permet au moteur de charger, de reconnaître et de ne jamais recopier une salle.
 - **Une salle sans Concrete du niveau suivant est un cul-de-sac.** Le code ne pose aucune plaque : il lit le bloc sous les pieds du joueur.
-- **Pas encore de mobs, minerais, butin, ni de fin de partie.** La structure est un décor figé, rien d'autre ne dépend d'elle.
+- **Pas encore de minerais, de butin, ni de fin de partie.**
+- **Les dix noms du bestiaire sont ceux du jeu, à sa casse près.** Six sont confirmés par la documentation Bloxd (`Draugr Zombie`, `Draugr Skeleton`, `Cave Golem`, `Draugr Knight`, `Zombie`, `Skeleton` — les deux derniers cités par l'encyclopédie, pas par la table des variations) ; `Armour Collector`, `Furnace Knight`, `Lil Knight` et `Scorpion` viennent de la liste des mobs hostiles du jeu, sans confirmation d'API. Un nom refusé ne casse rien : il est abandonné pour ce niveau, et `/dbg level` dit lequel.
 
 ## Documentation Bloxd utilisée
 

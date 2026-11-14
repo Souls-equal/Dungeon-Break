@@ -27,7 +27,7 @@
  * the whole thing small enough to trust.
  */
 
-import { DUNGEON_CONFIG, floorOfLayer, mobTuningFor } from "./config.js";
+import { DUNGEON_CONFIG, floorOfLayer, mobRosterFor, mobTuningFor } from "./config.js";
 import { templateFor, templatesFor } from "./templates.js";
 
 const SIZE = DUNGEON_CONFIG.chunkSize;
@@ -95,7 +95,11 @@ export function createLoader({ api, log }) {
       mobs: new Map(),
       /** Rooms that have been asked for mobs, so one room is never populated twice. */
       populated: new Set(),
-      /** Mob types the game refused, with the reason: never tried again this session. */
+      /**
+       * "type|difficulty" → why the game refused it, so it is never tried again this
+       * session. Keyed by level as well as type on purpose: a name the game rejects in
+       * Hell must not take Very Easy's only mob away with it.
+       */
       refusedMobs: new Map(),
       /** Mob type → how many times a spawn answered nothing, to tell a full world from a bad name. */
       mobRefusals: new Map(),
@@ -359,8 +363,28 @@ export function createLoader({ api, log }) {
     );
   }
 
+  /**
+   * Kills every mob of a dungeon: on leaving, on a new entry, and on a death.
+   *
+   * `respawning` keeps the rooms **known** — a room whose mobs were killed by the game's
+   * respawn must be able to fill again, or the player comes back to a dungeon that can
+   * never have another fight. Leaving a dungeon forgets them instead: nothing is waiting
+   * for a player who is gone.
+   */
+  function forgetMobs(level, respawning) {
+    if (respawning) {
+      level.populated.clear();
+      level.pendingTuning = [];
+    }
+    for (const roomKey of Array.from(level.mobs.keys())) {
+      const [x, z] = roomKey.split("|").map(Number);
+      despawnRoomMobs(level, x, z);
+    }
+    level.mobs.clear();
+  }
+
   /** Kills every mob of a dungeon: called when its player leaves, so nothing is orphaned. */
-  function forgetMobs(level) {
+  function forgetMobsForGood(level) {
     for (const roomKey of Array.from(level.mobs.keys())) {
       const [x, z] = roomKey.split("|").map(Number);
       despawnRoomMobs(level, x, z);
@@ -578,6 +602,8 @@ export function createLoader({ api, log }) {
     const difficulty = level.difficulty;
     const tuning = mobTuningFor(difficulty);
     if (tuning.count <= 0) return [];
+    const roster = spawnableRoster(level);
+    if (roster.length === 0) return [];
 
     const baseX = chunkX * SIZE;
     const baseZ = chunkZ * SIZE;
@@ -606,7 +632,7 @@ export function createLoader({ api, log }) {
       if (Math.abs(localX - centreX) <= 1 && Math.abs(localZ - centreZ) <= 1) continue;
       if (!bodyFits(x, spawnY, z)) continue;
 
-      const mob = spawnOneMob(level, x, spawnY, z);
+      const mob = spawnOneMob(level, roster, tuning, x, spawnY, z);
       if (!mob) continue;
       mobIds.push(mob.mobId);
       spawned += 1;
@@ -615,14 +641,15 @@ export function createLoader({ api, log }) {
     // A type that was asked for and never answered, in a room where another type worked,
     // is dropped for the session: `null` still means "a full world", so a type is only
     // condemned when the room proves the world accepts *some* mob at this moment.
-    for (const mobType of DUNGEON_CONFIG.mobTypes) {
-      if (level.refusedMobs.has(mobType)) continue;
-      if (spawnableMobTypes(level).length <= 1) break;
-      const refusals = level.mobRefusals.get(mobType) || 0;
-      const before = level.mobRefusalsAtRoomStart.get(mobType) || 0;
-      level.mobRefusalsAtRoomStart.set(mobType, refusals);
+    for (const mob of roster) {
+      if (refusedHere(level, mob.type)) continue;
+      if (spawnableRoster(level).length <= 1) break;
+      const key = refusalKey(level, mob.type);
+      const refusals = level.mobRefusals.get(key) || 0;
+      const before = level.mobRefusalsAtRoomStart.get(key) || 0;
+      level.mobRefusalsAtRoomStart.set(key, refusals);
       if (refusals > before && mobIds.length > 0) {
-        level.refusedMobs.set(mobType, "attemptSpawnMob answered null in a room that worked");
+        level.refusedMobs.set(key, "attemptSpawnMob answered null in a room that worked");
       }
     }
 
@@ -630,51 +657,69 @@ export function createLoader({ api, log }) {
     return mobIds;
   }
 
+  /** The session key of a refusal: a type, in a level. */
+  function refusalKey(level, mobType) {
+    return `${mobType}|${level.difficulty.id}`;
+  }
+
+  function refusedHere(level, mobType) {
+    return level.refusedMobs.has(refusalKey(level, mobType));
+  }
+
   /**
-   * The mob types this level can still spawn.
+   * The types this level can still spawn, with their own multipliers (see `MOB_ROSTER`).
    *
    * A type that made the game **throw** is dropped for the session on the spot: that is a
-   * name the game does not know, and every room of every dungeon would pay for it again.
-   * A type that merely answered `null` is not: `null` also means "too many mobs for the
+   * name the game does not know, and every room of the level would pay for it again. A
+   * type that merely answered `null` is not: `null` also means "too many mobs for the
    * number of players online", so a type is only dropped when it refused every attempt of
    * a room while another type worked (see the end of `spawnRoomMobs`).
    */
-  function spawnableMobTypes(level) {
-    return DUNGEON_CONFIG.mobTypes.filter((mobType) => !level.refusedMobs.has(mobType));
+  function spawnableRoster(level) {
+    return mobRosterFor(level.difficulty).filter((mob) => !refusedHere(level, mob.type));
   }
 
   /**
    * Spawns one mob, **at random** among the types this level can still use.
    *
    * The rotation starts at a drawn type and walks the rest, so an unlucky type never
-   * blocks a slot: the owner asked for a random type per mob, and a fixed order would make
-   * the first type of the list the only one ever spawned.
+   * blocks a slot and a level never becomes a room of one breed — the bestiary is meant to
+   * be mixed.
    *
    * Stats are queued, not applied: `attemptSpawnMob` is asynchronous, and a `setMobSetting`
    * written in the same frame can be lost (see `flushMobTuning`).
    */
-  function spawnOneMob(level, x, y, z) {
-    const tuning = mobTuningFor(level.difficulty);
-    const types = spawnableMobTypes(level);
+  function spawnOneMob(level, roster, tuning, x, y, z) {
+    // Filtered again per mob: a type banned earlier in the same room must not be asked
+    // for again, or the ban only takes effect at the next room.
+    const types = roster.filter((mob) => !refusedHere(level, mob.type));
     if (types.length === 0) return null;
     const first = Math.floor(Math.random() * types.length);
 
     for (let step = 0; step < types.length; step += 1) {
-      const mobType = types[(first + step) % types.length];
+      const mob = types[(first + step) % types.length];
       let mobId;
       try {
-        mobId = api.attemptSpawnMob(mobType, x, y, z, {});
+        mobId = api.attemptSpawnMob(mob.type, x, y, z, {});
       } catch (error) {
-        // A throw is a name the game does not know: never tried again this session.
-        level.refusedMobs.set(mobType, error && error.message ? error.message : "threw");
+        // A throw is a name the game does not know: never tried again in this level.
+        level.refusedMobs.set(refusalKey(level, mob.type), error && error.message ? error.message : "threw");
         continue;
       }
       if (!mobId) {
-        level.mobRefusals.set(mobType, (level.mobRefusals.get(mobType) || 0) + 1);
+        const key = refusalKey(level, mob.type);
+        level.mobRefusals.set(key, (level.mobRefusals.get(key) || 0) + 1);
         continue;
       }
-      level.pendingTuning.push({ mobId, tuning });
-      return { mobId, mobType };
+      // The mob's own multipliers first, then the level's: a Skeleton's 0.7 health in Hell
+      // is a Skeleton made hard, not a Skeleton made of the same stuff as a Zombie.
+      level.pendingTuning.push({
+        mobId,
+        health: mob.health * tuning.health,
+        damage: mob.damage * tuning.damage,
+        speed: mob.speed * tuning.speed,
+      });
+      return { mobId, mobType: mob.type };
     }
     return null;
   }
@@ -690,25 +735,30 @@ export function createLoader({ api, log }) {
     if (level.pendingTuning.length === 0) return 0;
     const queue = level.pendingTuning;
     level.pendingTuning = [];
-    for (const { mobId, tuning } of queue) applyMobTuning(mobId, tuning);
+    // The queue holds `{ mobId, health, damage, speed }`: the type's factors times the
+    // level's, computed at spawn time.
+    for (const entry of queue) applyMobTuning(entry.mobId, entry);
     return queue.length;
   }
 
   /** Multiplies the stats of one mob by the difficulty's row. Never subtracts. */
-  function applyMobTuning(mobId, tuning) {
+  function applyMobTuning(mobId, factors) {
+    if (!factors) return;
     const scale = (setting, factor) => {
       if (factor === 1) return;
       const base = api.getMobSetting(mobId, setting, true);
       if (typeof base !== "number" || !Number.isFinite(base)) return;
       // Health is a pool with a current value: scaling only `maxHealth` would leave the
       // mob on its old health, and scaling only `initialHealth` would leave it capped.
-      api.setMobSetting(mobId, setting, Math.round(base * factor * 10) / 10);
+      // Two decimals, not one: 5 × (1.75 × 3) is 26.25 damage, and a tenth of that is a
+      // balance change nobody asked for.
+      api.setMobSetting(mobId, setting, Math.round(base * factor * 100) / 100);
     };
-    scale("maxHealth", tuning.health);
-    scale("initialHealth", tuning.health);
-    scale("attackDamage", tuning.damage);
-    scale("baseRunningSpeed", tuning.speed);
-    scale("baseWalkingSpeed", tuning.speed);
+    scale("maxHealth", factors.health);
+    scale("initialHealth", factors.health);
+    scale("attackDamage", factors.damage);
+    scale("baseRunningSpeed", factors.speed);
+    scale("baseWalkingSpeed", factors.speed);
   }
 
   /**
@@ -819,7 +869,9 @@ export function createLoader({ api, log }) {
       rooms: level.mobs.size,
       mobs,
       cleared: level.populated.size,
-      types: Array.from(level.refusedMobs.entries()).map(([type, reason]) => `${type}: ${reason}`),
+      // The keys carry the level (`type|level`), which is what `/dbg` shows: a name that
+      // fails in Hell is not a name that fails in Very Easy.
+      types: Array.from(level.refusedMobs.entries()).map(([key, reason]) => `${key}: ${reason}`),
     };
   }
 
@@ -1266,6 +1318,7 @@ export function createLoader({ api, log }) {
     mobKilled,
     mobGone,
     forgetMobs,
+    forgetMobsForGood,
     flushMobTuning,
     mobReport,
     isPlaced,

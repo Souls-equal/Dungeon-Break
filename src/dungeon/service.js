@@ -101,7 +101,14 @@ export function createDungeonService(options) {
     // two players ever start in the same rooms — and a player who comes back does not
     // find the ruins of their previous run.
     const previous = dungeonOf(playerId);
-    if (previous) loader.release(previous.difficulty, playerId);
+    if (previous) {
+      // A dungeon's mobs belong to it. Re-entering — a death, a pad to the same level, a
+      // new run — kills the previous dungeon's mobs, or the player meets them again in a
+      // place they no longer own. `release` only drops the record, it does not touch the
+      // world, so this is the one place that has to.
+      forgetMobsOf(previous.difficulty, playerId);
+      loader.release(previous.difficulty, playerId);
+    }
     loader.newOrigin(difficulty, playerId);
     const origin = loader.levelState(difficulty, playerId).origin;
 
@@ -121,7 +128,13 @@ export function createDungeonService(options) {
     // falling is worse than a player told nothing.
     api.setClientOptions(playerId, { gravityMultiplier: 0 });
     api.setPosition(playerId, [centreX, provisionalY, centreZ]);
-    playerDungeons.set(playerId, { difficulty, landed: false, position: [centreX, provisionalY, centreZ] });
+    playerDungeons.set(playerId, {
+      difficulty,
+      landed: false,
+      position: [centreX, provisionalY, centreZ],
+      // The tick must not read this teleport as walking into a room.
+      justPlaced: true,
+    });
     usedLevels.add(difficulty);
 
     scheduleTimeout(() => {
@@ -198,6 +211,10 @@ export function createDungeonService(options) {
             state.position = landing;
             // The one height every room of this run uses for its mobs.
             state.spawnY = landing[1];
+            // The entrance landing, kept for a death: it is a position that has been
+            // verified once, and it is what `onRespawnRequest` gives back to the game.
+            state.entranceSpot = landing.slice();
+            state.justPlaced = true;
           }
           // The landing and the floor block, in the message a player reads: a player
           // inside a floor is a bug report with two numbers in it.
@@ -242,11 +259,7 @@ export function createDungeonService(options) {
     if (!dungeon) return false;
     // The mobs of a dungeon belong to it: killing them before the level is released is
     // what keeps a lobby player from being chased by the last room they abandoned.
-    try {
-      loader.forgetMobs(loader.levelState(dungeon.difficulty, playerId));
-    } catch (_) {
-      // A mob the game already removed is not a reason to fail a stop.
-    }
+    forgetMobsOf(dungeon.difficulty, playerId);
     loader.release(dungeon.difficulty, playerId);
     playerDungeons.delete(playerId);
     return true;
@@ -313,6 +326,15 @@ export function createDungeonService(options) {
     return true;
   }
 
+  /** Kills every mob a dungeon is holding, without failing if the game has moved on. */
+  function forgetMobsOf(difficulty, playerId) {
+    try {
+      loader.forgetMobs(loader.levelState(difficulty, playerId));
+    } catch (_) {
+      // A mob the game already removed is not a reason to fail an entry or an exit.
+    }
+  }
+
   /**
    * The player is in a room: the rooms around it are filled, the others emptied.
    *
@@ -330,6 +352,38 @@ export function createDungeonService(options) {
     const level = loader.levelState(dungeon.difficulty, playerId);
     if (!level.origin) return;
     loader.enterRoom(level, chunkX, chunkZ, dungeon.spawnY);
+  }
+
+  /**
+   * A player died, and comes back at the entrance of the level they are already in.
+   *
+   * Three things, in this order:
+   *
+   *   1. **the dungeon's mobs die** — a player who comes back to a room full of the mobs
+   *      that killed them cannot step out of the entrance;
+   *   2. **the rooms around the entrance are filled again**, which is the player's second
+   *      chance and a real fight, not the same one;
+   *   3. the entrance stays clear, and the dungeon keeps its place, its landing height and
+   *      its cleared rooms: dying is not leaving.
+   *
+   * Returns the position the player comes back to, or `null` when there is no dungeon.
+   * **The caller does the teleport**: `onRespawnRequest` returns this position to the game,
+   * which is the documented way to say where a respawn lands (returning `true` instead
+   * means "I teleport myself", and nothing would move the player at all).
+   */
+  function resetMobs(playerId) {
+    const dungeon = dungeonOf(playerId);
+    if (!dungeon || dungeon.spawnY === undefined || !dungeon.entranceSpot) return null;
+    const level = loader.levelState(dungeon.difficulty, playerId);
+    if (!level.origin) return false;
+
+    // The rooms around the entrance are asked again — the rooms are still there, so the
+    // question is about mobs, not about chunks.
+    loader.forgetMobs(level, true);
+    const entrance = level.origin;
+    loader.markRoomClear(level, entrance.x, entrance.z);
+    loader.enterRoom(level, entrance.x, entrance.z, dungeon.spawnY);
+    return dungeon.entranceSpot.slice();
   }
 
   /**
@@ -379,8 +433,18 @@ export function createDungeonService(options) {
       // entrance was not there when the first check ran.
       const roomKey = `${chunk.x}|${chunk.z}`;
       const entered = dungeon.room !== roomKey;
-      if (entered) dungeon.room = roomKey;
-      if (entered || ticks % DUNGEON_CONFIG.mobRetryTicks === 0) {
+      if (entered) {
+        dungeon.room = roomKey;
+        // A new room is entered. **Except after a placement**: `setPosition` happens at the
+        // entrance (a respawn, a new entry) and the tick that follows would otherwise read
+        // it as "walked into a room", which it is not — the entrance is already written
+        // clear, and the rooms around it already have their mobs.
+        if (dungeon.justPlaced) {
+          dungeon.justPlaced = false;
+        } else {
+          enterRoomIfBuilt(dungeon, playerId, chunk.x, chunk.z);
+        }
+      } else if (ticks % DUNGEON_CONFIG.mobRetryTicks === 0) {
         enterRoomIfBuilt(dungeon, playerId, chunk.x, chunk.z);
       }
       // Grouped by **entry**, not by difficulty: two players in the same difficulty
@@ -480,6 +544,7 @@ export function createDungeonService(options) {
     stopBuilding,
     mobKilled,
     mobGone,
+    resetMobs,
     tick,
     dungeonOf,
     inDungeon,

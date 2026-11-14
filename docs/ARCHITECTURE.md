@@ -1,6 +1,6 @@
 # Architecture — génération par copies de chunks
 
-**Statut : livré.** 4 modules, 93 tests verts, bundle de 27 k caractères sur les 512 k autorisés.
+**Statut : livré.** 4 modules, 97 tests verts, bundle de 27 k caractères sur les 512 k autorisés.
 
 Ce document remplace l'architecture par ouvertures des Phases 0 à 4, supprimée avec son moteur. Il décrit ce qui existe, pas ce qui est prévu : toute divergence entre ce texte et le code est un défaut du texte.
 
@@ -141,6 +141,8 @@ la seule chose qui la rende sûre en mémoire :
 | le dernier mob d'une salle meurt | la salle est **clear** : `setBlockData` sur le bloc du coin (`mobClearCell`), et le joueur reçoit `CLEAR` |
 | la salle du spawn | clear **avant** la première lecture, donc un run ne commence pas par un combat |
 | le joueur quitte le donjon | ses mobs sont tués (`forgetMobs`), sinon ils survivraient au donjon |
+| le joueur **meurt** | ses mobs sont tués et **les quatre salles autour de l'entrée sont repeuplées** ; le donjon, sa place, son Y et ses salles clear restent (`resetMobs`) |
+| le joueur entre dans un niveau | l'ancien donjon est nettoyé avant `release`, et la téléportation d'arrivée n'est pas lue comme une entrée dans une salle (`justPlaced`) |
 
 **Où vit le record, et pourquoi là.** `setBlockData(x, y, z, { clear: true })` stocke des données
 **sur** un bloc existant — cela ne change pas le bloc, et c'est la seule écriture autorisée du
@@ -164,13 +166,20 @@ non chargé) ni `getBlock` (« Air » aussi bien dans un chunk vide que dans l'a
 répondent à cette question : c'est la sonde du loader qui répond, `planned.get(clé) === "placed"`.
 Une salle dont les mobs seraient posés sur du vide est exactement le bug d'atterrissage de la PR #46.
 
-**Types et difficulté.** `Draugr Zombie` est le type hostile documenté ; `Zombie` est tenté
-aussi, mais la table des variations du jeu n'en fait pas un type de `Draugr Zombie`. Le type est
-donc **tiré au hasard à chaque mob** (`spawnOneMob`), et un type que le jeu refuse est abandonné
-pour la session (`refusedMobs`) au lieu d'être retenté à chaque salle — la distinction est faite
-entre une **exception** (le nom n'existe pas : on l'abandonne tout de suite) et un `null` (qui
-veut aussi dire « trop de mobs pour le nombre de joueurs » : on ne le condamne que dans une salle
-où l'autre type a marché).
+**Bestiaire et difficulté : deux multiplicateurs qui se composent.** `MOB_ROSTER` (config) liste
+les dix mobs dans l'ordre où les niveaux les débloquent (`from`), avec leurs propres facteurs
+`health`/`damage`/`speed`. `mobRosterFor(difficulty)` rend tous les mobs dont le `from` est **au
+niveau ou en dessous** : Very Easy tire un Zombie, Hell tire parmi les dix. Les stats finales sont
+`type × niveau` — un Skeleton en Hell, c'est 0,7 × 5 de PV — et le produit est **arrondi à deux
+décimales** avant d'être posé : à une décimale, 5 × (1,75 × 3) perdait son quart de point.
+
+Le type est **tiré au hasard à chaque mob** (`spawnOneMob`), avec la liste parcourue en rotation
+depuis le tirage : une espèce malchanceuse ne bloque pas de slot. Un type refusé par le jeu est
+abandonné pour la session, mais **par niveau** (`refusedMobs` est indexé `type|niveau`) : un nom
+que Hell refuse ne doit pas priver Very Easy de son seul mob. La distinction faite est entre une
+**exception** (le nom n'existe pas : on l'abandonne tout de suite) et un `null` (qui veut aussi
+dire « trop de mobs pour le nombre de joueurs » : on ne le condamne qu'après une salle entière où
+un autre type a marché).
 Les statistiques sont multipliées **à partir de ce que le jeu rapporte** (`getMobSetting(…, true)`) :
 `maxHealth`, `initialHealth`, `attackDamage`, `baseRunningSpeed`, `baseWalkingSpeed`. La table
 `MOB_TUNING` ne contient donc aucun nombre de PV, seulement des multiplicateurs.
@@ -247,6 +256,7 @@ Aucune de ces lectures n'est sur le chemin chaud : un scan lit un bloc par chunk
 | `level.mobs` | 4 salles au plus | une salle sort de la carte dès que le joueur la quitte |
 | `level.populated` | une entrée par salle visitée | un donjon par entrée, détruit par `release` |
 | `level.pendingTuning` | les mobs d'un tick | vidée au tick suivant |
+| `level.refusedMobs` | au plus types × niveaux | une entrée par nom refusé, indexée `type|niveau` |
 | `states` (une par entrée) | une `Map` de chunks par entrée | l'état entier est détruit par `release`, donc aucune origine ne survit à un départ |
 
 Aucune de ces structures ne dépend du nombre de salles construites.
@@ -279,11 +289,12 @@ C'est la réponse à un vrai rapport de bug : « The room could not be built » 
 
 ## 11. Tests
 
-`npm test` — 93 tests.
+`npm test` — 97 tests.
 
 - `tests/dungeon/config.test.js` — une difficulté est un ordre et ne porte **aucune** hauteur ; la plage verticale tirée commence au-dessus de `y = 0` et couvre bien 1 000 à 100 000 blocs ; un pad = une difficulté ; Hell est le dernier ; le tirage de salle est stable et étalé ; les huit niveaux tirent dans la même liste ; les salles d'un niveau passent avant les communes ; une salle malformée est ignorée sans casser le niveau ; **la conversion chunk → bloc, y compris sur les coordonnées négatives** ; les 15 salles livrées occupent 15 chunks distincts ; une salle ne porte aucune propriété.
 - `tests/dungeon/loader.test.js` — un état par entrée : chaque entrée tire sa propre place dans le carré configuré, deux entrées vivantes restent à `spawnSeparation` l'une de l'autre, une place n'est tirée qu'une fois, `newOrigin` en donne une autre, un départ la rend et ne laisse rien en mémoire, deux joueurs de la même difficulté ne partagent ni place ni plan ; et un faux serveur où **`copyChunk` depuis un chunk non chargé ne fait rien**, où une copie dans un chunk non envoyé est ignorée, et où **un `getBlock` de chunk non envoyé déclenche l'envoi, deux ticks plus tard** : une salle est une seule copie, la sonde distingue « pas envoyé » / « vide » / « salle déjà là », **et seul le Bedrock compte** : du terrain ordinaire à la même profondeur ne passe pas pour une salle, une salle du redémarrage précédent n'est pas recopiée, une copie est confirmée au tick suivant et jamais dans le sien, la file est bornée, une salle illisible est désactivée puis retirée de la file, **aucun bloc n'est écrit nulle part**, la hauteur de sol est lue et non configurée, un niveau vide ne coûte rien.
-- **mobs** (dans `loader.test.js`) — l'entrée dans une salle peuple les quatre salles autour et jamais celle du joueur ; les mobs sont au Y du joueur, jamais dans un bloc solide, jamais sur les plaques ; une case de plante reste utilisable (`getBlockSolidity`, pas « Air ») ; entrer dans une salle garde ses mobs et tue ceux des autres salles ; le dernier mob écrit le record du coin et le joueur reçoit `CLEAR` ; une salle clear n'est plus jamais peuplée ; un type refusé par le jeu ne casse pas le reste ; la difficulté multiplie les statistiques (Hell : 5 mobs à ×5 PV) ; un mob retiré par le jeu ne rend pas la salle clear ; une salle vidée puis regagnée ne se remplit pas. Et dans `world-code.test.js` : les mobs apparaissent autour de l'entrée, la salle d'entrée est écrite clear, `onPlayerKilledMob` dit `CLEAR` et écrit le record, revenir au spawn tue les mobs — le tout sans écrire un bloc.
+- **mobs** (dans `loader.test.js`) — l'entrée dans une salle peuple les quatre salles autour et jamais celle du joueur ; les mobs sont au Y du joueur, jamais dans un bloc solide, jamais sur les plaques ; une case de plante reste utilisable (`getBlockSolidity`, pas « Air ») ; entrer dans une salle garde ses mobs et tue ceux des autres salles ; le dernier mob écrit le record du coin et le joueur reçoit `CLEAR` ; une salle clear n'est plus jamais peuplée ; un type refusé par le jeu ne casse pas le reste ; la difficulté multiplie les statistiques (Hell : 5 mobs à ×5 PV) ; un mob retiré par le jeu ne rend pas la salle clear ; une salle vidée puis regagnée ne se remplit pas. Et dans `world-code.test.js` : les mobs apparaissent autour de l'entrée, la salle d'entrée est écrite clear, `onPlayerKilledMob` dit `CLEAR` et écrit le record, revenir au spawn tue les mobs, **mourir garde le donjon (même origine, aucune copie) et le repeuple** — le tout sans écrire un bloc.
+- **bestiaire** (dans `loader.test.js`) — chaque niveau tire parmi les mobs débloqués à son niveau ou en dessous ; les multiplicateurs du type se composent avec ceux du niveau (Hell : PV et dégâts vérifiés mob par mob, et la salle est bien mélangée) ; un type refusé par le jeu ne laisse pas la salle vide ; un refus est enregistré **pour son niveau** ; mourir vide les mobs sans oublier les salles, donc le donjon peut encore se remplir ; quitter l'oublie pour de bon.
 - `tests/world-code.test.js` — la boutique `Utilities` (créée, gratuite, avec une image), un clic qui ramène au spawn **et** arrête le donjon — plus aucune salle n'est copiée ensuite et `/dbg` ne voit plus de donjon —, un clic pendant l'entrée qui abandonne l'entrée au lieu de reposer le joueur, et un achat d'autre chose qui ne fait rien ; le bundle réel, dans un contexte `vm`, sur un faux serveur qui compte chaque `setBlock` comme une violation : compte à rebours, entrée, atterrissage sur le sol, gravité coupée puis rendue, une plaque Concrete construite dans la salle qui mène au niveau suivant, ordre des copies, joueur qui tombe et qui est reposé, aucun bloc écrit par le code, `/dbg level` qui dit pourquoi une entrée a échoué, commandes `/dbg`.
 
 Ce qui n'est **pas** testé, faute de pouvoir l'être hors du jeu : le délai exact au bout duquel un chunk lu devient écrivable — `chunkLoadTicks: 2` vient de la mesure faite **en jeu** par le propriétaire du projet, pas d'une simulation. Le coût d'une copie, lui, est connu : moins d'un tick.
@@ -298,7 +309,7 @@ Ce qui n'est **pas** testé, faute de pouvoir l'être hors du jeu : le délai ex
 | `api.setClientOptions` | `setClientOptions(playerId, optionsObj)` | `gravityMultiplier`, pendant tout l'atterrissage |
 | `api.isNearInterrupt` | `isNearInterrupt()` → `boolean` | coupe un scan |
 | `onBlockStandStart` / `onBlockStandStop` | `(playerId, x, y, z, blockName)` | les pads, lus et jamais posés |
-| `onRespawnRequest` | retour `true` pour gérer soi-même | reposer le joueur à l'entrée du niveau |
+| `onRespawnRequest` | `(playerId)` → `true \| void \| number[]` ; **une position** est la réponse à donner pour poser le joueur, `true` veut dire « je téléporte moi-même » | reposer le joueur à l'atterrissage d'entrée, vérifié à l'arrivée |
 | `api.attemptSpawnMob` | `(mobType, x, y, z, opts)` → `MobId \| null`, **asynchrone** | les mobs des salles |
 | `api.despawnMob` | `(mobId)` | quitter un donjon, quitter une salle |
 | `api.setMobSetting` / `getMobSetting` | `(mobId, setting, value)` / `(mobId, setting, returnDefault)` | les multiplicateurs de difficulté, appliqués au tick suivant |
@@ -313,5 +324,5 @@ Ce qui n'est **pas** testé, faute de pouvoir l'être hors du jeu : le délai ex
 - **Modèles.** Remplir `ROOM_TEMPLATES` (voir §5 de `README.md`), un jeu par difficulté, avec des portes alignées.
 - **Variantes.** Le tirage est déjà déterministe par chunk : ajouter un modèle suffit à varier un niveau.
 - **Pads dans le donjon.** Aujourd'hui le pad n'est écrit qu'à l'endroit où le joueur atterrit. Le poser aussi dans les salles suivantes revient à écrire 25 blocs par salle visitée — à décider quand le coût d'une copie sera mesuré en jeu.
-- **Mobs : faits.** Le bestiaire est `Draugr Zombie` ; ajouter un type hostile revient à une entrée dans `DUNGEON_CONFIG.mobTypes`, et la table des variations du jeu dira lesquels existent.
+- **Mobs : faits.** Ajouter un mob revient à une entrée dans `MOB_ROSTER` avec son niveau d'ouverture et ses multiplicateurs ; les noms non confirmés par la documentation se vérifient en jeu, `/dbg level` nommant tout nom refusé.
 - **Butin, minerais.** Aucune de ces fonctionnalités ne dépend de la génération : la structure est un décor figé.
