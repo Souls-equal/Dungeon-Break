@@ -104,40 +104,37 @@ export function createLoader({ api, log }) {
   }
 
   /**
-   * What a chunk says about itself, from its two Bedrock layers.
+   * What a chunk says about itself, from one cell on each of its two Bedrock layers.
    *
-   * Every room has Bedrock on its first and its last layer — floor and ceiling,
-   * like the Nether — so a handful of readings answers everything this engine needs
-   * to know about a chunk:
+   * The cell is the middle of the chunk — the same cell a player lands next to and
+   * the same one a room's Concrete pad occupies. Three answers, and they are the
+   * whole state machine of this engine:
    *
-   *   - `loaded: false` — every probed cell read `null`, the chunk has not been
-   *     sent. The read itself is the request, so the caller asks and comes back;
-   *   - `occupied: false` — the chunk is here and one of its layers reads `Air`:
-   *     nothing was built in it, it is a free slot;
-   *   - `occupied: true` — a block other than Air is there. In a room built the way
-   *     the project builds them, that block is the Bedrock of a floor or a ceiling.
+   *   - `loaded: false` — the read returned `null`, so the chunk has not been sent.
+   *     The read itself is the request: the server creates it, and it is ready
+   *     `chunkLoadTicks` later;
+   *   - `occupied: true` — the cell reads **Bedrock**, the shell every room has on
+   *     its floor and its ceiling. A room is there. This is the owner's rule, and it
+   *     is deliberately *only* Bedrock: any other block at that depth is terrain the
+   *     world already had, not a room, and counting it as one would make the engine
+   *     skip a copy and leave a player with nothing to land on;
+   *   - `occupied: false` — the chunk is here and the cell is not Bedrock. If it is
+   *     Air, the slot is free; if it is anything else, it is ground, and a room is
+   *     copied over it.
    *
-   * Both layers are probed, and both the first and the last, for one reason: the
-   * rule the owner gave is "if a layer has no Bedrock, just check the block is not
-   * Air". A room whose floor has no Bedrock is still a real room, and its ceiling
-   * still proves it is there.
-   *
-   * Four columns are tried per layer because a room is free to keep its centre
-   * open. The loop stops at the first cell that answers, so a normal room costs one
-   * read and a free slot costs one per column, once.
+   * Both layers are read, bottom first, so a room built without its ceiling still
+   * proves itself with its floor.
    */
   function probeChunk(chunkX, chunkY, chunkZ) {
-    const baseX = chunkX * SIZE;
-    const baseY = chunkY * SIZE;
-    const baseZ = chunkZ * SIZE;
+    const [localX, localZ] = DUNGEON_CONFIG.probeLocalXZ;
+    const x = chunkX * SIZE + localX;
+    const z = chunkZ * SIZE + localZ;
     let loaded = false;
     for (const localY of DUNGEON_CONFIG.probeLocalYs) {
-      for (const [localX, localZ] of DUNGEON_CONFIG.probeLocalXZ) {
-        const name = readCell(baseX + localX, baseY + localY, baseZ + localZ);
-        if (name === null) continue;
-        loaded = true;
-        if (name !== "Air") return { loaded, occupied: true };
-      }
+      const name = readCell(x, chunkY * SIZE + localY, z);
+      if (name === null) continue;
+      loaded = true;
+      if (name === DUNGEON_CONFIG.solidBlock) return { loaded, occupied: true };
     }
     return { loaded, occupied: false };
   }
@@ -187,31 +184,28 @@ export function createLoader({ api, log }) {
   }
 
   /**
-   * Chunk-local Y of a template's floor, found by walking up from the bottom of
-   * the chunk.
+   * Chunk-local Y of a room's floor, found by walking up the middle column of a
+   * template.
    *
-   * Only the templates **of this level's horizontal area** are probed: rooms are
-   * moved onto the level's own layer when they are copied, so the Y of the chunk
-   * they are stored at says nothing about where the floor will be once copied. The
-   * copy keeps the room's vertical layout intact — the floor stays at the same
-   * offset from the bottom of the chunk — which is what makes this value reusable
-   * at the destination.
+   * Any template may answer: a room whose chunk is not sent yet costs a `null` read
+   * and the next one is tried, instead of the whole level being refused because the
+   * first coordinate in the list is the one that happens to be unreadable. The floor
+   * sits at the same height in every room a builder makes — it is the room's own
+   * build — so the first readable one is the answer, and it is cached.
    *
-   * Read from the world rather than configured: a hand-written floor height is
-   * wrong for the one template out of ten whose builder put the floor one cell
-   * higher, and the symptom is a player landing inside the floor or two blocks
-   * above it. `null` means no column could be read — the templates are not loaded
-   * — and the caller falls back to a position it can justify.
+   * `null` means no template answered: the level cannot be built, and the caller
+   * says so with a coordinate to check rather than dropping the player into the void.
    */
   function findFloorLocalY(level) {
     if (level.floorLocalY !== null) return level.floorLocalY;
-    const probe = usableTemplates(level)[0];
-    if (!probe) return null;
-    const baseY = Math.floor(probe.src[1] / SIZE) * SIZE;
-    const baseX = Math.floor(probe.src[0] / SIZE) * SIZE;
-    const baseZ = Math.floor(probe.src[2] / SIZE) * SIZE;
-    // Columns through the middle first: that is where every room has its floor.
-    for (const [localX, localZ] of DUNGEON_CONFIG.probeLocalXZ) {
+    const templates = usableTemplates(level);
+    for (const probe of templates) {
+      const baseY = Math.floor(probe.src[1] / SIZE) * SIZE;
+      const baseX = Math.floor(probe.src[0] / SIZE) * SIZE;
+      const baseZ = Math.floor(probe.src[2] / SIZE) * SIZE;
+      // The middle column: that is where every room has its floor, and it is the
+      // column the player lands on.
+      const [localX, localZ] = DUNGEON_CONFIG.probeLocalXZ;
       for (let cell = 0; cell < DUNGEON_CONFIG.floorProbeMaxCells; cell += 1) {
         const name = readCell(baseX + localX, baseY + cell, baseZ + localZ);
         if (name === null) break;
@@ -499,6 +493,32 @@ export function createLoader({ api, log }) {
   }
 
   /**
+   * The one sentence a player needs when the entrance never arrived.
+   *
+   * Built from `explainEntrance`, and ordered by what a builder can do about it:
+   * a template that is not loaded is a coordinate to check, a destination that is
+   * already a room is a level to reset, and a floor that cannot be found is a room
+   * with no floor to land on.
+   */
+  function entranceFailureMessage(difficulty) {
+    const info = explainEntrance(difficulty);
+    if (info.templateIndex === null) return "This level has no readable room template.";
+    if (info.templateSource === null) {
+      return `Room #${info.templateIndex} is not loaded: check its chunk ${info.templateChunk.join(",")}.`;
+    }
+    if (!info.occupied && info.bottomName === null) {
+      return "The entrance chunk could not be loaded.";
+    }
+    if (info.occupied) {
+      return "The entrance chunk already holds a room, so nothing was copied into it.";
+    }
+    if (info.floorLocalY === null) {
+      return "No floor could be read in the room template: /dbg templates.";
+    }
+    return `The copy did not land: Bedrock ${info.bottomName} / ${info.topName} at the destination.`;
+  }
+
+  /**
    * Reads the rooms this level copied and has not seen yet.
    *
    * A copy is done within a tick, but what the world shows is only what the server
@@ -566,6 +586,41 @@ export function createLoader({ api, log }) {
   }
 
   /**
+   * What the engine thinks of the entrance's chunk, in words a builder can act on.
+   *
+   * A copy that never lands has a small number of causes, and a screenshot of the
+   * error message says none of them. This reads the entrance chunk exactly as the
+   * engine does and names the case — it is a diagnostic, so it reads and writes
+   * nothing beyond the probe.
+   */
+  function explainEntrance(difficulty) {
+    const level = levelState(difficulty);
+    const chunkX = DUNGEON_CONFIG.originChunkX;
+    const chunkZ = DUNGEON_CONFIG.originChunkZ;
+    const chunkY = difficulty.chunkY;
+    const [localX, localZ] = DUNGEON_CONFIG.probeLocalXZ;
+    const probe = probeChunk(chunkX, chunkY, chunkZ);
+    const bottom = readCell(chunkX * SIZE + localX, chunkY * SIZE, chunkZ * SIZE + localZ);
+    const top = readCell(chunkX * SIZE + localX, chunkY * SIZE + SIZE - 1, chunkZ * SIZE + localZ);
+    const template = usableTemplates(level)[0];
+    return {
+      chunkX,
+      chunkY,
+      chunkZ,
+      loaded: probe.loaded,
+      occupied: probe.occupied,
+      bottomName: bottom,
+      topName: top,
+      templateIndex: template ? template.index : null,
+      templateChunk: template ? template.chunk : null,
+      templateSource: template ? readCell(template.src[0], template.src[1], template.src[2]) : null,
+      floorLocalY: level.floorLocalY,
+      disabled: level.disabled.size,
+      failures: level.failures,
+    };
+  }
+
+  /**
    * Everything a report needs, without touching the world.
    *
    * `inView` is what this level currently knows about, counted as the world shows
@@ -600,6 +655,8 @@ export function createLoader({ api, log }) {
     findFloorLocalY,
     isPlaced,
     probeChunk,
+    explainEntrance,
+    entranceFailureMessage,
     planAround,
     placeEntrance,
     placeOne,

@@ -269,6 +269,14 @@ function runDebugCommand(playerId, verb) {
     `[dbg] rooms planned ${report.planned} · queued ${report.queued} · placed ${report.placed}`
       + ` · templates ${report.templates} (off ${report.disabled})`,
     `[dbg] room example chunk ${report.exampleChunk ? report.exampleChunk.join(",") : "none"} — /dbg templates`,
+    `[dbg] entrance chunk ${report.entrance.chunkX},${report.entrance.chunkY},${report.entrance.chunkZ}`
+      + ` · ${report.entrance.loaded ? "loaded" : "NOT loaded"}`
+      + ` · ${report.entrance.occupied ? "a room is there" : "empty"}`
+      + ` · Bedrock ${report.entrance.bottomName || "unreadable"} / ${report.entrance.topName || "unreadable"}`,
+    `[dbg] template #${report.entrance.templateIndex === null ? "-" : report.entrance.templateIndex}`
+      + ` · ${report.entrance.templateSource || "unreadable"}`
+      + ` · floor local y ${report.entrance.floorLocalY === null ? "unknown" : report.entrance.floorLocalY}`
+      + ` · failed ${report.entrance.failures}`,
   ]);
 }
 

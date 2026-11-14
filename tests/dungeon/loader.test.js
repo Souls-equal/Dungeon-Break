@@ -277,24 +277,29 @@ test("a chunk says whether it is sent and whether it holds a room", () => {
   assert.deepEqual(loader.probeChunk(0, -1, 0), { loaded: true, occupied: true });
 });
 
-test("a layer without Bedrock still counts as a room, by not being Air", () => {
+test("only Bedrock proves a room; ground at the same depth does not", () => {
   const server = createServer();
   server.addTemplate(TEMPLATE_A);
   const { loader } = createTestLoader(server, ROOMS);
   loader.warmTemplates(VERY_EASY);
   for (let tick = 0; tick < 5; tick += 1) server.advance();
+  server.api.setPosition("player", [16, floorOfLayer(VERY_EASY), 16]);
 
-  // Strip the Bedrock from the bottom layer and leave stone on it: the owner's rule
-  // is "if a layer has no Bedrock, just check the block is not Air".
-  const base = { x: 0, y: -32, z: 0 };
-  for (const [localX, localZ] of DUNGEON_CONFIG.probeLocalXZ) {
-    server.templateBlocks.set(`${base.x + localX},${base.y},${base.z + localZ}`, "Stone");
-  }
-  for (const [localX, localZ] of DUNGEON_CONFIG.probeLocalXZ) {
-    server.templateBlocks.set(`${base.x + localX},${base.y + SIZE - 1},${base.z + localZ}`, "Air");
-  }
-  assert.deepEqual(loader.probeChunk(0, -1, 0), { loaded: true, occupied: true },
-    "a room whose bottom layer is stone instead of Bedrock was read as empty");
+  const [localX, localZ] = DUNGEON_CONFIG.probeLocalXZ;
+  // Terrain at a room's depth, in the cell the probe reads: not a room. Counting it
+  // as one would skip the copy and leave the player with nothing to land on.
+  server.templateBlocks.set(`${localX},${floorOfLayer(VERY_EASY)},${localZ}`, "Stone");
+  assert.deepEqual(loader.probeChunk(0, VERY_EASY.chunkY, 0), { loaded: true, occupied: false });
+
+  // The room's own shell, in the same cell: a room.
+  server.templateBlocks.set(`${localX},${floorOfLayer(VERY_EASY)},${localZ}`, "Bedrock");
+  assert.deepEqual(loader.probeChunk(0, VERY_EASY.chunkY, 0), { loaded: true, occupied: true });
+
+  // And a room with no ceiling Bedrock is still a room, by its floor.
+  const top = VERY_EASY.chunkY * SIZE + SIZE - 1;
+  server.templateBlocks.set(`${localX},${top},${localZ}`, "Air");
+  assert.deepEqual(loader.probeChunk(0, VERY_EASY.chunkY, 0), { loaded: true, occupied: true },
+    "a room whose ceiling is open was read as empty");
 });
 
 test("a copy waits for the chunk it was asked about, then lands", () => {

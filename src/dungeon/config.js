@@ -73,10 +73,12 @@ export const DUNGEON_CONFIG = {
   // built without its floor.
   probeLocalYs: [0, 31],
 
-  // The probe reads one cell per candidate chunk, but only four cells across the
-  // chunk: the block is the same everywhere on a layer, and a room is free to keep
-  // its centre open.
-  probeLocalXZ: [[16, 16], [8, 8], [24, 24], [4, 4]],
+  // Block (x, z) inside the chunk, 0..31. One cell, not four.
+  //
+  // This is also the cell a room's Concrete pad is read at by the game, and with
+  // `landingLocalXZ` the player, the pad and the probe are in the same place — a
+  // room whose centre is the pad is a room whose centre says "a room is here".
+  probeLocalXZ: [16, 16],
 
   // ------------------------------------------------- destination placement ---
   // Each difficulty gets its own horizontal band of chunk layers, two chunks

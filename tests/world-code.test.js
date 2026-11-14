@@ -296,6 +296,23 @@ test("a level is one chunk copy, and the player lands on its floor", () => {
   assert.ok(said(world, "p1").some((message) => message === "Level: Very Easy"));
 });
 
+test("the entrance failure says what to fix, not just that it failed", () => {
+  const world = createWorld(["p1"]);
+  startDungeon(world, "p1");
+  tickUntil(world, () => world.positions.length >= 2, 200);
+  const before = world.messages.length;
+  world.context.playerCommand("p1", "level");
+  const lines = world.messages.slice(before).map((entry) => entry.message).join("\n");
+  // The three facts a screenshot of the error above never had: whether the
+  // destination was loaded, whether a room was already there, and what the probe
+  // actually read.
+  assert.match(lines, /entrance chunk 0,-32,0 · loaded/);
+  // One of the two layers must read Bedrock for the room to count — the destination
+  // is read exactly as the engine reads it.
+  assert.match(lines, /Bedrock Air \/ Bedrock|Bedrock Bedrock \/ Air/);
+  assert.match(lines, /template #\d+ · \w+ · floor local y \d+/);
+});
+
 test("gravity is off while the room is being built, and on once the player stands", () => {
   const world = createWorld(["p1"]);
   startDungeon(world, "p1");

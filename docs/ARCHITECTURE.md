@@ -49,7 +49,7 @@ Aucun de ces fichiers ne construit de géométrie, et **aucun n'écrit un bloc**
 
 À chaque `tick` du monde (`src/worldCode.js` → `service().tick()` → `loader.tick`) :
 
-1. **Une sonde par chunk à copier** (`probeChunk`) : un `getBlock` sur la première couche du chunk destination, puis sur la dernière. Trois réponses possibles, et c'est toute la mécanique de chargement : `null` → le chunk n'est pas envoyé, et cette lecture **est** la demande ; Bedrock → la salle est déjà là ; Air → le chunk est là et vide.
+1. **Une sonde par chunk à copier** (`probeChunk`) : un `getBlock` au centre du chunk destination (local 16,16), sur la première couche puis sur la dernière. Trois réponses, et c'est toute la mécanique de chargement : `null` → le chunk n'est pas envoyé, et cette lecture **est** la demande ; Bedrock → la salle est déjà là ; autre chose (Air, terre, pierre) → le chunk est là et ce n'est pas une salle, donc la copie se fait.
 2. **Un scan toutes les 4 ticks** (`scanTicks`). Pour chaque joueur du niveau, les `viewChunks: 1` chunks autour du sien sont examinés, du plus proche au plus loin, et **8 au plus** sont mis en file (`maxPlannedPerScan`).
 3. **Un chunk demandé n'est copié qu'à `tick + chunkLoadTicks: 2`.** C'est la mesure faite en jeu : deux ticks après le `getBlock`, le chunk existe et accepte une copie.
 4. **Une copie par niveau et par tick**, sans réglage : `placeOne` n'est appelé qu'une fois par niveau et par tick, et une copie se termine en moins d'un tick.
@@ -100,6 +100,8 @@ Rien n'est annoncé avant que le sol existe, et aucune plaque n'est posée : cel
 
 **Le moteur n'écrit jamais un bloc, nulle part.** C'est la contrainte que le propriétaire du projet a posée, et elle simplifie tout : aucune case d'une salle n'est réservée, aucun témoin, aucune plaque, aucune réparation. Les seules opérations autorisées dans un chunk sont `copyChunk` et des lectures.
 
+**Une seule case est lue, et seule la lecture de Bedrock compte.** C'est la correction d'un vrai bug en jeu : la première version sondait quatre colonnes et acceptait *n'importe quel* bloc non-Air comme preuve d'une salle. Du terrain ordinaire à la profondeur du niveau suffisait alors à faire croire que la salle d'entrée existait déjà — la copie était sautée, et le joueur recevait « The room could not be built ». Le moteur ne lit plus qu'une case, au centre du chunk, et il n'accepte que le Bedrock comme preuve.
+
 **Le record d'une salle, c'est son Bedrock.** La contrainte « on n'écrit rien » n'aveugle pas le moteur, parce que chaque salle porte sa propre preuve : une couche de Bedrock en bas et une en haut du chunk, sol et plafond, comme les Bedrock du Nether. Une seule lecture répond donc à deux questions — et c'est le propriétaire du projet qui l'a formulé ainsi : si une couche n'a pas de Bedrock, il suffit que le bloc ne soit pas de l'Air.
 
 Pourquoi c'est important, dit franchement : la réponse vient du **monde**, pas d'un compteur en mémoire. Après un redémarrage, ou quand un joueur revient dans une salle copiée lors d'une autre session, la salle est reconnue et n'est pas recopiée. Aucun bloc n'a été écrit pour cela.
@@ -137,15 +139,23 @@ Une salle n'a **aucune propriété** : ni portes, ni entrée désignée, ni haut
 
 **Un chunk n'est copiable que deux ticks après la lecture qui l'a demandé.** C'est une mesure, pas une marge : `chunkLoadTicks: 2`. Si une salle n'arrive jamais en jeu, c'est le premier chiffre à augmenter — et il n'y a qu'un endroit à changer.
 
+**Une entrée qui échoue dit pourquoi.** Le message du joueur n'est pas générique : `entranceFailureMessage` lit l'état réel et nomme la cause — modèle non chargé (avec son chunk), chunk d'entrée illisible, salle déjà présente donc rien n'a été copié, hauteur de sol introuvable, ou « la copie n'a pas atterri » avec les deux lectures. `/dbg level` affiche les mêmes faits pour une capture d'écran.
+
+## 7bis. Pourquoi une entrée échoue, et ce que le message dit
+
+Quand la salle d'entrée n'arrive pas, le joueur reçoit une raison, pas un constat. `entranceFailureMessage` relit l'état réel et nomme la cause : modèle non chargé (avec le chunk à vérifier), chunk d'entrée illisible, salle déjà présente donc rien n'a été copié, hauteur de sol introuvable, ou « la copie n'a pas atterri » avec les deux lectures du Bedrock. `/dbg level` affiche les mêmes faits, prêts pour une capture d'écran.
+
+C'est la réponse à un vrai rapport de bug : « The room could not be built » ne disait ni ce qui avait été lu, ni si le chunk était chargé, ni si une salle était déjà là. Un moteur qui ne devine pas doit au moins dire ce qu'il a vu.
+
 **Un palier de difficulté doit être construit dans la salle.** Le code ne pose aucune plaque : il lit le bloc sous le joueur (`onBlockStandStart` → `difficultyForPadBlock`) et téléporte. Une salle qui ne contient pas de Concrete du niveau suivant est un cul-de-sac, et c'est le seul contenu qu'une salle doit fournir en plus de sa géométrie.
 
 ## 11. Tests
 
-`npm test` — 59 tests.
+`npm test` — 64 tests.
 
 - `tests/dungeon/config.test.js` — une couche par difficulté, deux chunks d'écart ; un pad = une difficulté ; Hell est le dernier ; le tirage de salle est stable et étalé ; les huit niveaux tirent dans la même liste ; les salles d'un niveau passent avant les communes ; une salle malformée est ignorée sans casser le niveau ; **la conversion chunk → bloc, y compris sur les coordonnées négatives** ; les 15 salles livrées occupent 15 chunks distincts ; une salle ne porte aucune propriété.
-- `tests/dungeon/loader.test.js` — un faux serveur où **`copyChunk` depuis un chunk non chargé ne fait rien**, où une copie dans un chunk non envoyé est ignorée, et où **un `getBlock` de chunk non envoyé déclenche l'envoi, deux ticks plus tard** : une salle est une seule copie, la sonde distingue « pas envoyé » / « vide » / « déjà bâti », une couche sans Bedrock est reconnue par « pas de l'Air », une salle du redémarrage précédent n'est pas recopiée, une copie est confirmée au tick suivant et jamais dans le sien, la file est bornée, une salle illisible est désactivée puis retirée de la file, **aucun bloc n'est écrit nulle part**, la hauteur de sol est lue et non configurée, un niveau vide ne coûte rien.
-- `tests/world-code.test.js` — le bundle réel, dans un contexte `vm`, sur un faux serveur qui compte chaque `setBlock` comme une violation : compte à rebours, entrée, atterrissage sur le sol, gravité coupée puis rendue, une plaque Concrete construite dans la salle qui mène au niveau suivant, ordre des copies, joueur qui tombe et qui est reposé, aucun bloc écrit par le code, commandes `/dbg`.
+- `tests/dungeon/loader.test.js` — un faux serveur où **`copyChunk` depuis un chunk non chargé ne fait rien**, où une copie dans un chunk non envoyé est ignorée, et où **un `getBlock` de chunk non envoyé déclenche l'envoi, deux ticks plus tard** : une salle est une seule copie, la sonde distingue « pas envoyé » / « vide » / « salle déjà là », **et seul le Bedrock compte** : du terrain ordinaire à la même profondeur ne passe pas pour une salle, une salle du redémarrage précédent n'est pas recopiée, une copie est confirmée au tick suivant et jamais dans le sien, la file est bornée, une salle illisible est désactivée puis retirée de la file, **aucun bloc n'est écrit nulle part**, la hauteur de sol est lue et non configurée, un niveau vide ne coûte rien.
+- `tests/world-code.test.js` — le bundle réel, dans un contexte `vm`, sur un faux serveur qui compte chaque `setBlock` comme une violation : compte à rebours, entrée, atterrissage sur le sol, gravité coupée puis rendue, une plaque Concrete construite dans la salle qui mène au niveau suivant, ordre des copies, joueur qui tombe et qui est reposé, aucun bloc écrit par le code, `/dbg level` qui dit pourquoi une entrée a échoué, commandes `/dbg`.
 
 Ce qui n'est **pas** testé, faute de pouvoir l'être hors du jeu : le délai exact au bout duquel un chunk lu devient écrivable — `chunkLoadTicks: 2` vient de la mesure faite **en jeu** par le propriétaire du projet, pas d'une simulation. Le coût d'une copie, lui, est connu : moins d'un tick.
 
