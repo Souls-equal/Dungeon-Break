@@ -146,9 +146,10 @@ function createServer(options = {}) {
 }
 
 /** A loader with the shipped repository templates replaced by a test set. */
-// The place these tests build at: the engine draws one per entry now, and a test
-// that asserts absolute coordinates wants a known square.
-const TEST_ORIGIN = { x: 0, z: 0 };
+// The place these tests build at: the engine draws one per entry, in all three
+// directions, and a test that asserts absolute coordinates wants a known one. Layer 0
+// keeps the numbers small; the drawn layer is a number like any other.
+const TEST_ORIGIN = { x: 0, y: 0, z: 0 };
 
 function createTestLoader(server, templates, difficulty = VERY_EASY, entryId = "player") {
   const loader = createLoader({ api: server.api, log: () => {} });
@@ -184,7 +185,7 @@ test("a room is one chunk copy, and the copy is the documented call", () => {
   assert.equal(server.calls.copy.length, 1, "the entrance is not one copy");
   const [call] = server.calls.copy;
   assert.deepEqual(call.from, TEMPLATE_A, "the copy does not read the template chunk");
-  assert.deepEqual(call.to, [0, floorOfLayer(VERY_EASY), 0],
+  assert.deepEqual(call.to, [0, floorOfLayer(TEST_ORIGIN.y), 0],
     "the entrance is not placed at the origin of the level's own layer");
 
   // And the room really is there: the floor, read back from the world.
@@ -199,7 +200,7 @@ test("the loader never writes a block, anywhere", () => {
   server.addTemplate(TEMPLATE_A);
   const { loader, level, entryId } = createTestLoader(server, ROOMS);
   // A player in the destination chunk, so every read is answered.
-  server.api.setPosition("player", [16, floorOfLayer(VERY_EASY), 16]);
+  server.api.setPosition("player", [16, floorOfLayer(TEST_ORIGIN.y), 16]);
   for (let tick = 0; tick < 5; tick += 1) server.advance();
 
   const written = server.calls.setBlock.length;
@@ -216,7 +217,7 @@ test("a copied room is confirmed by the world on the next tick", () => {
   const { loader, level, entryId } = createTestLoader(server, ROOMS);
   // The template chunk has to be sent before it can be copied from.
   loader.warmTemplates(VERY_EASY, entryId);
-  server.api.setPosition("player", [16, floorOfLayer(VERY_EASY), 16]);
+  server.api.setPosition("player", [16, floorOfLayer(TEST_ORIGIN.y), 16]);
   for (let tick = 0; tick < 5; tick += 1) server.advance();
 
   loader.placeEntrance(VERY_EASY, entryId);
@@ -241,7 +242,7 @@ test("a room of a previous session is found by its Bedrock, not rebuilt", () => 
   server.addTemplate(TEMPLATE_A);
   const { loader, level, entryId } = createTestLoader(server, ROOMS);
   loader.warmTemplates(VERY_EASY, entryId);
-  server.api.setPosition("player", [16, floorOfLayer(VERY_EASY), 16]);
+  server.api.setPosition("player", [16, floorOfLayer(TEST_ORIGIN.y), 16]);
   for (let tick = 0; tick < 5; tick += 1) server.advance();
 
   loader.placeEntrance(VERY_EASY, entryId);
@@ -265,19 +266,19 @@ test("a chunk says whether it is sent and whether it holds a room", () => {
   const { loader, level, entryId } = createTestLoader(server, ROOMS);
   loader.warmTemplates(VERY_EASY, entryId);
   for (let tick = 0; tick < 5; tick += 1) server.advance();
-  server.api.setPosition("player", [16, floorOfLayer(VERY_EASY), 16]);
+  server.api.setPosition("player", [16, floorOfLayer(TEST_ORIGIN.y), 16]);
   for (let tick = 0; tick < 5; tick += 1) server.advance();
 
   // A chunk nobody asked for: the probe is the request, and the answer is honest.
-  const unsent = loader.probeChunk(40, VERY_EASY.chunkY, 40);
+  const unsent = loader.probeChunk(40, TEST_ORIGIN.y, 40);
   assert.deepEqual(unsent, { loaded: false, occupied: false });
 
   // The entrance chunk, empty: sent, and nothing in it.
-  assert.deepEqual(loader.probeChunk(0, VERY_EASY.chunkY, 0), { loaded: true, occupied: false });
+  assert.deepEqual(loader.probeChunk(0, TEST_ORIGIN.y, 0), { loaded: true, occupied: false });
 
   // After the copy: sent, and a room.
   loader.placeEntrance(VERY_EASY, entryId);
-  assert.deepEqual(loader.probeChunk(0, VERY_EASY.chunkY, 0), { loaded: true, occupied: true });
+  assert.deepEqual(loader.probeChunk(0, TEST_ORIGIN.y, 0), { loaded: true, occupied: true });
 
   // The template chunk, which holds the room being copied.
   assert.deepEqual(loader.probeChunk(0, -1, 0), { loaded: true, occupied: true });
@@ -289,22 +290,22 @@ test("only Bedrock proves a room; ground at the same depth does not", () => {
   const { loader, entryId } = createTestLoader(server, ROOMS);
   loader.warmTemplates(VERY_EASY, entryId);
   for (let tick = 0; tick < 5; tick += 1) server.advance();
-  server.api.setPosition("player", [16, floorOfLayer(VERY_EASY), 16]);
+  server.api.setPosition("player", [16, floorOfLayer(TEST_ORIGIN.y), 16]);
 
   const [localX, localZ] = DUNGEON_CONFIG.probeLocalXZ;
   // Terrain at a room's depth, in the cell the probe reads: not a room. Counting it
   // as one would skip the copy and leave the player with nothing to land on.
-  server.templateBlocks.set(`${localX},${floorOfLayer(VERY_EASY)},${localZ}`, "Stone");
-  assert.deepEqual(loader.probeChunk(0, VERY_EASY.chunkY, 0), { loaded: true, occupied: false });
+  server.templateBlocks.set(`${localX},${floorOfLayer(TEST_ORIGIN.y)},${localZ}`, "Stone");
+  assert.deepEqual(loader.probeChunk(0, TEST_ORIGIN.y, 0), { loaded: true, occupied: false });
 
   // The room's own shell, in the same cell: a room.
-  server.templateBlocks.set(`${localX},${floorOfLayer(VERY_EASY)},${localZ}`, "Bedrock");
-  assert.deepEqual(loader.probeChunk(0, VERY_EASY.chunkY, 0), { loaded: true, occupied: true });
+  server.templateBlocks.set(`${localX},${floorOfLayer(TEST_ORIGIN.y)},${localZ}`, "Bedrock");
+  assert.deepEqual(loader.probeChunk(0, TEST_ORIGIN.y, 0), { loaded: true, occupied: true });
 
   // And a room with no ceiling Bedrock is still a room, by its floor.
-  const top = VERY_EASY.chunkY * SIZE + SIZE - 1;
+  const top = TEST_ORIGIN.y * SIZE + SIZE - 1;
   server.templateBlocks.set(`${localX},${top},${localZ}`, "Air");
-  assert.deepEqual(loader.probeChunk(0, VERY_EASY.chunkY, 0), { loaded: true, occupied: true },
+  assert.deepEqual(loader.probeChunk(0, TEST_ORIGIN.y, 0), { loaded: true, occupied: true },
     "a room whose ceiling is open was read as empty");
 });
 
@@ -317,7 +318,7 @@ test("a copy waits for the chunk it was asked about, then lands", () => {
 
   // The player only loads what is loaded for real: nothing near the destination, so
   // the scan's probe has to request it.
-  server.api.setPosition("player", [900, floorOfLayer(VERY_EASY), 900]);
+  server.api.setPosition("player", [900, floorOfLayer(TEST_ORIGIN.y), 900]);
   loader.planAround(level, 0, 0);
   assert.ok(server.calls.getBlock.length > 0, "the scan did not ask for anything");
   assert.equal(level.queue.length, 0, "a copy was queued before the chunk was sent");
@@ -358,7 +359,7 @@ test("a room is placed once in a session, and only where the server has sent it"
   const { loader, level, entryId } = createTestLoader(server, ROOMS);
   loader.warmTemplates(VERY_EASY, entryId);
   for (let tick = 0; tick < 5; tick += 1) server.advance();
-  server.api.setPosition("player", [SIZE + 16, floorOfLayer(VERY_EASY), 16]);
+  server.api.setPosition("player", [SIZE + 16, floorOfLayer(TEST_ORIGIN.y), 16]);
 
   readyNow(level, 1, 0);
   level.queue.push({ chunkX: 1, chunkZ: 0, template: level.templates[0] });
@@ -379,7 +380,7 @@ test("nothing is queued for a chunk the server has not sent", () => {
 
   // A player somewhere else entirely: every candidate chunk around the origin is
   // unsent, and a copy there would be dropped without an error.
-  server.api.setPosition("player", [900, floorOfLayer(VERY_EASY), 900]);
+  server.api.setPosition("player", [900, floorOfLayer(TEST_ORIGIN.y), 900]);
   for (let tick = 0; tick < 6; tick += 1) loader.tick([{ difficulty: VERY_EASY, entryId, chunks: [{ x: 0, z: 0 }] }]);
   assert.equal(server.calls.copy.length, 0, "a copy was queued for an unloaded destination");
   assert.equal(level.queue.length, 0);
@@ -409,7 +410,7 @@ test("chunks already recorded are never copied again", () => {
   for (let tick = 0; tick < 5; tick += 1) server.advance();
 
   // The room is placed once by the level, which is the only thing that knows.
-  server.api.setPosition("player", [16, floorOfLayer(VERY_EASY), 16]);
+  server.api.setPosition("player", [16, floorOfLayer(TEST_ORIGIN.y), 16]);
   for (let tick = 0; tick < 5; tick += 1) server.advance();
   loader.placeEntrance(VERY_EASY, entryId);
   const first = server.calls.copy.length;
@@ -434,7 +435,7 @@ test("nothing is planned outside what the player has loaded", () => {
   }
 
   // Once a player has loaded the area, the same scan finds rooms to build.
-  server.api.setPosition("player", [16, floorOfLayer(VERY_EASY), 16]);
+  server.api.setPosition("player", [16, floorOfLayer(TEST_ORIGIN.y), 16]);
   loader.planAround(level, 0, 0);
   assert.ok(level.queue.length > 0, "no room was queued in a loaded chunk");
   assert.ok(level.queue.length <= DUNGEON_CONFIG.maxPlannedPerScan);
@@ -476,7 +477,7 @@ test("the landing height comes from the entrance room, not from another room", (
     // Whatever room the draw chose, the landing reads that room's floor.
     assert.equal(level.entrance.index, level.templates[0].index);
     const landing = loader.landingPosition(VERY_EASY, entryId);
-    assert.equal(landing[1], floorOfLayer(VERY_EASY) + floorY + DUNGEON_CONFIG.spawnAboveFloor,
+    assert.equal(landing[1], floorOfLayer(TEST_ORIGIN.y) + floorY + DUNGEON_CONFIG.spawnAboveFloor,
       `the landing is not above the floor (local y ${floorY}) of the room that was copied`);
   }
 });
@@ -486,7 +487,7 @@ test("a landing is drawn inside the room, away from the walls", () => {
   server.addTemplate(TEMPLATE_A, { floorY: 2 });
   const { loader, level, entryId } = createTestLoader(server, ROOMS);
   loader.warmTemplates(VERY_EASY, entryId);
-  server.api.setPosition("player", [16, floorOfLayer(VERY_EASY), 16]);
+  server.api.setPosition("player", [16, floorOfLayer(TEST_ORIGIN.y), 16]);
   for (let tick = 0; tick < 5; tick += 1) server.advance();
   loader.placeEntrance(VERY_EASY, entryId);
 
@@ -494,7 +495,7 @@ test("a landing is drawn inside the room, away from the walls", () => {
   const seen = new Set();
   for (let draw = 0; draw < 20; draw += 1) {
     const landing = loader.landingPosition(VERY_EASY, entryId);
-    assert.equal(landing[1], floorOfLayer(VERY_EASY) + 2 + DUNGEON_CONFIG.spawnAboveFloor,
+    assert.equal(landing[1], floorOfLayer(TEST_ORIGIN.y) + 2 + DUNGEON_CONFIG.spawnAboveFloor,
       "the drawn landing is not above the room's floor");
     const localX = Math.floor(landing[0]) - TEST_ORIGIN.x * SIZE;
     const localZ = Math.floor(landing[2]) - TEST_ORIGIN.z * SIZE;
@@ -516,7 +517,7 @@ test("a drawn landing never lands in a pillar", () => {
   server.addTemplate(TEMPLATE_A, { floorY: 2 });
   const { loader, entryId } = createTestLoader(server, ROOMS);
   loader.warmTemplates(VERY_EASY, entryId);
-  server.api.setPosition("player", [16, floorOfLayer(VERY_EASY), 16]);
+  server.api.setPosition("player", [16, floorOfLayer(TEST_ORIGIN.y), 16]);
   for (let tick = 0; tick < 5; tick += 1) server.advance();
   loader.placeEntrance(VERY_EASY, entryId);
 
@@ -574,7 +575,7 @@ test("a level nobody is in costs nothing", () => {
 
 // ------------------------------------------------------------- where it is --
 
-test("every entry draws its own place, inside the configured square", () => {
+test("every entry draws its own place, inside the configured cube", () => {
   const server = createServer();
   const loader = createLoader({ api: server.api, log: () => {} });
   const seen = new Set();
@@ -584,6 +585,10 @@ test("every entry draws its own place, inside the configured square", () => {
       `origin x ${origin.x} is outside the square`);
     assert.ok(origin.z >= DUNGEON_CONFIG.spawnChunkMin && origin.z <= DUNGEON_CONFIG.spawnChunkMax,
       `origin z ${origin.z} is outside the square`);
+    // The layer is drawn too, in the range the owner gave: blocks 1 000 to 100 000.
+    assert.ok(origin.y >= DUNGEON_CONFIG.spawnChunkYMin && origin.y <= DUNGEON_CONFIG.spawnChunkYMax,
+      `origin y ${origin.y} is outside the range`);
+    assert.ok(origin.y * SIZE >= 1_000, `the dungeon was drawn at y ${origin.y * SIZE}`);
     seen.add(`${origin.x},${origin.z}`);
   }
   // Twenty entries, twenty places: a draw repeated would put two players together.
@@ -600,8 +605,11 @@ test("two living entries are kept apart by the configured separation", () => {
   }
   for (let a = 0; a < origins.length; a += 1) {
     for (let b = a + 1; b < origins.length; b += 1) {
+      // All three directions count: a room fills its chunk, so a dungeon 20 000
+      // blocks above another is as far as one 20 000 blocks away on the map.
       const distance = Math.max(
         Math.abs(origins[a].x - origins[b].x),
+        Math.abs(origins[a].y - origins[b].y),
         Math.abs(origins[a].z - origins[b].z),
       );
       assert.ok(distance >= separation, `entries ${a} and ${b} are ${distance} chunks apart`);
@@ -653,4 +661,30 @@ test("two players in the same difficulty get two dungeons, not one shared", () =
   loader.planAround(loader.levelState(VERY_EASY, "player-1"), one.x, one.z);
   assert.equal(loader.levelState(VERY_EASY, "player-2").planned.size, 0,
     "the dungeon of another player was planned into");
+});
+
+test("the rooms around an entry are copied on the layer the entry drew", () => {
+  // Regression: the layer used to be a constant of the difficulty, so a dungeon
+  // drawn at another height would have been copied onto the old one — a player
+  // landing in one room and seeing the rest of the level a hundred chunks below.
+  const server = createServer();
+  server.addTemplate(TEMPLATE_A, { floorY: 2 });
+  const { loader, level, entryId } = createTestLoader(server, ROOMS);
+  level.origin = { x: 0, y: 700, z: 0 };
+  server.api.setPosition("player", [16, floorOfLayer(level.origin.y), 16]);
+  loader.warmTemplates(VERY_EASY, entryId);
+  loader.planAround(level, 0, 0);
+  for (let tick = 0; tick < 30; tick += 1) {
+    server.advance();
+    loader.tick([{ difficulty: VERY_EASY, entryId, chunks: [{ x: 0, z: 0 }] }]);
+  }
+  assert.ok(server.calls.copy.length >= 2, "nothing was copied around the entry");
+  for (const call of server.calls.copy) {
+    assert.equal(call.to[1], floorOfLayer(700), `a room was copied on layer ${call.to[1] / SIZE}`);
+  }
+  // And the landing is on that layer too: the room the player is in and the rooms
+  // around them are the same dungeon.
+  const landing = loader.landingPosition(VERY_EASY, entryId);
+  assert.ok(landing, "no landing was drawn");
+  assert.equal(Math.floor(landing[1] / SIZE), 700);
 });

@@ -1,6 +1,6 @@
 # Architecture — génération par copies de chunks
 
-**Statut : livré.** 4 modules, 70 tests verts, bundle de 21 k caractères sur les 512 k autorisés.
+**Statut : livré.** 4 modules, 71 tests verts, bundle de 21 k caractères sur les 512 k autorisés.
 
 Ce document remplace l'architecture par ouvertures des Phases 0 à 4, supprimée avec son moteur. Il décrit ce qui existe, pas ce qui est prévu : toute divergence entre ce texte et le code est un défaut du texte.
 
@@ -57,25 +57,18 @@ Aucun de ces fichiers ne construit de géométrie, et **aucun n'écrit un bloc**
 
 Il n'y a **aucun état intermédiaire** : une salle est là, ou elle n'est pas là — et c'est son Bedrock qui le dit.
 
-## 5. Où vivent les salles : une bande verticale par difficulté
+## 5. Où vivent les salles : plus de bande réservée
 
-Chaque difficulté possède sa propre couche de chunks, deux chunks sous la précédente :
+Il n'y a **plus de hauteur par difficulté**. Le moteur a d'abord donné à chaque difficulté sa bande verticale (Very Easy en `chunkY = −32`, Easy en −34, etc.), ce qui garantissait que deux niveaux ne se superposent jamais. C'était une bonne réponse à la mauvaise question : deux *joueurs* du même niveau se rencontraient toujours, puisque le niveau était construit une fois, à un endroit fixe.
 
-| Difficulté | Couche (`chunkY`) | Sol (`floorY` du chunk) |
-| --- | --- | --- |
-| Very Easy | −32 | −1024 |
-| Easy | −34 | −1088 |
-| Medium | −36 | −1152 |
-| Normal | −38 | −1216 |
-| Hard | −40 | −1280 |
-| Insane | −42 | −1344 |
-| Ultra Insane | −44 | −1408 |
-| Hell | −46 | −1472 |
+La hauteur est donc devenue une composante de l'origine tirée par entrée (§5bis), comme `x` et `z` :
 
-Deux conséquences, et ce sont les deux plus gros bugs du moteur précédent qui disparaissent :
+- `x`, `z` en chunks dans `−3125..3124`, soit **±100 000 blocs** ;
+- `y` en chunks dans `32..3124`, soit **blocs 1 000 à 100 000** — la plage donnée par le propriétaire. Le plancher à 32 chunks n'est pas décoratif : il interdit de tirer un donjon à `y = 0`, là où vit le monde normal d'un jeu.
 
-- **Deux niveaux ne peuvent jamais se rencontrer.** Une salle remplit tout son chunk ; avec deux chunks d'écart vertical, deux salles ne se superposent jamais, quelle que soit la distance horizontale parcourue. L'ancien moteur posait deux donjons dans la même bande `Y = −1000` et devait espérer qu'ils ne se croisent pas.
-- **Le repère du joueur ne dépend plus de son altitude.** Un chunk est sur *sa* couche par construction : le joueur peut sauter, tomber ou être téléporté, la salle reste sur le plan du niveau.
+Une salle remplit tout son chunk, et `spawnSeparation: 20 000` blocs est vérifiée sur les **trois** axes : deux donjons sont donc au moins 20 000 blocs plus loin l'un de l'autre, dans n'importe quelle direction.
+
+**Le repère du joueur ne dépend plus de son altitude.** Le moteur ne lit jamais la hauteur d'un niveau dans une table : il lit `level.origin.y`, l'origine du donjon où il se trouve. Copie, sonde, atterrissage, sauvetage et `/dbg` passent tous par ce nombre — un donjon à `y = 835` et un donjon à `y = −32` sont le même code.
 
 ## 5bis. Un donjon par entrée, et une origine tirée à chaque fois
 
@@ -87,13 +80,14 @@ difficulté, construit à une origine fixe : la deuxième personne à prendre la
 arrivait dans les salles de la première. Il n'y a plus d'état par difficulté mais **un état par
 entrée** (`states`, une `Map` par `entryId`), et `claimOrigin` tire `x` et `z` en chunks dans
 `spawnChunkMin..spawnChunkMax` — soit **−3125..3124 chunks, ±100 000 blocs**, la plage demandée
-par le propriétaire du projet, `y` restant la couche de la difficulté.
+par le propriétaire du projet, `y` étant tiré lui aussi dans la plage qu'il a donnée (blocs 1 000 à 100 000).
 
 Le tirage n'est pas aveugle : une origine est acceptée si sa distance de Chebyshev, en chunks,
 à **toutes** les origines vivantes est au moins `ceil(spawnSeparation / 32) = 625` chunks
 (`spawnSeparation: 20 000` blocs). Sinon `spawnDraws: 24` essais, et la plus éloignée l'emporte.
-Deux donjons actifs sont donc à 20 000 blocs l'un de l'autre au minimum, et les joueurs ne
-peuvent pas se rencontrer à pied.
+La distance est calculée sur **les trois axes** : `x`, `y` et `z` comptent pareil. Deux donjons
+actifs sont donc à 20 000 blocs l'un de l'autre au minimum, dans n'importe quelle direction, et
+les joueurs ne peuvent pas se rencontrer — ni à pied, ni en creusant, ni en sautant.
 
 **Quitter libère la place.** `leave` détruit l'état de l'entrée ; le tirage suivant peut
 réutiliser cette zone. Un donjon abandonné ne consomme donc ni mémoire ni espace, et rien n'est
@@ -107,7 +101,7 @@ monde, pas d'un donjon : une salle qu'aucune lecture n'atteint est illisible pou
 L'ordre est imposé par la plateforme, et il est respecté pas à pas :
 
 1. `warmTemplates` — une lecture par modèle, ce qui demande au serveur d'envoyer ces chunks.
-2. `claimOrigin` — la place de cette entrée : un nouveau tirage (`newOrigin`) à chaque descente, et l'ancien état est libéré.
+2. `claimOrigin` — la place de cette entrée, `x`, `y` et `z` : un nouveau tirage (`newOrigin`) à chaque descente, et l'ancien état est libéré.
 3. Gravité coupée (`gravityMultiplier: 0`), joueur téléporté **dans le chunk vide** de l'entrée. C'est le `setPosition` qui charge ce chunk.
 4. `chunkLoadTicks: 2` ticks plus tard, le chunk existe et accepte une copie.
 5. **La salle d'entrée est copiée** dans le chunk de cette entrée. C'est la sonde qui tranche, pas un compteur : si une salle y est déjà, rien n'est recopié.
@@ -186,9 +180,9 @@ C'est la réponse à un vrai rapport de bug : « The room could not be built » 
 
 ## 11. Tests
 
-`npm test` — 70 tests.
+`npm test` — 71 tests.
 
-- `tests/dungeon/config.test.js` — une couche par difficulté, deux chunks d'écart ; un pad = une difficulté ; Hell est le dernier ; le tirage de salle est stable et étalé ; les huit niveaux tirent dans la même liste ; les salles d'un niveau passent avant les communes ; une salle malformée est ignorée sans casser le niveau ; **la conversion chunk → bloc, y compris sur les coordonnées négatives** ; les 15 salles livrées occupent 15 chunks distincts ; une salle ne porte aucune propriété.
+- `tests/dungeon/config.test.js` — une difficulté est un ordre et ne porte **aucune** hauteur ; la plage verticale tirée commence au-dessus de `y = 0` et couvre bien 1 000 à 100 000 blocs ; un pad = une difficulté ; Hell est le dernier ; le tirage de salle est stable et étalé ; les huit niveaux tirent dans la même liste ; les salles d'un niveau passent avant les communes ; une salle malformée est ignorée sans casser le niveau ; **la conversion chunk → bloc, y compris sur les coordonnées négatives** ; les 15 salles livrées occupent 15 chunks distincts ; une salle ne porte aucune propriété.
 - `tests/dungeon/loader.test.js` — un état par entrée : chaque entrée tire sa propre place dans le carré configuré, deux entrées vivantes restent à `spawnSeparation` l'une de l'autre, une place n'est tirée qu'une fois, `newOrigin` en donne une autre, un départ la rend et ne laisse rien en mémoire, deux joueurs de la même difficulté ne partagent ni place ni plan ; et un faux serveur où **`copyChunk` depuis un chunk non chargé ne fait rien**, où une copie dans un chunk non envoyé est ignorée, et où **un `getBlock` de chunk non envoyé déclenche l'envoi, deux ticks plus tard** : une salle est une seule copie, la sonde distingue « pas envoyé » / « vide » / « salle déjà là », **et seul le Bedrock compte** : du terrain ordinaire à la même profondeur ne passe pas pour une salle, une salle du redémarrage précédent n'est pas recopiée, une copie est confirmée au tick suivant et jamais dans le sien, la file est bornée, une salle illisible est désactivée puis retirée de la file, **aucun bloc n'est écrit nulle part**, la hauteur de sol est lue et non configurée, un niveau vide ne coûte rien.
 - `tests/world-code.test.js` — le bundle réel, dans un contexte `vm`, sur un faux serveur qui compte chaque `setBlock` comme une violation : compte à rebours, entrée, atterrissage sur le sol, gravité coupée puis rendue, une plaque Concrete construite dans la salle qui mène au niveau suivant, ordre des copies, joueur qui tombe et qui est reposé, aucun bloc écrit par le code, `/dbg level` qui dit pourquoi une entrée a échoué, commandes `/dbg`.
 

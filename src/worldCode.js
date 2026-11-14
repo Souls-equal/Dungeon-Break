@@ -242,8 +242,8 @@ function runDebugCommand(playerId, verb) {
     for (const row of rows) {
       debugSay(
         playerId,
-        `[dbg] ${row.difficulty} · layer ${row.chunkY} · room origin`
-          + ` ${row.origin ? row.origin.x + "," + row.origin.z : "none"}`
+        `[dbg] ${row.difficulty} · layer ${row.chunkY === null ? "none" : row.chunkY} · room origin`
+          + ` ${row.origin ? row.origin.x + "," + row.origin.y + "," + row.origin.z : "none"}`
           + ` · templates ${row.templates} (off ${row.disabled})`,
       );
       debugSay(
@@ -261,14 +261,14 @@ function runDebugCommand(playerId, verb) {
     return;
   }
   if (verb === "seed") {
-    debugSay(playerId, `[dbg] ${report.difficulty.label} · layer ${report.chunkY}`);
+    debugSay(playerId, `[dbg] ${report.difficulty.label} · layer ${report.chunkY === null ? "none" : report.chunkY}`);
     return;
   }
   debugSayAll(playerId, [
-    `[dbg] ${report.difficulty.label} · layer ${report.chunkY} · tick ${report.ticks}`,
+    `[dbg] ${report.difficulty.label} · layer ${report.chunkY === null ? "none" : report.chunkY} · tick ${report.ticks}`,
     `[dbg] you ${report.position.map((value) => Math.round(value * 10) / 10).join(", ")}`
       + ` · chunk ${report.chunk.x},${report.chunk.z}`
-      + ` · origin ${report.origin ? report.origin.x + "," + report.origin.z : "none"}`,
+      + ` · origin ${report.origin ? report.origin.x + "," + report.origin.y + "," + report.origin.z : "none"}`,
     `[dbg] rooms planned ${report.planned} · queued ${report.queued} · placed ${report.placed}`
       + ` · templates ${report.templates} (off ${report.disabled})`,
     `[dbg] room example chunk ${report.exampleChunk ? report.exampleChunk.join(",") : "none"} — /dbg templates`,
@@ -354,4 +354,6 @@ onRespawnRequest = (playerId) => {
 };
 
 // Kept for the reports: the level table is a public part of the world code.
-globalThis.DUNGEON_LEVELS = DIFFICULTIES.map((entry) => ({ id: entry.id, label: entry.label, chunkY: entry.chunkY }));
+// The ladder, for the game side to read. No layer: a dungeon's height is drawn per
+// entry, so the only place that knows it is the dungeon itself.
+globalThis.DUNGEON_LEVELS = DIFFICULTIES.map((entry) => ({ id: entry.id, label: entry.label }));

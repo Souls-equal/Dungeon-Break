@@ -14,22 +14,26 @@ import { chunkToBlock, hashOf, templateFor, templatesFor } from "../../src/dunge
 
 const SIZE = DUNGEON_CONFIG.chunkSize;
 
-test("every difficulty has its own layer, two chunks apart", () => {
-  const chunksY = DIFFICULTIES.map((entry) => entry.chunkY);
-  assert.equal(new Set(chunksY).size, chunksY.length, "two difficulties share a chunk layer");
-  for (let index = 1; index < chunksY.length; index += 1) {
-    assert.equal(chunksY[index - 1] - chunksY[index], DUNGEON_CONFIG.layerStrideChunks,
-      `${DIFFICULTIES[index].label} is not exactly one stride below the level above it`);
+test("a difficulty is an order, not a height", () => {
+  // Every entry draws its own layer, so a difficulty must not carry one: a number
+  // cached here is a number that goes stale the moment the draw happens.
+  for (const difficulty of DIFFICULTIES) {
+    assert.equal("chunkY" in difficulty, false, `${difficulty.label} still carries a fixed layer`);
   }
-  // Two chunks of vertical gap means two rooms can never overlap, whatever their
-  // X/Z: a room fills one chunk, so its top is the layer above its bottom.
-  assert.ok(DUNGEON_CONFIG.layerStrideChunks >= 2);
+  DIFFICULTIES.forEach((difficulty, index) => {
+    assert.equal(difficulty.index, index);
+  });
 });
 
-test("the floor of a level is the bottom of its chunk", () => {
-  for (const difficulty of DIFFICULTIES) {
-    assert.equal(floorOfLayer(difficulty), difficulty.chunkY * SIZE);
-  }
+test("a drawn layer starts above the ground and inside the given range", () => {
+  // The owner's range: y 1 000 to 100 000 blocks. In chunks that is 32 to 3 124, and
+  // the low end matters: no dungeon is ever built at y = 0, where a normal world is.
+  assert.equal(floorOfLayer(DUNGEON_CONFIG.spawnChunkYMin), 1_024);
+  assert.equal(floorOfLayer(DUNGEON_CONFIG.spawnChunkYMax), 99_968);
+  assert.equal(DUNGEON_CONFIG.spawnChunkYMin * SIZE, 1_024);
+  assert.ok(DUNGEON_CONFIG.spawnChunkYMin > 0, "a level could be drawn at y = 0");
+  assert.equal(floorOfLayer(0), 0);
+  assert.equal(floorOfLayer(-32), -1_024);
 });
 
 test("a pad block leads to exactly one difficulty", () => {

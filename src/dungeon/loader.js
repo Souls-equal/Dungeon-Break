@@ -153,12 +153,14 @@ export function createLoader({ api, log }) {
     return templateFor(usableTemplates(level), level.difficulty, chunkX, chunkZ);
   }
 
-  /** A chunk coordinate drawn inside the square every entry builds in. */
+  /** A chunk coordinate drawn inside the cube every entry builds in. */
   function drawOrigin() {
-    const span = DUNGEON_CONFIG.spawnChunkMax - DUNGEON_CONFIG.spawnChunkMin + 1;
+    const spanX = DUNGEON_CONFIG.spawnChunkMax - DUNGEON_CONFIG.spawnChunkMin + 1;
+    const spanY = DUNGEON_CONFIG.spawnChunkYMax - DUNGEON_CONFIG.spawnChunkYMin + 1;
     return {
-      x: DUNGEON_CONFIG.spawnChunkMin + Math.floor(Math.random() * span),
-      z: DUNGEON_CONFIG.spawnChunkMin + Math.floor(Math.random() * span),
+      x: DUNGEON_CONFIG.spawnChunkMin + Math.floor(Math.random() * spanX),
+      y: DUNGEON_CONFIG.spawnChunkYMin + Math.floor(Math.random() * spanY),
+      z: DUNGEON_CONFIG.spawnChunkMin + Math.floor(Math.random() * spanX),
     };
   }
 
@@ -170,8 +172,9 @@ export function createLoader({ api, log }) {
    * only way to meet is to draw the same spot twice — which is checked, not hoped.
    *
    * The check is against the origins of every dungeon that exists right now, and the
-   * distance is measured between chunk coordinates: cheap, and never less than the
-   * block distance. A dungeon that already has a place keeps it — calling this twice
+   * distance is measured between chunk coordinates, in **all three directions** —
+   * x, y and z. Height counts like the rest: a room fills its chunk, so two dungeons
+   * 20 000 blocks apart vertically are as far as two 20 000 blocks apart on the map. A dungeon that already has a place keeps it — calling this twice
    * must not move a player's rooms. A fresh place is asked for by `newOrigin`.
    *
    * `spawnSeparation` is a floor, not a theorem: past a few hundred simultaneous
@@ -200,7 +203,11 @@ export function createLoader({ api, log }) {
       const candidate = drawOrigin();
       let nearest = Infinity;
       for (const other of others) {
-        nearest = Math.min(nearest, Math.max(Math.abs(other.x - candidate.x), Math.abs(other.z - candidate.z)));
+        nearest = Math.min(nearest, Math.max(
+          Math.abs(other.x - candidate.x),
+          Math.abs(other.y - candidate.y),
+          Math.abs(other.z - candidate.z),
+        ));
       }
       if (nearest >= separationChunks) {
         best = candidate;
@@ -309,7 +316,7 @@ export function createLoader({ api, log }) {
    *     that has forgotten its rooms asks the world and finds them.
    */
   function roomInChunk(level, chunkX, chunkZ) {
-    return probeChunk(chunkX, level.difficulty.chunkY, chunkZ).occupied;
+    return probeChunk(chunkX, level.origin.y, chunkZ).occupied;
   }
 
   /**
@@ -398,7 +405,7 @@ export function createLoader({ api, log }) {
     const sourceY = Math.floor(template.src[1] / SIZE) * SIZE;
     const sourceZ = Math.floor(template.src[2] / SIZE) * SIZE;
     const toX = origin.x * SIZE;
-    const toY = floorOfLayer(difficulty);
+    const toY = floorOfLayer(origin.y);
     const toZ = origin.z * SIZE;
     const [centreX, centreZ] = DUNGEON_CONFIG.probeLocalXZ;
     const margin = DUNGEON_CONFIG.landingMargin;
@@ -519,7 +526,7 @@ export function createLoader({ api, log }) {
       // Two questions, one probe. "Is the chunk sent?" and "is there already a
       // room in it?" are answered by the same Bedrock reading, so a scan costs one
       // `getBlock` per candidate and nothing else.
-      const probe = probeChunk(x, level.difficulty.chunkY, z);
+      const probe = probeChunk(x, level.origin.y, z);
       // The probe is also the request: `ready` now holds the first tick a copy may
       // land, whether the chunk answered or has to be sent first.
       markReadyAt(level, x, z, probe.loaded);
@@ -649,7 +656,6 @@ export function createLoader({ api, log }) {
     const item = level.queue.shift();
     if (!item) return false;
 
-    const difficulty = level.difficulty;
     const key = chunkKey(item.chunkX, item.chunkZ);
     // One chunk may be queued twice — by two scans, or by the entrance ahead of the
     // queue — and `copyChunk` is the one call in this file whose cost lives on the
@@ -679,7 +685,7 @@ export function createLoader({ api, log }) {
     const from = item.template.src;
     const to = [
       item.chunkX * SIZE,
-      floorOfLayer(difficulty),
+      floorOfLayer(level.origin.y),
       item.chunkZ * SIZE,
     ];
 
@@ -813,7 +819,7 @@ export function createLoader({ api, log }) {
     const level = levelState(difficulty, entryId);
     const chunkX = level.origin ? level.origin.x : null;
     const chunkZ = level.origin ? level.origin.z : null;
-    const chunkY = difficulty.chunkY;
+    const chunkY = level.origin ? level.origin.y : null;
     const [localX, localZ] = DUNGEON_CONFIG.probeLocalXZ;
     const probe = chunkX === null ? { loaded: false, occupied: false } : probeChunk(chunkX, chunkY, chunkZ);
     const bottom = chunkX === null ? null : readCell(chunkX * SIZE + localX, chunkY * SIZE, chunkZ * SIZE + localZ);

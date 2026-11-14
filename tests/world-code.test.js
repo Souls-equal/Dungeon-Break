@@ -216,8 +216,8 @@ function originOf(world, playerId = "p1") {
   const before = world.messages.length;
   world.context.playerCommand(playerId, "level");
   const lines = world.messages.slice(before).map((entry) => entry.message).join("\n");
-  const match = lines.match(/origin (-?\d+),(-?\d+)/);
-  return match ? { x: Number(match[1]), z: Number(match[2]) } : null;
+  const match = lines.match(/origin (-?\d+),(-?\d+),(-?\d+)/);
+  return match ? { x: Number(match[1]), y: Number(match[2]), z: Number(match[3]) } : null;
 }
 
 const said = (world, playerId) => world.messages
@@ -304,11 +304,11 @@ test("a level is one chunk copy, and the player lands on its floor", () => {
     assert.ok(world.copies.length >= 1, "nothing was copied");
     const origin = originOf(world);
     assert.ok(origin, "no place was drawn for the dungeon");
-    assert.deepEqual(world.copies[0].to, [origin.x * SIZE, VERY_EASY.chunkY * SIZE, origin.z * SIZE],
+    assert.deepEqual(world.copies[0].to, [origin.x * SIZE, origin.y * SIZE, origin.z * SIZE],
       `the first copy is not the entrance: ${JSON.stringify(world.copies[0])}`);
     const landing = world.positions.at(-1).position;
     // Two blocks above the floor block the template has at local y 2.
-    assert.equal(landing[1], VERY_EASY.chunkY * SIZE + 2 + DUNGEON_CONFIG.spawnAboveFloor);
+    assert.equal(landing[1], origin.y * SIZE + 2 + DUNGEON_CONFIG.spawnAboveFloor);
     assert.equal(Math.abs(landing[0] % 1), 0.5, "the player is not in the middle of a cell on x");
     assert.equal(Math.abs(landing[2] % 1), 0.5, "the player is not in the middle of a cell on z");
     // Away from the room's walls, whatever the draw.
@@ -362,13 +362,16 @@ test("a Concrete pad built into a room leads to the next level", () => {
   );
   world.tick(3);
   const last = world.positions.at(-1).position;
-  // The wait place is inside the easy level's chunk, which is what loads it.
-  assert.equal(Math.floor(last[1] / SIZE), findDifficulty("easy").chunkY);
-  // And it is a place of its own: the new level drew a square, so the player does not
-  // rebuild in the rooms they just left.
+  // The wait place is inside the next level's chunk, which is what loads it: the
+  // player is put in the middle of that chunk, at the layer this entry drew.
   const next = originOf(world);
   assert.ok(next, "the next level has no place");
-  assert.notDeepEqual(next, { x: Math.floor(landing[0] / SIZE), z: Math.floor(landing[2] / SIZE) });
+  assert.equal(Math.floor(last[0] / SIZE), next.x);
+  assert.equal(Math.floor(last[1] / SIZE), next.y);
+  assert.equal(Math.floor(last[2] / SIZE), next.z);
+  // And it is a place of its own: a new level drew a new cube, so the player does not
+  // rebuild in the rooms they just left.
+  assert.notDeepEqual(next, { x: Math.floor(landing[0] / SIZE), y: Math.floor(landing[1] / SIZE), z: Math.floor(landing[2] / SIZE) });
 });
 
 test("a room is never copied from an unloaded template, and that is said once", () => {
@@ -426,7 +429,7 @@ test("walking around copies the rooms the player can see, one per tick", () => {
 
   // Every copy lands on the level's own layer, never on another difficulty's.
   for (const copy of world.copies) {
-    assert.equal(Math.floor(copy.to[1] / SIZE), VERY_EASY.chunkY,
+    assert.equal(Math.floor(copy.to[1] / SIZE), origin.y,
       `a copy landed on chunk layer ${Math.floor(copy.to[1] / SIZE)}`);
   }
 });
@@ -514,7 +517,11 @@ test("/dbg reports the level, the chunk and the counts", () => {
   assert.ok(lines.length >= 4, `the report was cut short: ${lines.length} line(s)`);
   for (const line of lines) assert.match(line, /^\[dbg\]/);
   const joined = lines.join("\n");
-  assert.match(joined, /Very Easy · layer -32/);
+  // The layer is the one this entry drew, not a constant of the difficulty.
+  const origin = originOf(world);
+  assert.ok(origin, "no place was drawn for the dungeon");
+  assert.match(joined, new RegExp(`Very Easy · layer ${origin.y}( |$)`));
+  assert.match(joined, new RegExp(`origin ${origin.x},${origin.y},${origin.z}`));
   assert.match(joined, /chunk -?\d+,-?\d+/);
   assert.match(joined, /placed \d+/);
   assert.doesNotMatch(joined, /undefined|NaN/);
@@ -547,7 +554,7 @@ test("/dbg mem reports the counters that must stay bounded", () => {
   const header = lines.find((message) => /layer/.test(message));
   // The header names the level and the place this entry drew, because two players on
   // the same level no longer share either.
-  assert.match(header, /Very Easy · layer -32 · room origin -?\d+,-?\d+ · templates \d+/);
+  assert.match(header, /Very Easy · layer -?\d+ · room origin -?\d+,-?\d+,-?\d+ · templates \d+/);
   assert.match(lines.join("\n"), /queued \d+ · planned \d+ · rooms \d+ \(\d+ in flight\)/);
   assert.match(lines.join("\n"), /placed \d+ · loading \d+ · failed \d+/);
 });
