@@ -199,27 +199,16 @@ export const DUNGEON_CONFIG = {
   mobRetryTicks: 40,
 
   // ------------------------------------------------------------------ chests ---
-  // A chest in a dungeon room gives a **Key**. The rarity is drawn per difficulty, so a
-  // Deep room is worth opening and a Very Easy one is not a shortcut to a Diamond Key.
+  // A chest in a dungeon room drops a **Key**. The rarity is drawn per difficulty, so a
+  // deep room is worth opening and a Very Easy one is not a shortcut to a Diamond Key.
   //
-  // A chest is opened **once**. The code cannot empty the chest itself (the room is a
-  // copy, and nothing is written into it), so the proof is the same one the cleared rooms
-  // use: `setBlockData` on the chest's own block. Data is cleared when a block changes, so
-  // a room copied again — or a new entry, which draws a new place — starts with its chests
-  // full. Within one run, walking back to a chest finds it marked.
-
-  // Where a room template may hold chests, in chunk-local coordinates: the middle band of
-  // the room, away from the walls. A chest outside this box is decoration, not loot.
-  chestBox: { minX: 3, maxX: 28, minY: 2, maxY: 12, minZ: 3, maxZ: 28 },
-  // Levels of the room read per column, from `chestBox.minY` upwards, when a report goes
-  // looking for chests. The scan walks **every** column of the box: a chest is where a
-  // builder put it, and a sampled grid is a grid that misses it. That is thousands of
-  // reads, so it is a `/dbg` tool — the click path never scans.
-  chestScanHeights: 10,
-  // Every key is its **own item** in the game (`Wooden Key` … `Diamond Key`), not one
-  // `Key` with a label: the ship's item list has all five and no plain `Key`. So a chest
-  // gives `"<label> Key"`, and `tools/build-world-code.mjs` checks those names against the
-  // list it ships with.
+  // **Nothing is searched and nothing is predicted**: a room's chests are in its build, and
+  // `onPlayerClick` names the block that was clicked. The only test is `block === "Chest"`.
+  // Opening a chest replaces it with `Air` and drops the key at the middle of the block —
+  // the emptied block is the whole memory of "already opened", and a room copied again
+  // (a new entry, a new place) gets its chest back.
+  //
+  // There is therefore no setting here for where chests are, or how to find them.
 
   // Chat message shown once when the catalogue has no template for a level.
   missingTemplatesMessage:

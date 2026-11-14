@@ -1,58 +1,40 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { CHEST_KEYS, DIFFICULTIES, DUNGEON_CONFIG, chestKeysFor, findDifficulty, floorOfLayer } from "../../src/dungeon/config.js";
+import { CHEST_KEYS, DIFFICULTIES, chestKeysFor, findDifficulty } from "../../src/dungeon/config.js";
 import { chunkOfWorld } from "../../src/dungeon/loader.js";
-import {
-  chestOfClick,
-  drawChestKey,
-  findRoomChests,
-  isChestBlock,
-  isChestOpened,
-  markChestOpened,
-} from "../../src/dungeon/loot.js";
+import { chestOfClick, drawChestKey, isChestBlock, openChest } from "../../src/dungeon/loot.js";
 
 const VERY_EASY = findDifficulty("veryEasy");
 const HELL = findDifficulty("hell");
 
-/** A world that answers reads from a map, and `null` outside the chunks it knows. */
-function createWorld(chests = []) {
-  const blocks = new Map();
-  const data = new Map();
-  const loaded = new Set();
+/** A world: the blocks it holds, the drops it was asked for, and the writes it saw. */
+function createWorld(blocks = new Map()) {
+  const drops = [];
+  const writes = [];
   const key = (x, y, z) => `${x},${y},${z}`;
-  for (const chest of chests) blocks.set(key(chest.x, chest.y, chest.z), chest.block || "Chest");
   return {
     blocks,
-    data,
-    loaded,
+    drops,
+    writes,
     api: {
       getBlock(x, y, z) {
-        if (loaded.size === 0) return null;
-        if (!loaded.has(`${Math.floor(x / DUNGEON_CONFIG.chunkSize)}|${Math.floor(y / DUNGEON_CONFIG.chunkSize)}|${Math.floor(z / DUNGEON_CONFIG.chunkSize)}`)) return null;
         return blocks.get(key(x, y, z)) || "Air";
       },
-      getBlockData(x, y, z) {
-        return data.get(key(x, y, z)) || null;
+      setBlock(x, y, z, name) {
+        writes.push({ x, y, z, name });
+        blocks.set(key(x, y, z), name);
       },
-      setBlockData(x, y, z, value) {
-        data.set(key(x, y, z), value);
+      createItemDrop(x, y, z, itemName, amount) {
+        drops.push({ x, y, z, itemName, amount });
+        return `drop-${drops.length}`;
       },
-    },
-    load(chunkX, chunkZ, level) {
-      const baseY = Math.floor(floorOfLayer(level.origin.y) / DUNGEON_CONFIG.chunkSize);
-      this.loaded.add(`${chunkX}|${baseY}|${chunkZ}`);
-    },
-    put(x, y, z) {
-      this.loaded.add(`${Math.floor(x / DUNGEON_CONFIG.chunkSize)}|${Math.floor(y / DUNGEON_CONFIG.chunkSize)}|${Math.floor(z / DUNGEON_CONFIG.chunkSize)}`);
-      // The block was already placed by `createWorld`; this only makes its chunk readable.
-      if (!blocks.has(key(x, y, z))) blocks.set(key(x, y, z), "Air");
     },
   };
 }
 
 function levelFor(difficulty, origin = { x: 0, y: 0, z: 0 }) {
-  return { origin, difficulty, chests: new Map() };
+  return { origin, difficulty };
 }
 
 // ------------------------------------------------------------------ draws --
@@ -109,104 +91,70 @@ test("a draw at the very edge of the range still gives a key", () => {
   assert.equal(drawChestKey(VERY_EASY, () => 1).key, CHEST_KEYS[CHEST_KEYS.length - 1].key, "a roll of 1 gives nothing");
 });
 
-// ------------------------------------------------------------------ scans --
-
-test("the chests of a room are found where they stand", () => {
-  const level = levelFor(VERY_EASY);
-  const baseY = floorOfLayer(level.origin.y);
-  const chests = [
-    { x: 8, y: baseY + 4, z: 8 },
-    { x: 20, y: baseY + 3, z: 24, block: "Iron Chest" },
-  ];
-  const world = createWorld(chests);
-  for (const chest of chests) world.put(chest.x, chest.y, chest.z);
-
-  const scan = findRoomChests(world.api, level, 0, 0);
-  assert.equal(scan.complete, true);
-  assert.equal(scan.chests.length, 2, "the scan did not find both chests");
-  assert.deepEqual(scan.chests.map((chest) => [chest.x, chest.y, chest.z]).sort(),
-    chests.map((chest) => [chest.x, chest.y, chest.z]).sort());
-});
-
-test("a room whose chunks are not sent reports an incomplete scan, not an empty room", () => {
-  const level = levelFor(VERY_EASY);
-  const world = createWorld();
-  const scan = findRoomChests(world.api, level, 0, 0);
-  assert.equal(scan.complete, false, "an unreadable room was reported as a room without chests");
-  assert.equal(scan.chests.length, 0);
-  // And it is not remembered: the next call has a right to a real answer.
-  assert.equal(level.chests.size, 0, "an incomplete scan was cached");
-});
-
-test("a chest outside the room's box is not loot", () => {
-  const level = levelFor(VERY_EASY);
-  const baseY = floorOfLayer(level.origin.y);
-  // In the wall's corner, outside `chestBox`: a builder's decoration.
-  const outside = { x: 1, y: baseY + 4, z: 1 };
-  const world = createWorld([outside]);
-  world.put(outside.x, outside.y, outside.z);
-  // The box is what makes a chest loot: a corner chest is a builder's decoration, and the
-  // scan — which only walks the box — is how `/dbg chests` says so.
-  assert.deepEqual(findRoomChests(world.api, level, 0, 0).chests, [], "a chest in a corner was counted as loot");
-  assert.equal(chestOfClick(world.api, level, [outside.x, outside.y, outside.z]), null,
-    "a click on a corner chest paid out");
-});
-
 // ----------------------------------------------------------------- clicks --
 
-test("a click on a chest of the room is the chest, and a click elsewhere is not", () => {
+test("a click on a chest is a chest, anything else is not", () => {
   const level = levelFor(VERY_EASY);
-  const baseY = floorOfLayer(level.origin.y);
-  const chest = { x: 10, y: baseY + 4, z: 10 };
-  const world = createWorld([chest]);
-  world.put(chest.x, chest.y, chest.z);
-  world.blocks.set("11,4,10", "Stone");
+  const blocks = new Map([
+    ["10,4,10", "Chest"],
+    ["11,4,10", "Stone"],
+    ["12,4,10", "Chest"], // a second chest, right beside the first
+  ]);
+  const world = createWorld(blocks);
 
-  const found = chestOfClick(world.api, level, [chest.x, chest.y, chest.z]);
-  assert.equal(found.x, chest.x);
-  assert.equal(found.block, "Chest");
-
-  assert.equal(chestOfClick(world.api, level, [chest.x, chest.y + 1, chest.z]), null,
-    "a click on the block above a chest paid out");
-  assert.equal(chestOfClick(world.api, level, [chest.x, chest.y, chest.z + 20]), null,
-    "a click outside the room paid out");
-  assert.equal(chestOfClick(world.api, level, [chest.x, baseY + 40, chest.z]), null,
-    "a click high above the room paid out");
+  const found = chestOfClick(world.api, level, [10, 4, 10]);
+  assert.deepEqual({ x: found.x, y: found.y, z: found.z }, { x: 10, y: 4, z: 10 });
+  assert.equal(chestOfClick(world.api, level, [11, 4, 10]), null, "a click on stone became a chest");
+  assert.equal(chestOfClick(world.api, level, [10, 5, 10]), null, "a click above a chest became a chest");
+  // Fractions are floored, not rounded: the game can report a position inside the block.
+  assert.equal(chestOfClick(world.api, level, [12.7, 4.2, 10.1]).x, 12);
 });
 
-test("the chest mark lives on the block, and it is what makes a chest opened once", () => {
-  const level = levelFor(VERY_EASY);
-  const baseY = floorOfLayer(level.origin.y);
-  const chest = { x: 10, y: baseY + 4, z: 10 };
-  const world = createWorld([chest]);
-  world.put(chest.x, chest.y, chest.z);
-
-  assert.equal(isChestOpened(world.api, chest.x, chest.y, chest.z), false);
-  markChestOpened(world.api, chest.x, chest.y, chest.z);
-  assert.equal(isChestOpened(world.api, chest.x, chest.y, chest.z), true);
-  // A chest copied again is a new block, and `setBlockData` documents exactly that: the
-  // data is cleared when the block changes.
-  world.blocks.set(`${chest.x},${chest.y},${chest.z}`, "Air");
-  world.data.delete(`${chest.x},${chest.y},${chest.z}`);
-  assert.equal(isChestOpened(world.api, chest.x, chest.y, chest.z), false,
-    "a chest that was replaced stayed marked as opened");
+test("a click outside a dungeon is not a chest of a dungeon", () => {
+  const world = createWorld(new Map([["0,0,0", "Chest"]]));
+  assert.equal(chestOfClick(world.api, null, [0, 0, 0]), null, "a click with no dungeon paid out");
+  assert.equal(chestOfClick(world.api, { origin: null }, [0, 0, 0]), null,
+    "a click in a level with no place paid out");
 });
 
-test("chest block names are recognised, and nothing else is", () => {
+test("the chest of a click keeps its room, which is what the level is drawn for", () => {
+  const level = levelFor(VERY_EASY);
+  const world = createWorld(new Map([["42,4,10", "Chest"]]));
+  const found = chestOfClick(world.api, level, [42, 4, 10]);
+  assert.deepEqual({ x: found.chunkX, z: found.chunkZ }, chunkOfWorld(42, 10),
+    "the chest was filed under another room");
+});
+
+// ------------------------------------------------------------------ opens --
+
+test("opening a chest leaves air and drops the key at the middle of the block", () => {
+  const world = createWorld(new Map([["10,4,10", "Chest"]]));
+  const drop = openChest(world.api, { x: 10, y: 4, z: 10, itemName: "Gold Key" });
+
+  // The block is gone, and that is the whole memory of "this chest was opened".
+  assert.deepEqual(world.writes, [{ x: 10, y: 4, z: 10, name: "Air" }],
+    "the chest was not replaced by Air");
+  assert.equal(world.api.getBlock(10, 4, 10), "Air");
+  // The key lands at the middle of the click: +0.5 in x and z, and the chest's own y.
+  assert.equal(drop, "drop-1");
+  assert.deepEqual(world.drops, [{ x: 10.5, y: 4, z: 10.5, itemName: "Gold Key", amount: 1 }],
+    "the key was not dropped at the middle of the chest");
+});
+
+test("the chest is emptied before the key is created, so a failure cannot duplicate one", () => {
+  const order = [];
+  const api = {
+    setBlock: () => order.push("air"),
+    createItemDrop: () => { order.push("drop"); return null; },
+  };
+  assert.equal(openChest(api, { x: 0, y: 0, z: 0, itemName: "Wooden Key" }), null);
+  assert.deepEqual(order, ["air", "drop"], "the key was created before the chest was removed");
+});
+
+test("chest block names: Chest, and nothing else", () => {
   assert.equal(isChestBlock("Chest"), true);
-  assert.equal(isChestBlock("Iron Chest"), true);
+  assert.equal(isChestBlock("Iron Chest"), false, "the builds hold plain chests only");
   assert.equal(isChestBlock("Air"), false);
   assert.equal(isChestBlock(null), false);
   assert.equal(isChestBlock(undefined), false);
-});
-
-test("the chest of a click keeps its room, which is the room the level is drawn for", () => {
-  const level = levelFor(VERY_EASY);
-  const baseY = floorOfLayer(level.origin.y);
-  const chest = { x: 32 + 10, y: baseY + 4, z: 10 };
-  const world = createWorld([chest]);
-  world.put(chest.x, chest.y, chest.z);
-  const found = chestOfClick(world.api, level, [chest.x, chest.y, chest.z]);
-  assert.deepEqual({ x: found.chunkX, z: found.chunkZ }, chunkOfWorld(chest.x, chest.z),
-    "the chest was filed under another room");
 });

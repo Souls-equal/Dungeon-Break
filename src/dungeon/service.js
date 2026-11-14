@@ -14,12 +14,7 @@
  */
 
 import { setTimeout as scheduleTimeout } from "../utils/scheduler.js";
-import {
-  chestOfClick,
-  drawChestKey,
-  isChestOpened,
-  markChestOpened,
-} from "./loot.js";
+import { chestOfClick, drawChestKey, openChest } from "./loot.js";
 import { keyItemName } from "./reward.js";
 import {
   DUNGEON_CONFIG,
@@ -394,17 +389,18 @@ export function createDungeonService(options) {
   }
 
   /**
-   * A player clicked somewhere in their dungeon. If it was a chest, it pays out once.
+   * A player clicked a block in their dungeon. A `Chest` becomes a key and disappears.
    *
-   * The order is deliberate: **identify, then check, then pay**. A chest already marked
-   * opened answers nothing, whatever the draw would have given — a player who walks back to
-   * a chest they already emptied must not get a second key, and the mark lives on the
-   * chest's own block, so it is the world that says so.
+   * Three steps, in this order, and the order is the safety:
    *
-   * The key is drawn from **the level the player is in**, which is what makes a deeper
-   * dungeon worth its mobs, and it goes straight into the inventory: a drop could roll
-   * under a mob or off a ledge, and a key that disappears is worse than a key that was
-   * never given.
+   *   1. **is it a chest?** the game named the block, so this is one read and no search;
+   *   2. **draw the key** for the level the player is in — that is what makes a deep
+   *      dungeon worth its mobs;
+   *   3. **open it**: the block becomes `Air` and the key drops at the middle of it.
+   *
+   * Nothing is remembered and nothing is predicted. A chest that is gone cannot be opened
+   * twice, a room copied again has its chest back, and a room whose builder put the chest
+   * somewhere strange is found by the click rather than by a guess.
    */
   function clickPosition(playerId, position) {
     const dungeon = dungeonOf(playerId);
@@ -412,23 +408,18 @@ export function createDungeonService(options) {
     const level = loader.levelState(dungeon.difficulty, playerId);
     const chest = chestOfClick(api, level, position);
     if (!chest) return null;
-    if (isChestOpened(api, chest.x, chest.y, chest.z)) {
-      api.sendMessage(playerId, "This chest is already empty.");
-      return null;
-    }
 
-    markChestOpened(api, chest.x, chest.y, chest.z);
     const drawn = drawChestKey(dungeon.difficulty);
-    const given = api.giveItem(playerId, keyItemName(drawn.label), 1) || 0;
-    if (given <= 0) {
-      // A full inventory is not a wasted chest: the mark is undone, so the chest still has
-      // its key when there is room for it.
-      api.setBlockData(chest.x, chest.y, chest.z, {});
-      api.sendMessage(playerId, "Your inventory is full — the chest is still there.");
-      return null;
+    const drop = openChest(api, { ...chest, itemName: keyItemName(drawn.label) });
+    if (!drop) {
+      // The world is at its item-drop limit. Saying nothing would look like a chest that
+      // does not work, so the message names the cause and the key is not lost twice over:
+      // the chest is gone either way, and the player knows why.
+      api.sendMessage(playerId, "The key could not be dropped here — the world is full of items.");
+      return { ...chest, key: drawn, dropped: false };
     }
     api.sendMessage(playerId, `You found a ${drawn.label} Key! (${drawn.rarity})`);
-    return { ...chest, key: drawn };
+    return { ...chest, key: drawn, dropped: true };
   }
 
   /**
