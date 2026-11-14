@@ -771,3 +771,42 @@ test("going back to spawn despawns the mobs of the dungeon", () => {
   assert.equal(world.mobs.size, 0, "a mob of the dungeon survived the way back to spawn");
   assert.equal(world.context.DUNGEON_LEVELS.length, 8);
 });
+
+// --------------------------------------------------------- death and respawn --
+
+test("respawning keeps the dungeon, kills its mobs, and restocks the rooms around the entrance", () => {
+  const world = createWorld(["p1"]);
+  startDungeon(world, "p1");
+  world.tick(80);
+  const origin = originOf(world);
+  const copies = world.copies.length;
+  const before = world.mobSpawns.length;
+  const mobsAtDeath = new Set(world.mobs.keys());
+  assert.ok(mobsAtDeath.size > 0, "there were no mobs, so there is nothing to restock");
+
+  // The callback returns the **position** the player comes back to: returning `true` means
+  // "I teleport myself", and nothing moved the player in that case.
+  const spot = world.context.onRespawnRequest("p1");
+  assert.ok(Array.isArray(spot), "the respawn did not return a position");
+  const landed = said(world, "p1").find((line) => line.startsWith("Landed at y "));
+  const landingY = Number(landed.split(" ")[3]);
+  assert.equal(spot[1], landingY, "the respawn lands somewhere other than the verified entrance");
+
+  // The dungeon is the same one: no new origin, no new room copied for the death.
+  assert.deepEqual(originOf(world), origin, "a death drew a new dungeon");
+  assert.equal(world.copies.length, copies, "a death copied rooms again");
+  // Every mob that was alive is gone, and the rooms around the entrance are asked for
+  // again: the player gets a second chance, not the same pack in the face.
+  for (const mobId of mobsAtDeath) {
+    assert.equal(world.mobs.has(mobId), false, "a mob of the fight that killed the player survived");
+  }
+  world.tick(2);
+  assert.ok(world.mobSpawns.length > before, "the rooms around the entrance were not restocked");
+});
+
+test("respawning outside a dungeon is left to the game", () => {
+  const world = createWorld(["p1"]);
+  world.context.onPlayerJoin("p1");
+  assert.equal(world.context.onRespawnRequest("p1"), false,
+    "the code took over a respawn it had no dungeon for");
+});

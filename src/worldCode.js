@@ -458,12 +458,25 @@ onMobDespawned = (mobId) => {
 };
 
 onRespawnRequest = (playerId) => {
-  // Dying is not a way out of a level: the player comes back at the entrance of
-  // the level they were in, which is a floor that has been verified.
+  // Dying is not a way out of the dungeon, and not a way to lose it either: the player
+  // comes back at the entrance of **the level they are already in**. Same rooms, same
+  // cleared rooms, same landing height — a dungeon is not redrawn for a death.
+  //
+  // What changes is the fight: the mobs of the dungeon are killed, and the rooms around
+  // the entrance are filled again. Coming back into the pack that killed you would trap
+  // the player at the entrance, and a room with its mobs already dead is not a second
+  // chance.
+  //
+  // What comes back is **the position**, not `true`: `true` means "I handle the
+  // teleport myself", and the game would leave the player where they died while this code
+  // never moved them. A position is the documented answer, and it is the entrance landing
+  // that was verified on the way in.
   const dungeon = service().dungeonOf(playerId);
   if (!dungeon) return false;
-  service().enterDifficulty(playerId, dungeon.difficulty);
-  return true;
+  const spot = service().resetMobs(playerId);
+  if (!spot) return false;
+  api.sendMessage(playerId, "Back at the entrance — the rooms around you have been restocked.");
+  return spot;
 };
 
 // Kept for the reports: the level table is a public part of the world code.

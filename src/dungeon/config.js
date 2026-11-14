@@ -184,12 +184,10 @@ export const DUNGEON_CONFIG = {
   // is the one cell of a room nothing ever writes.
   mobClearCell: [0, 0, 0],
 
-  // Mob types a room can hold, picked at random per mob. `Draugr Zombie` is the
-  // documented hostile zombie, and the only name this code relies on. `Zombie` is listed
-  // as documented, but the game's variation table does not offer it, so it is a **bet**
-  // rather than a fact: a type the game refuses is dropped for the session (see
-  // `refusedMobs` in the loader) instead of being retried for every slot of every room.
-  mobTypes: ["Draugr Zombie", "Zombie"],
+  // The bestiary is `MOB_ROSTER` below: a level draws among every type unlocked at or
+  // before it. A type the game refuses — an unknown name, or a name it will not place —
+  // is dropped for the session (see `refusedMobs` in the loader) rather than retried in
+  // every room of every dungeon.
 
   // Cells of a room that are never used for a mob: the walls, as for the player.
   mobSpawnMargin: 2,
@@ -225,6 +223,52 @@ export const DIFFICULTIES = [
   { id: "ultraInsane", label: "Ultra Insane", padBlock: "Gray Concrete", fromLobby: false },
   { id: "hell", label: "Hell", padBlock: "Black Concrete", fromLobby: false },
 ];
+
+/*
+ * The bestiary, in the order the levels unlock it.
+ *
+ * `from` is the level that **adds** the type: a level holds every type whose `from` is at
+ * or below it, which is what makes Hell a mix of nine mobs and Very Easy a room of
+ * ordinary zombies. `health`, `damage` and `speed` are the mob's **own** multipliers,
+ * applied before the level's — the owner's table, where a Cave Golem is tougher than a
+ * Zombie at the same difficulty, and a Skeleton is frailer than both.
+ *
+ * The names are the game's own type names, in the game's spelling. `Zombie` and `Skeleton`
+ * are the plain mobs; the rest are cave and Nether breeds. A name the game does not accept
+ * costs nothing permanent: it is retried, and dropped for the session as soon as it fails
+ * where another type worked.
+ */
+export const MOB_ROSTER = [
+  { type: "Zombie", from: "veryEasy" },
+  { type: "Draugr Zombie", from: "easy", health: 1.15, damage: 1.2 },
+  { type: "Skeleton", from: "easy", health: 0.7 },
+  { type: "Draugr Skeleton", from: "medium", health: 0.8, damage: 1.2 },
+  { type: "Cave Golem", from: "normal", health: 1.4, speed: 0.95 },
+  { type: "Armour Collector", from: "hard", health: 2, damage: 1.75, speed: 0.95 },
+  { type: "Furnace Knight", from: "insane", health: 2, damage: 2, speed: 0.95 },
+  { type: "Lil Knight", from: "insane", health: 1.75, damage: 1.8, speed: 1.25 },
+  { type: "Draugr Knight", from: "ultraInsane", damage: 2, speed: 1.6 },
+  { type: "Scorpion", from: "hell", health: 1.75, damage: 1.6, speed: 1.15 },
+];
+
+/**
+ * The mob types a level can draw, each with its own multipliers.
+ *
+ * A level gets every type whose `from` is at or below it in the ladder, so adding a breed
+ * to the roster is the whole change — no table to keep in sync with the difficulty list.
+ */
+export function mobRosterFor(difficulty) {
+  const rank = DIFFICULTIES.findIndex((entry) => entry.id === difficulty.id);
+  const level = rank < 0 ? 0 : rank;
+  return MOB_ROSTER
+    .filter((mob) => DIFFICULTIES.findIndex((entry) => entry.id === mob.from) <= level)
+    .map((mob) => ({
+      type: mob.type,
+      health: mob.health === undefined ? 1 : mob.health,
+      damage: mob.damage === undefined ? 1 : mob.damage,
+      speed: mob.speed === undefined ? 1 : mob.speed,
+    }));
+}
 
 /**
  * How hard the mobs of each level are.
