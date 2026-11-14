@@ -111,9 +111,9 @@ export function createDungeonService(options) {
     // is drawn a couple of ticks later — and gravity is off until then.
     //
     // The provisional spot is therefore the room's own centre, two cells above the
-    // layer's floor: the one column a room is built around, and the one cell the
-    // engine can name before it has read the room.
-    const provisionalY = floorOfLayer(difficulty) + DUNGEON_CONFIG.spawnAboveFloor;
+    // bottom of **this entry's** chunk layer: the one column a room is built around,
+    // and the one cell the engine can name before it has read the room.
+    const provisionalY = floorOfLayer(origin.y) + DUNGEON_CONFIG.spawnAboveFloor;
     const centreX = origin.x * SIZE + DUNGEON_CONFIG.probeLocalXZ[0] + 0.5;
     const centreZ = origin.z * SIZE + DUNGEON_CONFIG.probeLocalXZ[1] + 0.5;
 
@@ -239,7 +239,8 @@ export function createDungeonService(options) {
    * verified, not to pretend it cannot happen.
    */
   function rescueIfFallen(playerId, dungeon, position) {
-    const bottom = floorOfLayer(dungeon.difficulty) - 4;
+    const origin = loader.levelState(dungeon.difficulty, playerId).origin;
+    const bottom = origin ? floorOfLayer(origin.y) - 4 : -Infinity;
     if (position[1] >= bottom) return false;
     const landing = loader.landingPosition(dungeon.difficulty, playerId);
     if (!landing) return false;
@@ -283,12 +284,13 @@ export function createDungeonService(options) {
     if (!dungeon) return null;
     const position = api.getPosition(playerId) || dungeon.position;
     const chunk = chunkOfWorld(position[0], position[2]);
-    const level = loader.levelState(dungeon.difficulty);
+    const level = loader.levelState(dungeon.difficulty, playerId);
     const template = level.templates.length > 0 ? level.templates[0] : null;
-    const stats = loader.statsOf(dungeon.difficulty);
+    const stats = loader.statsOf(dungeon.difficulty, playerId);
     return {
       difficulty: dungeon.difficulty,
-      chunkY: dungeon.difficulty.chunkY,
+      // The layer is this dungeon's own: every entry draws its place in y as well.
+      chunkY: level.origin ? level.origin.y : null,
       position,
       chunk,
       planned: stats.planned,
@@ -297,7 +299,7 @@ export function createDungeonService(options) {
       templates: stats.templates,
       disabled: stats.disabled,
       exampleChunk: template ? template.chunk : null,
-      origin: loader.levelState(dungeon.difficulty, playerId).origin,
+      origin: level.origin,
       entrance: loader.explainEntrance(dungeon.difficulty, playerId),
       ticks,
     };
@@ -338,7 +340,7 @@ export function createDungeonService(options) {
       rows.push({
         ...loader.statsOf(dungeon.difficulty, entryId),
         entryId,
-        chunkY: dungeon.difficulty.chunkY,
+        chunkY: state.origin ? state.origin.y : null,
         origin: state.origin,
       });
     }

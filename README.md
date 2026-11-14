@@ -16,7 +16,7 @@ La documentation Bloxd décrit exactement ce cas d'usage : « *storing 'template
 | --- | --- | --- |
 | Une salle | ~20 000 `setBlock` | 1 `copyChunk` |
 | Code du donjon | ~12 000 lignes, 18 modules | 1 532 lignes, 4 modules |
-| Niveaux | tous sur `Y = −1000` | une bande verticale par difficulté |
+| Niveaux | tous sur `Y = −1000`, au même endroit | un cube tiré au hasard par entrée |
 | Chute à l'arrivée | boîte de murs de 3 blocs | gravité coupée le temps de la copie |
 
 ## Installer dans Bloxd
@@ -69,29 +69,29 @@ Le tirage est `hash(niveau, chunk) % nombre_de_salles`. Ajouter la 16ᵉ salle r
 
 | Commande | Effet |
 | --- | --- |
-| `/dbg` | Niveau, couche, position, chunk, salles prévues / en file / posées |
+| `/dbg` | Niveau, couche tirée, position, chunk, origine, salles prévues / en file / posées |
 | `/dbg templates` | Tous les modèles des niveaux utilisés, avec lisible / illisible |
-| `/dbg mem` | Les compteurs qui doivent rester bornés : file, plan, copies, échecs |
-| `/dbg seed` | Le niveau et sa couche, en une ligne |
+| `/dbg mem` | Un donjon par ligne, avec son origine, puis les compteurs qui doivent rester bornés |
+| `/dbg seed` | Le niveau et sa couche tirée, en une ligne |
 
 Une capture d'écran + `/dbg templates` suffisent à diagnostiquer une salle manquante.
 
 ## Pads de difficulté
 
-| Bloc à poser | Difficulté | Couche |
-| --- | --- | --- |
-| Lime Concrete | Very Easy | −32 |
-| Light Blue Concrete | Easy | −34 |
-| Yellow Concrete | Medium | −36 |
-| Orange Concrete | Normal | −38 |
-| Red Concrete | Hard | −40 |
-| Purple Concrete | Insane | −42 |
-| Gray Concrete | Ultra Insane | −44 |
-| Black Concrete | Hell | −46 |
+| Bloc à poser | Difficulté |
+| --- | --- |
+| Lime Concrete | Very Easy |
+| Light Blue Concrete | Easy |
+| Yellow Concrete | Medium |
+| Orange Concrete | Normal |
+| Red Concrete | Hard |
+| Purple Concrete | Insane |
+| Gray Concrete | Ultra Insane |
+| Black Concrete | Hell |
 
 Le lobby n'offre que Very Easy, Easy et Medium. Dans un donjon, c'est un bloc Concrete **de la salle** qui mène à la difficulté suivante, jusqu'à Hell : le code lit le bloc sous les pieds du joueur (`onBlockStandStart`), il ne pose rien. Construis donc la plaque du niveau suivant dans tes salles.
 
-Chaque niveau occupe **sa propre bande verticale**, deux chunks sous la précédente : deux niveaux ne peuvent pas se rencontrer, même si un joueur marche 10 000 blocs.
+Un niveau **n'a pas de hauteur fixe** : chaque entrée tire son propre cube (voir « Génération »), donc deux donjons ne peuvent pas se rencontrer, ni horizontalement ni verticalement.
 
 Tous les textes visibles par les joueurs sont en anglais.
 
@@ -104,7 +104,7 @@ Tous les textes visibles par les joueurs sont en anglais.
 - **Rien n'est écrit dans un chunk.** Le moteur ne connaît que `copyChunk` et des lectures : c'est ce qui rend les salles sûres à construire à la main.
 - **Une salle est reconnue par son Bedrock**, pas par un compteur : le tick suivant la copie, la sonde relit la destination et c'est le monde qui confirme. `/dbg mem` sépare les salles vues (`rooms`), celles en vol (`in flight`) et les chunks en cours de chargement.
 - **Entrée.** Demande des modèles, téléportation au centre du chunk d'entrée, `chunkLoadTicks: 2`, copie de la salle d'entrée (si elle n'y est pas déjà), tirage de l'atterrissage, puis le joueur y est posé. La gravité est coupée pendant ces ticks, ce qui remplace la boîte de murs de l'ancien moteur. Un sol qui ne vient pas est réessayé `entryMaxTicks` fois, puis c'est un message — jamais un joueur dans le vide.
-- **Un donjon par entrée, à une place tirée au hasard.** Chaque entrée tire son origine `x, z` en chunks dans `-3125..3124` (**±100 000 blocs**, `y` reste la couche de la difficulté), à au moins `spawnSeparation: 20 000` blocs de toute autre entrée vivante (`spawnDraws: 24` essais, la plus éloignée l'emporte). Quitter libère la place. Deux joueurs ne peuvent donc pas se croiser, et rien n'est écrit dans les chunks : c'est le jeu qui vide la carte quand le propriétaire active le réglage. `/dbg` affiche l'origine, `/dbg mem` celle de chaque donjon.
+- **Un donjon par entrée, à une place tirée au hasard dans les trois directions.** Chaque entrée tire `x` et `z` en chunks dans `-3125..3124` (**±100 000 blocs**) et `y` dans `32..3124` (**blocs 1 000 à 100 000**, `spawnChunkYMin/Max`), à au moins `spawnSeparation: 20 000` blocs de toute autre entrée vivante dans **les trois directions** (`spawnDraws: 24` essais, la plus éloignée l'emporte). Quitter libère la place. Deux joueurs ne peuvent donc pas se croiser, et rien n'est écrit dans les chunks : c'est le jeu qui vide la carte quand le propriétaire active le réglage. `/dbg` affiche l'origine `x,y,z`, `/dbg mem` celle de chaque donjon.
 - **Atterrissage tiré au hasard.** Chaque entrée donne une colonne différente, à `landingMargin` cellules des murs, avec la hauteur du sol **de la salle qui a réellement été copiée** — pas celle du premier modèle de la liste. Les deux cases au-dessus doivent être vides, sinon un autre tirage ; après `landingDraws`, le centre de la salle. Un joueur ne peut donc pas apparaître dans un mur.
 
 ## Sources et version compacte
@@ -124,7 +124,7 @@ src/worldCode.js           lobby, pads, /dbg
 - `npm run build` régénère le fichier compact.
 - `npm run watch` le régénère à chaque sauvegarde dans `src/`.
 - `npm run check` vérifie que le bundle est à jour, valide les syntaxes, et refuse un bundle où `copyChunk` ou la table des modèles ont disparu au minification.
-- `npm test` lance les 70 tests : moteur, configuration, et le bundle réel exécuté dans un `vm` contre un faux serveur qui applique les règles de Bloxd.
+- `npm test` lance les 71 tests : moteur, configuration, et le bundle réel exécuté dans un `vm` contre un faux serveur qui applique les règles de Bloxd.
 
 Le workflow GitHub vérifie la version générée sur les Pull Requests et resynchronise `world-code/` après un merge dans `main`.
 

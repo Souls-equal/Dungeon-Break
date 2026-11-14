@@ -80,34 +80,28 @@ export const DUNGEON_CONFIG = {
   // middle of the room, and a room whose centre reads Bedrock says "a room is here".
   probeLocalXZ: [16, 16],
 
-  // ------------------------------------------------- destination placement ---
-  // Each difficulty gets its own horizontal band of chunk layers, two chunks
-  // apart vertically: layer -32, -34, -36... A room fills a whole chunk, so two
-  // chunks of vertical gap can never overlap, and two difficulties can share
-  // the same X/Z for ever without ever meeting — even after a player walks
-  // 10 000 blocks. This is what removes the "two dungeons collide" class of bug
-  // that a shared flat region cannot avoid.
-  firstLayerChunkY: -32,
-  layerStrideChunks: 2,
-
   // ------------------------------------------------------------ where it is ---
-  // **Every entry draws a new place.** A level is built around a chunk coordinate
-  // drawn at random in this square, so two players who start at the same moment are
-  // a hundred thousand blocks apart, and a player who comes back does not find the
-  // ruins of their previous run.
+  // **Every entry draws a new place, in all three directions.** A dungeon is built
+  // around a chunk coordinate drawn at random inside this cube, so two players who
+  // start at the same moment are a hundred thousand blocks apart, and a player who
+  // comes back does not find the ruins of their previous run.
   //
-  // In chunks: -3125..3124 is blocks -100 000..99 999. Half a chunk of margin is
-  // enough — every chunk of the view is at least one chunk inside the square.
+  // In chunks: -3125..3124 is blocks -100 000..99 999 horizontally. Vertically the
+  // draw runs from block 1 000 to block 100 000 — the range the owner of the project
+  // gave — which is chunks 32..3124: a level is never built at y = 0, where the
+  // world of a game normally lives.
   spawnChunkMin: -3125,
   spawnChunkMax: 3124,
+  spawnChunkYMin: 32,
+  spawnChunkYMax: 3124,
 
-  // How far two entries of the same level are kept apart, in blocks. Each entry costs
-  // one line in a map while its player is in the level, so this is a floor and not a
-  // guarantee for a thousand players — but it is what makes "they will not meet"
-  // true in practice, and it is checked before anything is copied.
+  // How far two entries are kept apart, in blocks, in all three directions. Each
+  // entry costs one line in a map while its player is in the dungeon, so this is a
+  // floor and not a guarantee for thousands of players — but it is what makes "they
+  // will not meet" true in practice, and it is checked before anything is copied.
   spawnSeparation: 20_000,
 
-  // Draws tried to find a free square. After that, the level is built anyway: a
+  // Draws tried to find a free spot. After that, the level is built anyway: a
   // player waiting in the air is worse than two dungeons that are merely far apart.
   spawnDraws: 24,
 
@@ -162,8 +156,9 @@ export const DUNGEON_CONFIG = {
  * from another.
  *
  * `padBlock` is the Concrete block that leads *to* this difficulty, both in the
- * lobby and inside a dungeon. The layer is derived from the position in this
- * list, so adding a difficulty needs no second table.
+ * lobby and inside a dungeon. A difficulty is **not** a height any more: every entry
+ * draws its own layer along with its own x and z, so this table carries no layer and
+ * adding a difficulty needs no second table.
  */
 export const DIFFICULTIES = [
   { id: "veryEasy", label: "Very Easy", padBlock: "Lime Concrete", fromLobby: true },
@@ -186,10 +181,9 @@ const BY_LABEL = {};
 const BY_PAD_BLOCK = {};
 
 DIFFICULTIES.forEach((difficulty, index) => {
-  // The layer is part of the difficulty, not a second lookup: two tables that
-  // must agree are one table that will not.
+  // Only the order, which the "next level" pad needs. Where the level is built is
+  // drawn per entry and owned by the loader: nothing here can go stale.
   difficulty.index = index;
-  difficulty.chunkY = DUNGEON_CONFIG.firstLayerChunkY - index * DUNGEON_CONFIG.layerStrideChunks;
   BY_ID[difficulty.id] = difficulty;
   BY_LABEL[difficulty.label.toLowerCase()] = difficulty;
   BY_PAD_BLOCK[difficulty.padBlock] = difficulty;
@@ -225,7 +219,7 @@ export function lobbyDifficulties() {
   return DIFFICULTIES.filter((entry) => entry.fromLobby);
 }
 
-/** World Y of the block layer that holds the first row of a level's rooms. */
-export function floorOfLayer(difficulty) {
-  return difficulty.chunkY * DUNGEON_CONFIG.chunkSize;
+/** World Y of the bottom of a chunk layer. */
+export function floorOfLayer(chunkY) {
+  return chunkY * DUNGEON_CONFIG.chunkSize;
 }
