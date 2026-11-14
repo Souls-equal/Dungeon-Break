@@ -41,16 +41,18 @@ export function chunkOfWorld(x, z) {
   return { x: Math.floor(x / SIZE), z: Math.floor(z / SIZE) };
 }
 
-/** The world cell that holds the record of a room. */
-export function markerCellOf(difficulty, chunkX, chunkZ, markerLocal) {
-  const local = markerLocal || [DUNGEON_CONFIG.markerLocalXZ, 0, DUNGEON_CONFIG.markerLocalXZ];
-  return [chunkX * SIZE + local[0], floorOfLayer(difficulty) + local[1], chunkZ * SIZE + local[2]];
-}
-
-/** Chunk-local offset of a world cell inside its own chunk, 0..31. */
-function localOf(value) {
-  const size = SIZE;
-  return ((value % size) + size) % size;
+/**
+ * The world cell that holds the record of a room.
+ *
+ * The middle of the room's ceiling — the one cell that exists in every room and
+ * that no player can stand in. See `DUNGEON_CONFIG.surfaceBlock`.
+ */
+export function surfaceCellOf(difficulty, chunkX, chunkZ) {
+  return [
+    chunkX * SIZE + DUNGEON_CONFIG.surfaceLocalXZ,
+    floorOfLayer(difficulty) + SIZE - 1,
+    chunkZ * SIZE + DUNGEON_CONFIG.surfaceLocalXZ,
+  ];
 }
 
 export function createLoader({ api, log }) {
@@ -91,7 +93,7 @@ export function createLoader({ api, log }) {
   /** Templates of a level that are still usable. */
   function usableTemplates(level) {
     if (level.disabled.size === 0) return level.templates;
-    return level.templates.filter((template) => !level.disabled.has(template.id));
+    return level.templates.filter((template) => !level.disabled.has(template.index));
   }
 
   /** The template a chunk of a level gets, or null when none is usable. */
@@ -106,11 +108,23 @@ export function createLoader({ api, log }) {
    * carries no information about the room, and the caller must not queue a copy
    * from a template the server has not sent yet.
    */
-  function markerStateOf(difficulty, chunkX, chunkZ, markerLocal) {
-    const cell = markerCellOf(difficulty, chunkX, chunkZ, markerLocal);
+  function surfaceStateOf(difficulty, chunkX, chunkZ) {
+    const cell = surfaceCellOf(difficulty, chunkX, chunkZ);
     const name = api.getBlock(cell[0], cell[1], cell[2]);
     if (name === null || name === undefined) return "unknown";
-    return name === DUNGEON_CONFIG.markerBlock ? "placed" : "empty";
+    return name === DUNGEON_CONFIG.surfaceBlock ? "placed" : "empty";
+  }
+
+  /**
+   * Marks a room as built, by writing one block of its ceiling.
+   *
+   * Written after the copy, never part of it: a template is built by hand, and a
+   * hand-built room cannot be asked to carry a block of this engine's choosing in
+   * its ceiling. One `setBlock` per room, in the chunk the player is standing in.
+   */
+  function markPlaced(difficulty, chunkX, chunkZ) {
+    const cell = surfaceCellOf(difficulty, chunkX, chunkZ);
+    api.setBlock(cell[0], cell[1], cell[2], DUNGEON_CONFIG.surfaceBlock);
   }
 
   /**
@@ -216,7 +230,7 @@ export function createLoader({ api, log }) {
 
       const template = templateAt(level, x, z);
       if (!template) continue;
-      if (markerStateOf(level.difficulty, x, z, template.markerLocal) !== "empty") continue;
+      if (surfaceStateOf(level.difficulty, x, z) !== "empty") continue;
 
       level.planned.set(key, "queued");
       level.queue.push({ chunkX: x, chunkZ: z, template });
@@ -267,7 +281,7 @@ export function createLoader({ api, log }) {
     // a player who dies, leaves and comes back must not trigger a second copy of a
     // room that is already there. The answer comes from the world, not from the
     // tally of a previous session.
-    if (markerStateOf(difficulty, originX, originZ, template.markerLocal) === "placed") {
+    if (surfaceStateOf(difficulty, originX, originZ) === "placed") {
       level.planned.set(key, "placed");
       return template;
     }
@@ -289,10 +303,10 @@ export function createLoader({ api, log }) {
    * never builds anything again. They are dropped here, once.
    */
   function disableTemplate(level, template) {
-    level.disabled.add(template.id);
-    level.templateAttempts.delete(template.id);
+    level.disabled.add(template.index);
+    level.templateAttempts.delete(template.index);
     for (let index = level.queue.length - 1; index >= 0; index -= 1) {
-      if (level.queue[index].template.id !== template.id) continue;
+      if (level.queue[index].template.index !== template.index) continue;
       level.planned.delete(chunkKey(level.queue[index].chunkX, level.queue[index].chunkZ));
       level.queue.splice(index, 1);
     }
@@ -318,15 +332,18 @@ export function createLoader({ api, log }) {
     if (level.planned.get(key) === "placing" || level.planned.get(key) === "placed") return true;
     // A template that has been disabled is dropped, not retried: the whole point
     // of disabling it is that the queue stops spending ticks on it.
-    if (level.disabled.has(item.template.id)) {
+    if (level.disabled.has(item.template.index)) {
       level.planned.delete(key);
       return true;
     }
+    // The copy reads the template at its own corner, in its own chunk: `copyChunk`
+    // takes any cell inside a chunk, so the source coordinate only has to be
+    // inside the template — and the corner keeps the arithmetic obvious.
     const from = item.template.src;
     const to = [
-      item.chunkX * SIZE + localOf(from[0]),
-      floorOfLayer(difficulty) + localOf(from[1]),
-      item.chunkZ * SIZE + localOf(from[2]),
+      item.chunkX * SIZE,
+      floorOfLayer(difficulty),
+      item.chunkZ * SIZE,
     ];
 
     // One read before asking: a copy from an unloaded template is a no-op, so a
@@ -334,8 +351,8 @@ export function createLoader({ api, log }) {
     // tick on silence, for ever.
     if (api.getBlock(from[0], from[1], from[2]) === null) {
       level.planned.delete(key);
-      const attempts = (level.templateAttempts.get(item.template.id) || 0) + 1;
-      level.templateAttempts.set(item.template.id, attempts);
+      const attempts = (level.templateAttempts.get(item.template.index) || 0) + 1;
+      level.templateAttempts.set(item.template.index, attempts);
       if (attempts < DUNGEON_CONFIG.templateReadAttempts) {
         // The read itself is how the server is asked to send that chunk, so a
         // second chance is not optimism: it is the only way a template that is one
@@ -344,33 +361,29 @@ export function createLoader({ api, log }) {
         level.queue.push(item);
         return true;
       }
-      say(`template ${item.template.id} is not loaded after ${attempts} reads; it is disabled`);
+      say(`template ${item.template.index} (${from.join(", ")}) is not loaded after ${attempts} reads; it is disabled`);
       disableTemplate(level, item.template);
       level.failures += 1;
       return true;
     }
-    level.templateAttempts.delete(item.template.id);
+    level.templateAttempts.delete(item.template.index);
 
     api.copyChunk(from, to);
     level.planned.set(key, "placing");
-    // A copy the queue just made is applied by the server within the tick, and the
-    // marker is read here, not in `verifyPending`: with nobody in the destination
-    // chunk the read would return `null` for ever, and the copy would be forgotten
-    // as if it had failed. This immediate read is what makes a level that nobody is
-    // standing in still build.
-    const markerCell = markerCellOf(difficulty, item.chunkX, item.chunkZ, item.template.markerLocal);
-    if (api.getBlock(markerCell[0], markerCell[1], markerCell[2]) === DUNGEON_CONFIG.markerBlock) {
+    // The record is written straight after the copy, in the same chunk, which the
+    // player is standing in: it is therefore readable at once, and the room is
+    // known to be there without waiting for anything.
+    markPlaced(difficulty, item.chunkX, item.chunkZ);
+    const cell = surfaceCellOf(difficulty, item.chunkX, item.chunkZ);
+    if (api.getBlock(cell[0], cell[1], cell[2]) === DUNGEON_CONFIG.surfaceBlock) {
       level.placed += 1;
       level.planned.set(key, "placed");
       return true;
     }
-
     pendingVerify.push({
       level,
       chunkX: item.chunkX,
       chunkZ: item.chunkZ,
-      markerLocal: item.template.markerLocal,
-      templateId: item.template.id,
       attempts: VERIFY_ATTEMPTS,
     });
     return true;
@@ -389,11 +402,11 @@ export function createLoader({ api, log }) {
       if (api.isNearInterrupt && api.isNearInterrupt()) return;
       const entry = pendingVerify[index];
       entry.age = (entry.age || 0) + 1;
-      const cell = markerCellOf(entry.level.difficulty, entry.chunkX, entry.chunkZ, entry.markerLocal);
+      const cell = surfaceCellOf(entry.level.difficulty, entry.chunkX, entry.chunkZ);
       const name = api.getBlock(cell[0], cell[1], cell[2]);
       const key = chunkKey(entry.chunkX, entry.chunkZ);
 
-      if (name === DUNGEON_CONFIG.markerBlock) {
+      if (name === DUNGEON_CONFIG.surfaceBlock) {
         entry.level.placed += 1;
         entry.level.planned.set(key, "placed");
         pendingVerify.splice(index, 1);
@@ -473,7 +486,7 @@ export function createLoader({ api, log }) {
     levelState,
     landingPosition,
     findFloorLocalY,
-    markerStateOf,
+    surfaceStateOf,
     planAround,
     placeEntrance,
     placeOne,

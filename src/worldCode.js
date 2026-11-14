@@ -226,7 +226,7 @@ function runDebugCommand(playerId, verb) {
     for (const row of rows) {
       const where = `[${row.src.join(", ")}]`;
       const state = row.disabled ? "DISABLED" : row.loaded ? "loaded" : "NOT LOADED";
-      debugSay(playerId, `[dbg] ${row.difficulty} · ${row.id} ${where} faces ${row.faces || "-"} · ${state}`);
+      debugSay(playerId, `[dbg] ${row.difficulty} · #${row.index} ${where} faces ${row.faces || "-"} · ${state}`);
     }
     return;
   }

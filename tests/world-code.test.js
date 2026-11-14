@@ -13,15 +13,16 @@ const VERY_EASY = findDifficulty("veryEasy");
 /**
  * The template chunk the tests build, and the tables they hand to the bundle.
  *
- * The shipped `ROOM_TEMPLATES` is empty until real coordinates are filled in, so
+ * The shipped `ROOM_TEMPLATES` points at a hand-built zone that a test world does
+ * not have, so
  * the world code is tested against a template set injected through the module
  * scope: the same code path a real template takes, with coordinates that exist in
  * the fake world.
  */
 const TEST_SRC = [0, -32, 0];
 const TEST_TEMPLATES = [
-  { id: "hall", src: TEST_SRC, faces: "NESW", spawn: true },
-  { id: "hall-b", src: [64, -32, 0], faces: "NESW" },
+  { src: TEST_SRC, faces: "NESW", spawn: true },
+  { src: [64, -32, 0], faces: "NESW" },
 ];
 
 /**
@@ -32,7 +33,7 @@ const TEST_TEMPLATES = [
  * bundle runs in, which is the same object the loader reads. Nothing in the
  * bundle is rewritten: the code under test is the code that ships.
  */
-const TEST_TABLE = { veryEasy: TEST_TEMPLATES, easy: TEST_TEMPLATES, medium: TEST_TEMPLATES };
+const TEST_TABLE = { rooms: TEST_TEMPLATES };
 
 
 
@@ -124,6 +125,9 @@ function createWorld(onlinePlayerIds, options = {}) {
         const sourceChunk = [Math.floor(from[0] / SIZE), Math.floor(from[1] / SIZE), Math.floor(from[2] / SIZE)];
         if (!loaded.has(sourceChunk.join("|"))) return;
         const destChunk = [Math.floor(to[0] / SIZE), Math.floor(to[1] / SIZE), Math.floor(to[2] / SIZE)];
+        // A copy carries the template's blocks and nothing else: the record block
+        // this engine writes after the copy is not part of it, and a fake that
+        // copied the destination's own record would hide a missing write.
         for (const [cellKey, name] of template) {
           const [x, y, z] = cellKey.split("|").map(Number);
           if (Math.floor(x / SIZE) !== sourceChunk[0]) continue;
@@ -157,7 +161,7 @@ function createWorld(onlinePlayerIds, options = {}) {
       now: () => 1710000000000,
     },
   };
-  context.ROOM_TEMPLATES = TEST_TABLE;
+  context.ROOM_TEMPLATES = options.templates === null ? {} : (options.templates || TEST_TABLE);
   vm.runInNewContext(worldCode, context);
   return {
     context,
@@ -334,10 +338,9 @@ test("a room is never copied from an unloaded template, and that is said once", 
 });
 
 test("a level with no template at all is a message, not a fall", () => {
-  const world = createWorld(["p1"]);
-  // Empty the table at runtime, exactly like a fresh checkout.
-  const level = DUNGEON_CONFIG;
-  void level;
+  // An empty table, which is the state of a checkout whose zone has not been
+  // filled in yet: the player is told, and nothing is copied.
+  const world = createWorld(["p1"], { templates: null });
   world.context.onPlayerJoin("p1");
   world.context.onBlockStandStart("p1", 2, 10, 3, "Purple Concrete");
   world.tick(10 * 20 + 20);

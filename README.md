@@ -28,42 +28,55 @@ La documentation Bloxd décrit exactement ce cas d'usage : « *storing 'template
 
 ## Remplir les modèles de salles
 
-Tout est dans [`src/dungeon/templates.js`](src/dungeon/templates.js) :
+Tout est dans [`src/dungeon/templates.js`](src/dungeon/templates.js). **Une seule liste de salles**, partagée par les huit difficultés : ajouter une salle une fois la rend disponible partout. Une difficulté peut avoir ses propres salles en plus (`veryEasy: [...]`), mais ce n'est pas utilisé aujourd'hui.
 
 ```js
-globalThis.ROOM_TEMPLATES = {
-  veryEasy: [
-    { id: "hall-a", src: [0, -32, 0], faces: "NESW" },
-    { id: "hall-b", src: [32, -32, 0], faces: "NESW" },
-    { id: "corner-a", src: [64, -32, 0], faces: "NE" },
-  ],
-  easy: [ /* ... */ ],
-};
+const READY_ROOMS = [
+  { src: [-2, 1, 0], faces: "NESW" },
+  { src: [-4, 1, 0], faces: "NESW" },
+];
+
+globalThis.ROOM_TEMPLATES = globalThis.ROOM_TEMPLATES || { rooms: READY_ROOMS };
 ```
 
-- **`src`** : `[x, y, z]` d'un bloc **dans** le chunk modèle. Le générateur copie le chunk entier, donc un coin est la coordonnée la plus claire. Le `y` doit être dans le chunk aussi : `[0, -32, 0]` et `[5, -20, 7]` désignent le même chunk.
-- **`faces`** : les côtés qui ont une porte, dans l'ordre **N, E, S, W**. `"NESW"` : quatre portes. `"NS"` : un couloir nord–sud. Deux chunks voisins se raccordent quand leurs deux faces ont une porte.
-- **`spawn: true`** : le modèle utilisé pour la salle d'entrée (facultatif — sinon le tirage décide).
-- **`markerLocal`** : `[x, y, z]` local du bloc-témoin, si le coin bas `(0, 0, 0)` n'est pas plein.
+- **Pas d'identifiant.** Une salle est connue par sa **position dans la liste** : `#12` est la treizième. `/dbg templates` affiche `#12 [x, 1, z]`, l'index et la coordonnée, et rien d'autre n'est à tenir à jour.
+- **`src`** : `[x, y, z]` d'un bloc **dans** le chunk modèle. Le `y` doit être dans le chunk aussi (`[0, 1, 0]` et `[7, 30, 9]` désignent le même chunk).
+- **`faces`** : les côtés qui ont une porte, dans l'ordre **N, E, S, W**. `"NESW"` : quatre portes. `"NS"` : un couloir nord–sud.
+- **`spawn: true`** : la salle utilisée pour l'entrée d'un niveau (facultatif).
 
-Trois contraintes, et deux seulement :
+### ⚠️ La série « −2, −4, −6… » n'est pas utilisable telle quelle
+
+`copyChunk` travaille sur des chunks de **32 blocs**. Les 15 coordonnées données (`-2, -4, … -30`) tombent toutes dans **un seul et même chunk** — celui qui contient x de −32 à −1 :
+
+```
+-32 .................... -1 | 0 .................... 31
+        les 15 modèles    |        un autre chunk
+```
+
+Copier « la salle numéro 7 » demanderait de copier une **partie** du chunk, ce que `copyChunk` ne sait pas faire. Il faut donc une coordonnée par chunk : la série doit progresser de 32 en 32 en x (ou en z, ou les deux), par exemple −16, −48, −80, −112…
+
+La liste en commentaire dans `templates.js` couvre les 60 salles encore à construire (positions 16 à 75) : remplir une entrée, c'est effacer deux `//`.
+
+### Les trois contraintes
 
 1. **Les portes doivent tomber sur les mêmes cases de part et d'autre.** Deux chunks se touchent, sans couloir entre eux : une porte en `x 13..18` sur la face nord du chunk `(0,0)` doit correspondre à `x 13..18` sur la face sud du chunk `(0,−1)`. Le plus simple : la même porte au même endroit sur tous les modèles.
-2. **Le coin bas du chunk doit être plein** (c'est là que vit le bloc-témoin `Bedrock`), ou donne un `markerLocal`.
-3. **Le sol du modèle est lu, pas configuré** : le code remonte la colonne du centre jusqu'au premier bloc plein, et pose le joueur deux blocs au-dessus.
+2. **Le chunk doit être chargé** au moment de la copie, sinon `copyChunk` ne fait rien. `/dbg templates` répond pour chaque salle.
+3. **Rien d'autre.** Le moteur écrit lui-même son bloc-témoin dans le **milieu du plafond** de chaque salle après la copie, et il **lit** la hauteur du sol dans le modèle : aucun bloc de tes salles n'est réservé, et aucune hauteur n'est à configurer.
 
-Après avoir modifié `src/`, `npm run build` régénère `world-code/worldCode.js`. Ne modifie jamais le fichier généré.
+### Changer la liste change tous les donjons
+
+Le tirage est `hash(niveau, chunk) % nombre_de_salles`. Ajouter la 16ᵉ salle redistribue donc **toutes les salles des huit niveaux**. C'est accepté pendant la construction ; quand le monde vaudra la peine d'être conservé, on passera à `hash % TEMPLATE_COUNT` pour qu'une salle ajoutée plus tard ne déplace pas ce qui existe déjà.
 
 ### Vérifier que les modèles sont lisibles en jeu
 
 `copyChunk` **ne fait rien si le chunk source n'est pas chargé**, et ne le dit pas. En jeu, tape `/dbg templates` :
 
 ```
-[dbg] Very Easy · hall-a [0, -32, 0] faces NESW · loaded
-[dbg] Very Easy · hall-b [32, -32, 0] faces NESW · NOT LOADED
+[dbg] Very Easy · #0 [-2, 1, 0] faces NESW · loaded
+[dbg] Very Easy · #1 [-4, 1, 0] faces NESW · NOT LOADED
 ```
 
-`NOT LOADED` veut dire que le serveur n'a pas envoyé ce chunk : la coordonnée est mauvaise, ou la zone des modèles n'est pas chargée par le monde. C'est le premier endroit à regarder quand un niveau s'ouvre sur du vide.
+`NOT LOADED` veut dire que le serveur n'a pas envoyé ce chunk : la coordonnée est mauvaise, ou la zone des modèles n'est pas chargée. C'est le premier endroit à regarder quand un niveau s'ouvre sur du vide.
 
 ## Commandes de debug
 
@@ -100,7 +113,7 @@ Tous les textes visibles par les joueurs sont en anglais.
 - **Grille de chunks.** Les `viewChunks: 2` chunks autour de chaque joueur (5×5, soit 160 blocs de côté) sont mis en file, du plus proche au plus loin.
 - **Une copie par tick et par niveau.** Une copie écrit 32 768 blocs côté serveur ; elle n'est jamais doublée dans un tick.
 - **Un scan toutes les 4 ticks**, borné à 8 nouvelles salles par scan. Un joueur immobile dont les salles sont faites ne coûte aucune lecture.
-- **Un chunk déjà bâti est reconnu par un bloc-témoin** (`Bedrock`, au coin du chunk modèle) : rien n'est reconstruit au retour, et un serveur redémarré retrouve ce qu'il avait posé.
+- **Un chunk déjà bâti est reconnu par un bloc-témoin** (`Polished Diorite`, au milieu de son plafond, écrit par le moteur après la copie) : rien n'est reconstruit au retour, et un serveur redémarré retrouve ce qu'il avait posé.
 - **Une copie est vérifiée** en relisant le bloc-témoin à la destination. Le seul cas indécidable est un chunk que personne n'a chargé : il est compté comme posé-non-vérifié, et `/dbg mem` le dit.
 - **Entrée.** Lecture du modèle, téléportation dans le chunk vide, trois ticks, copie de la salle d'entrée, relecture du sol, puis le joueur est posé deux blocs au-dessus. La gravité est coupée pendant ces ticks, ce qui remplace la boîte de murs de l'ancien moteur.
 
@@ -121,7 +134,7 @@ src/worldCode.js           lobby, pads, /dbg
 - `npm run build` régénère le fichier compact.
 - `npm run watch` le régénère à chaque sauvegarde dans `src/`.
 - `npm run check` vérifie que le bundle est à jour, valide les syntaxes, et refuse un bundle où `copyChunk` ou la table des modèles ont disparu au minification.
-- `npm test` lance les 50 tests : moteur, configuration, et le bundle réel exécuté dans un `vm` contre un faux serveur qui applique les règles de Bloxd.
+- `npm test` lance les 54 tests : moteur, configuration, et le bundle réel exécuté dans un `vm` contre un faux serveur qui applique les règles de Bloxd.
 
 Le workflow GitHub vérifie la version générée sur les Pull Requests et resynchronise `world-code/` après un merge dans `main`.
 

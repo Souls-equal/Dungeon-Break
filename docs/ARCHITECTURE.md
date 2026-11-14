@@ -1,6 +1,6 @@
 # Architecture — génération par copies de chunks
 
-**Statut : livré.** 1 532 lignes de code lisibles (contre ~12 000), 4 modules, 50 tests verts, bundle de 16,8 k caractères sur les 512 k autorisés.
+**Statut : livré.** 4 modules, 54 tests verts, bundle de 17 k caractères sur les 512 k autorisés.
 
 Ce document remplace l'architecture par ouvertures des Phases 0 à 4, supprimée avec son moteur. Il décrit ce qui existe, pas ce qui est prévu : toute divergence entre ce texte et le code est un défaut du texte.
 
@@ -89,14 +89,18 @@ L'ordre est imposé par la plateforme, et il est respecté pas à pas :
 
 Rien n'est annoncé avant que le sol existe.
 
-## 7. Ce qui est lu du monde, et pourquoi
+## 7. Ce qui est lu et écrit dans le monde, et pourquoi
 
-| Lecture | Quand | Ce qu'elle remplace |
+| Opération | Quand | Ce qu'elle remplace |
 | --- | --- | --- |
 | `getBlock(src)` sur un modèle | avant chaque copie | suppose que `copyChunk` lit un chunk chargé — faux, et silencieux |
-| `getBlock(marker, dest)` | après chaque copie | suppose que la copie a réussi |
-| `getBlock(marker, chunk)` | pendant les scans | croit un compteur en mémoire au lieu du monde |
+| `setBlock(plafond)` | juste après chaque copie | un bloc-témoin qui devrait être *dans* le modèle — impossible, les modèles sont construits à la main |
+| `getBlock(plafond)` | après chaque copie, puis pendant les scans | suppose que la copie a réussi, et croit un compteur en mémoire au lieu du monde |
 | `getBlock` en colonne | une fois par niveau | une constante « hauteur du sol » fausse pour un modèle sur dix |
+
+**Le témoin est écrit par le moteur, pas par le modèle.** C'est la décision qui permet aux salles d'être construites à la main sans rien réserver pour le générateur : le moteur pose lui-même un `Polished Diorite` au milieu du **plafond** de chaque salle (`surfaceBlock`), la seule case qui existe dans toute salle et où aucun joueur ne peut se tenir. Une salle est donc « là » si cette case porte ce bloc.
+
+**Une seule liste de salles, sans identifiant.** Les huit difficultés tirent dans la même liste (`table.rooms`), et une salle est connue par sa position : `#12`. Une difficulté peut ajouter ses propres salles, qui sont tirées avec les communes.
 
 Aucune de ces lectures n'est sur le chemin chaud : un scan lit un bloc par chunk candidat, quatre fois par seconde, pour un joueur immobile. Un joueur qui ne bouge pas et dont les salles sont faites ne coûte **aucune lecture**.
 
@@ -108,28 +112,34 @@ Aucune de ces lectures n'est sur le chemin chaud : un scan lit un bloc par chunk
 | `level.planned` | anneau `viewChunks + 2` | les chunks sortis de l'anneau sont oubliés à chaque scan |
 | `planned` des salles **placées** | anneau `viewChunks × 2` | garde la mémoire plus longtemps : revenir sur ses pas ne relit pas le monde |
 | `pendingVerify` | une entrée par copie en vol | supprimée dès la vérification, ou après `verifyMaxTicks` |
-| `disabled` | une par modèle | un modèle illisible est désactivé une fois |
+| `disabled` | une par salle | une salle illisible est désactivée une fois |
 | `playerDungeons` | un par joueur | supprimé par `onPlayerLeave` |
 
 Aucune de ces structures ne dépend du nombre de salles construites.
 
-## 9. Les deux limites honnêtes
+## 9. Les coordonnées des modèles
+
+Elles viennent d'une série fournie par le propriétaire du projet : `-2 1 0`, `-4 1 0`, `-6 1 0`… **Cette série n'est pas utilisable telle quelle**, et c'est une contrainte de la plateforme, pas un choix : `copyChunk` copie un chunk de 32 blocs, et les 15 coordonnées tombent toutes dans le même chunk (celui de x −32 à −1). Il faut une coordonnée par chunk — la série doit progresser de 32 en 32.
+
+Le code ne dépend pas de la réponse : `src` est n'importe quelle case du chunk, et le moteur copie le chunk qui la contient. Changer la série ne demande donc aucune modification de code, seulement d'éditer `READY_ROOMS`.
+
+## 10. Les deux limites honnêtes
 
 **Un modèle doit être chargé.** `copyChunk` ne fait rien si la source n'est pas chargée, et rien ne le signale. D'où : la lecture avant copie, la vérification après, et `/dbg templates` qui dit, modèle par modèle, si sa coordonnée est lisible **maintenant**. Si un modèle reste illisible après `templateReadAttempts: 4` lectures, il est désactivé pour la session et un message est écrit dans le log — jamais une boucle silencieuse.
 
 **Un chunk que personne n'a chargé ne peut pas être vérifié.** La salle est comptée comme placée **non vérifiée** (`unverified`) après `verifyMaxTicks: 40` ticks. Le choix est explicite : ne pas relancer une copie déjà faite, et le dire dans `/dbg mem`, plutôt que de boucler.
 
-## 10. Tests
+## 11. Tests
 
-`npm test` — 50 tests.
+`npm test` — 54 tests.
 
-- `tests/dungeon/config.test.js` — une couche par difficulté, deux chunks d'écart ; un pad = une difficulté ; Hell est le dernier ; le tirage de modèle est stable et étalé ; les modèles malformés sont ignorés sans casser le niveau.
-- `tests/dungeon/loader.test.js` — un faux serveur où **`copyChunk` depuis un chunk non chargé ne fait rien** et où `getBlock` renvoie `null` hors chunk chargé : la copie est une seule, la file est bornée, une copie n'est jamais rejouée, un modèle illisible est désactivé puis retiré de la file, une salle qui ne se vérifie pas est oubliée, la hauteur de sol est lue et non configurée, un niveau vide ne coûte rien.
+- `tests/dungeon/config.test.js` — une couche par difficulté, deux chunks d'écart ; un pad = une difficulté ; Hell est le dernier ; le tirage de salle est stable et étalé ; les huit niveaux tirent dans la même liste ; les salles d'un niveau passent avant les communes ; une salle malformée est ignorée sans casser le niveau.
+- `tests/dungeon/loader.test.js` — un faux serveur où **`copyChunk` depuis un chunk non chargé ne fait rien** et où `getBlock` renvoie `null` hors chunk chargé : la copie est une seule, la file est bornée, une copie n'est jamais rejouée, une salle illisible est désactivée puis retirée de la file, une salle qui ne se vérifie pas est oubliée, la hauteur de sol est lue et non configurée, le témoin est écrit par le moteur dans le plafond et non pris au modèle, un niveau vide ne coûte rien.
 - `tests/world-code.test.js` — le bundle réel, dans un contexte `vm`, sur un faux serveur : compte à rebours, entrée, atterrissage sur le sol, gravité coupée puis rendue, pad vers la difficulté suivante, ordre des copies, joueur qui tombe et qui est reposé, aucun bloc écrit hors chunk chargé, commandes `/dbg`.
 
 Ce qui n'est **pas** testé, faute de pouvoir l'être hors du jeu : le coût réel d'une copie de chunk côté serveur, et le délai exact au bout duquel un chunk lu devient écrivable. `chunkWarmupTicks: 3` vient de la mesure faite sur le moteur précédent ; si une salle n'arrive pas en jeu, c'est le premier chiffre à augmenter.
 
-## 11. Références Bloxd vérifiées
+## 12. Références Bloxd vérifiées
 
 | Fonction | Signature documentée | Usage |
 | --- | --- | --- |
@@ -144,7 +154,7 @@ Ce qui n'est **pas** testé, faute de pouvoir l'être hors du jeu : le coût ré
 
 `getEmptyChunk` et `resetChunk` restent écartés : `resetChunk` n'existe pas dans l'API Reference, et `copyChunk` couvre le besoin avec une fonction documentée.
 
-## 12. Feuille de route
+## 13. Feuille de route
 
 - **Modèles.** Remplir `ROOM_TEMPLATES` (voir §5 de `README.md`), un jeu par difficulté, avec des portes alignées.
 - **Variantes.** Le tirage est déjà déterministe par chunk : ajouter un modèle suffit à varier un niveau.
