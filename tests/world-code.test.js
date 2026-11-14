@@ -60,7 +60,7 @@ function createWorld(onlinePlayerIds, options = {}) {
   const pending = [];
   const key = (x, y, z) => `${Math.floor(x)}|${Math.floor(y)}|${Math.floor(z)}`;
 
-  // A room: floor at local y 2, four walls, a ceiling, and the record block.
+  // A room: floor at local y 2, four walls, and a ceiling.
   const base = [Math.floor(TEST_SRC[0] / SIZE) * SIZE, Math.floor(TEST_SRC[1] / SIZE) * SIZE, Math.floor(TEST_SRC[2] / SIZE) * SIZE];
   const floorY = 2;
   for (let x = 0; x < SIZE; x += 1) {
@@ -101,13 +101,12 @@ function createWorld(onlinePlayerIds, options = {}) {
       setClientOptions: (playerId, options2) => {
         for (const option of Object.keys(options2)) clientOptions.push({ playerId, option, value: options2[option] });
       },
+      // Nothing may be written into a chunk, loaded or not: a write is a failure on
+      // its own, and the fake keeps the world as the copies made it.
       setBlock: (x, y, z, blockName) => {
-        if (!near(x, y, z)) {
-          violations.push({ x, y, z, blockName });
-          return;
-        }
-        world.set(key(x, y, z), blockName);
+        violations.push({ x, y, z, blockName });
       },
+      isBlockInLoadedChunk: (x, y, z) => near(x, y, z),
       getBlock: (x, y, z) => {
         const chunkKey = `${Math.floor(x / SIZE)}|${Math.floor(y / SIZE)}|${Math.floor(z / SIZE)}`;
         if (!loaded.has(chunkKey)) {
@@ -125,9 +124,8 @@ function createWorld(onlinePlayerIds, options = {}) {
         const sourceChunk = [Math.floor(from[0] / SIZE), Math.floor(from[1] / SIZE), Math.floor(from[2] / SIZE)];
         if (!loaded.has(sourceChunk.join("|"))) return;
         const destChunk = [Math.floor(to[0] / SIZE), Math.floor(to[1] / SIZE), Math.floor(to[2] / SIZE)];
-        // A copy carries the template's blocks and nothing else: the record block
-        // this engine writes after the copy is not part of it, and a fake that
-        // copied the destination's own record would hide a missing write.
+        // A copy carries the template's blocks and nothing else, exactly as the
+        // server does it.
         for (const [cellKey, name] of template) {
           const [x, y, z] = cellKey.split("|").map(Number);
           if (Math.floor(x / SIZE) !== sourceChunk[0]) continue;
@@ -297,34 +295,35 @@ test("gravity is off while the room is being built, and on once the player stand
     "gravity was never switched back on");
 });
 
-test("the pad to the next difficulty is written where the player lands", () => {
+test("the world code writes no block into a room", () => {
   const world = createWorld(["p1"]);
   startDungeon(world, "p1");
   tickUntil(world, () => world.positions.length >= 2, 200);
-  const landing = world.positions.at(-1).position;
-  const floorY = landing[1] - DUNGEON_CONFIG.spawnAboveFloor;
-  const padBlock = findDifficulty("easy").padBlock;
-  let pads = 0;
-  for (let dx = -4; dx <= 4; dx += 1) {
-    for (let dz = -4; dz <= 4; dz += 1) {
-      if (world.blockAt(Math.floor(landing[0]) + dx, floorY, Math.floor(landing[2]) + dz) === padBlock) pads += 1;
-    }
-  }
-  assert.ok(pads >= 9, `the next-difficulty pad is not under the player (${pads} cells)`);
+  world.tick(40);
+  // A room is hand-built and only ever copied: no pad, no marker, no repair.
+  assert.deepEqual(world.violations, [], "the world code wrote a block");
+  assert.equal(world.copies.length > 0, true, "nothing was copied, so the test proves nothing");
 });
 
-test("stepping on the pad takes the player to the next level, on its own layer", () => {
+test("a Concrete pad built into a room leads to the next level", () => {
   const world = createWorld(["p1"]);
   startDungeon(world, "p1");
   tickUntil(world, () => world.positions.length >= 2, 200);
   const landing = world.positions.at(-1).position;
 
-  world.context.onBlockStandStart("p1", Math.floor(landing[0]), landing[1] - 1, Math.floor(landing[2]), "Light Blue Concrete");
+  // The pad is part of the room: it is in the template, and stepping on it is all
+  // it takes. Nothing was written to produce it.
+  world.context.onBlockStandStart(
+    "p1",
+    Math.floor(landing[0]),
+    Math.floor(landing[1]) - 1,
+    Math.floor(landing[2]),
+    "Light Blue Concrete",
+  );
   world.tick(3);
   const last = world.positions.at(-1).position;
-  const easy = findDifficulty("easy");
-  // The wait place is inside the easy level's chunk, which is what makes it load.
-  assert.equal(Math.floor(last[1] / SIZE), easy.chunkY);
+  // The wait place is inside the easy level's chunk, which is what loads it.
+  assert.equal(Math.floor(last[1] / SIZE), findDifficulty("easy").chunkY);
 });
 
 test("a room is never copied from an unloaded template, and that is said once", () => {

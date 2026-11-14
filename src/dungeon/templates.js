@@ -49,9 +49,7 @@
  * 2. The room's floor is **read** from the template, not configured: the loader
  *    walks up the middle column to find the first solid block.
  *
- * The engine's own record is not taken from the template: it writes one block
- * into the middle of the room's ceiling after the copy (`surfaceBlock` in
- * `config.js`), so no cell of a room has to be reserved for this generator.
+ * No cell of a room is reserved for this generator: it writes nothing, ever.
  *
  * ---------------------------------------------------------------------------
  * PICKING A ROOM

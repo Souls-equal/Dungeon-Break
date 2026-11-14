@@ -53,7 +53,7 @@ Deux choses, aucune écrite dans la table :
 1. **Le chunk doit être chargé** au moment de la copie : sinon `copyChunk` ne fait rien, sans erreur. `/dbg templates` répond pour chaque salle (`loaded` / `NOT LOADED`).
 2. **La hauteur du sol est lue**, jamais configurée : le moteur remonte la colonne du milieu de la salle jusqu'au premier bloc plein. La copie conserve la disposition verticale de la salle, donc cette hauteur est valable à destination.
 
-Le bloc-témoin ne vient pas du modèle : le moteur écrit lui-même un `Polished Diorite` au **milieu du plafond** de chaque salle après la copie. Aucun bloc de tes constructions n'est réservé.
+**Le générateur n'écrit jamais un bloc.** Rien ne vient du modèle non plus : aucune case de tes constructions n'est réservée, aucun témoin, aucune plaque, aucune réparation. Une salle est un chunk, et le seul geste du moteur est de le copier.
 
 ### Changer la liste change tous les donjons
 
@@ -83,7 +83,7 @@ Une capture d'écran + `/dbg templates` suffisent à diagnostiquer une salle man
 | Gray Concrete | Ultra Insane | −44 |
 | Black Concrete | Hell | −46 |
 
-Le lobby n'offre que Very Easy, Easy et Medium. Dans un donjon, le pad posé au centre de la salle mène à la difficulté suivante, jusqu'à Hell.
+Le lobby n'offre que Very Easy, Easy et Medium. Dans un donjon, c'est un bloc Concrete **de la salle** qui mène à la difficulté suivante, jusqu'à Hell : le code lit le bloc sous les pieds du joueur (`onBlockStandStart`), il ne pose rien. Construis donc la plaque du niveau suivant dans tes salles.
 
 Chaque niveau occupe **sa propre bande verticale**, deux chunks sous la précédente : deux niveaux ne peuvent pas se rencontrer, même si un joueur marche 10 000 blocs.
 
@@ -94,8 +94,9 @@ Tous les textes visibles par les joueurs sont en anglais.
 - **Grille de chunks.** Les `viewChunks: 2` chunks autour de chaque joueur (5×5, soit 160 blocs de côté) sont mis en file, du plus proche au plus loin.
 - **Une copie par tick et par niveau.** Une copie écrit 32 768 blocs côté serveur ; elle n'est jamais doublée dans un tick.
 - **Un scan toutes les 4 ticks**, borné à 8 nouvelles salles par scan. Un joueur immobile dont les salles sont faites ne coûte aucune lecture.
-- **Un chunk déjà bâti est reconnu par un bloc-témoin** (`Polished Diorite`, au milieu de son plafond, écrit par le moteur après la copie) : rien n'est reconstruit au retour, et un serveur redémarré retrouve ce qu'il avait posé.
-- **Une copie est vérifiée** en relisant le bloc-témoin à la destination. Le seul cas indécidable est un chunk que personne n'a chargé : il est compté comme posé-non-vérifié, et `/dbg mem` le dit.
+- **Rien n'est écrit dans un chunk.** Le moteur ne connaît que `copyChunk` et des lectures : c'est ce qui rend les salles sûres à construire à la main.
+- **Une salle copiée est retenue pour la session**, puisque le monde ne peut pas être interrogé : `/dbg mem` la compte comme posée, et non vérifiée. Après un redémarrage le niveau la recopie une fois — une copie est idempotente, elle réécrit les mêmes blocs aux mêmes cases.
+- **Seules les destinations chargées sont copiées** (`api.isBlockInLoadedChunk`) : une copie dans un chunk que le serveur n'a pas encore envoyé serait perdue sans erreur.
 - **Entrée.** Lecture du modèle, téléportation dans le chunk vide, trois ticks, copie de la salle d'entrée, relecture du sol, puis le joueur est posé deux blocs au-dessus. La gravité est coupée pendant ces ticks, ce qui remplace la boîte de murs de l'ancien moteur.
 
 ## Sources et version compacte
@@ -105,7 +106,7 @@ Le code lisible est dans `src/` :
 ```
 src/dungeon/config.js      constantes, table des difficultés
 src/dungeon/templates.js   coordonnées des modèles, tirage déterministe
-src/dungeon/loader.js      file, copie, vérification
+src/dungeon/loader.js      file, copie
 src/dungeon/service.js     entrée, atterrissage, pad, rapports
 src/utils/scheduler.js     scheduler piloté par le callback tick
 src/worldCode.js           lobby, pads, /dbg

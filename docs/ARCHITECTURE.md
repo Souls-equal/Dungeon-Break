@@ -28,7 +28,7 @@ Une copie de chunk supprime le coût, et avec lui la classe de bugs :
 | --- | --- |
 | ~20 000 `setBlock` par salle, budget de 2 400 blocs/tick | **1** `copyChunk` par salle, 1 par tick |
 | Salle à moitié construite si le tick est coupé | Une salle existe ou n'existe pas |
-| Reprise après redémarrage : records, curseurs, shards | Le bloc-témoin répond « déjà là » |
+| Reprise après redémarrage : records, curseurs, shards | Une copie idempotente, rejouée si le niveau l'a oubliée |
 | Murs mitoyens, linteaux, portes à rouvrir | La porte est dans le modèle, elle ne change jamais |
 | Joueur qui tombe dans un chunk vide → boîte de 3 blocs de murs | Gravité coupée le temps de la copie, puis rendue |
 | Rayon de 60 blocs, salles de 55 cellules, index par cellule | Grille de chunks autour du joueur |
@@ -38,12 +38,12 @@ Une copie de chunk supprime le coût, et avec lui la classe de bugs :
 ```
 src/dungeon/config.js      toutes les constantes, la table des difficultés
 src/dungeon/templates.js   où sont les modèles (coordonnées à remplir), le tirage
-src/dungeon/loader.js      la file, la copie, la vérification — 488 lignes
+src/dungeon/loader.js      la file et la copie
 src/dungeon/service.js     entrée dans un niveau, atterrissage, pad, rapports
 src/worldCode.js           lobby, pads, commandes /dbg
 ```
 
-Aucun de ces fichiers ne construit de géométrie. `loader.js` est le seul à copier, `service.js` le seul à téléporter et à écrire des blocs (le pad).
+Aucun de ces fichiers ne construit de géométrie, et **aucun n'écrit un bloc** : `loader.js` ne fait que copier, `service.js` que téléporter.
 
 ## 4. La boucle de génération
 
@@ -51,8 +51,8 @@ Aucun de ces fichiers ne construit de géométrie. `loader.js` est le seul à co
 
 1. **Une copie par niveau et par tick**, sans réglage : `placeOne` n'est appelé qu'une fois par niveau et par tick. Une copie coûte 32 768 blocs côté serveur, donc elle n'est jamais doublée dans un tick.
 2. **Un scan toutes les 4 ticks** (`scanTicks`). Pour chaque joueur du niveau, les `viewChunks: 2` chunks autour du sien sont examinés, du plus proche au plus loin, et **8 au plus** sont mis en file (`maxPlannedPerScan`).
-3. **Un chunk n'est mis en file que si son bloc-témoin est lisible et dit « vide ».** Si la lecture renvoie `null`, le chunk n'est pas chargé : la question ne se pose pas encore. C'est ce qui garantit qu'aucune copie n'est demandée depuis un modèle non chargé.
-4. **La copie est vérifiée** en relisant le bloc-témoin à la destination. S'il est là, la salle compte comme placée ; sinon elle compte comme « en vol » et sera relue aux ticks suivants.
+3. **Un chunk n'est mis en file que si la destination est chargée** (`api.isBlockInLoadedChunk`) **et si la salle n'a pas déjà été copiée dans cette session.** Copier dans un chunk que le serveur n'a pas encore envoyé ne produit aucune erreur : ça ne produit rien du tout.
+4. **La salle est retenue comme placée** dès la copie, et comptée comme non vérifiée : le monde ne peut pas être interrogé, donc le compteur ne prétend pas qu'il l'a été.
 
 Il n'y a **aucun état intermédiaire** : une salle est copiée, ou elle ne l'est pas.
 
@@ -94,11 +94,12 @@ Rien n'est annoncé avant que le sol existe.
 | Opération | Quand | Ce qu'elle remplace |
 | --- | --- | --- |
 | `getBlock(src)` sur un modèle | avant chaque copie | suppose que `copyChunk` lit un chunk chargé — faux, et silencieux |
-| `setBlock(plafond)` | juste après chaque copie | un bloc-témoin qui devrait être *dans* le modèle — impossible, les modèles sont construits à la main |
-| `getBlock(plafond)` | après chaque copie, puis pendant les scans | suppose que la copie a réussi, et croit un compteur en mémoire au lieu du monde |
+| `isBlockInLoadedChunk(dest)` | avant de mettre un chunk en file | suppose qu'une copie dans un chunk non envoyé arrive quelque part |
 | `getBlock` en colonne | une fois par niveau | une constante « hauteur du sol » fausse pour un modèle sur dix |
 
-**Le témoin est écrit par le moteur, pas par le modèle.** C'est la décision qui permet aux salles d'être construites à la main sans rien réserver pour le générateur : le moteur pose lui-même un `Polished Diorite` au milieu du **plafond** de chaque salle (`surfaceBlock`), la seule case qui existe dans toute salle et où aucun joueur ne peut se tenir. Une salle est donc « là » si cette case porte ce bloc.
+**Le moteur n'écrit jamais un bloc, nulle part.** C'est la contrainte que le propriétaire du projet a posée, et elle simplifie tout : aucune case d'une salle n'est réservée, aucun témoin, aucune plaque, aucune réparation. Les seules opérations autorisées dans un chunk sont `copyChunk` et des lectures.
+
+Le prix, dit franchement : le monde ne peut plus répondre « cette salle est-elle déjà là ? ». Un chunk copié est donc retenu **en mémoire, pour la session** (`level.planned`), ce que `/dbg mem` compte comme posé mais non vérifié. Après un redémarrage, ou quand un joueur revient dans une salle copiée lors d'une autre session, la salle est recopiée une fois. Ce n'est pas un bug : une copie est idempotente, elle réécrit les mêmes blocs aux mêmes cases, pour un seul `copyChunk`.
 
 **Une seule liste de salles, sans identifiant.** Les huit difficultés tirent dans la même liste (`table.rooms`), et une salle est connue par sa position : `#12`. Une difficulté peut ajouter ses propres salles, qui sont tirées avec les communes.
 
@@ -110,8 +111,7 @@ Aucune de ces lectures n'est sur le chemin chaud : un scan lit un bloc par chunk
 | --- | --- | --- |
 | `level.queue` | `maxQueued: 96` | un scan s'arrête quand la file est pleine |
 | `level.planned` | anneau `viewChunks + 2` | les chunks sortis de l'anneau sont oubliés à chaque scan |
-| `planned` des salles **placées** | anneau `viewChunks × 2` | garde la mémoire plus longtemps : revenir sur ses pas ne relit pas le monde |
-| `pendingVerify` | une entrée par copie en vol | supprimée dès la vérification, ou après `verifyMaxTicks` |
+| `planned` des salles **placées** | anneau `viewChunks × 2` | garde la mémoire plus longtemps : revenir sur ses pas ne recopie pas |
 | `disabled` | une par salle | une salle illisible est désactivée une fois |
 | `playerDungeons` | un par joueur | supprimé par `onPlayerLeave` |
 
@@ -125,19 +125,21 @@ La conversion chunk → bloc se fait dans `chunkToBlock`, à un seul endroit, un
 
 Une salle n'a **aucune propriété** : ni portes, ni entrée désignée, ni hauteur. Le tirage est un simple `hash % nombre_de_salles`, et aucune contrainte de connexion n'est vérifiée — le propriétaire du projet a confirmé que les salles se posent au hasard.
 
-## 10. Les deux limites honnêtes
+## 10. Les trois limites honnêtes
 
-**Un modèle doit être chargé.** `copyChunk` ne fait rien si la source n'est pas chargée, et rien ne le signale. D'où : la lecture avant copie, la vérification après, et `/dbg templates` qui dit, modèle par modèle, si sa coordonnée est lisible **maintenant**. Si un modèle reste illisible après `templateReadAttempts: 4` lectures, il est désactivé pour la session et un message est écrit dans le log — jamais une boucle silencieuse.
+**Un modèle doit être chargé.** `copyChunk` ne fait rien si la source n'est pas chargée, et rien ne le signale. D'où la lecture avant copie, et `/dbg templates` qui dit, modèle par modèle, si sa coordonnée est lisible **maintenant**. Si un modèle reste illisible après `templateReadAttempts: 4` lectures, il est désactivé pour la session et un message est écrit dans le log — jamais une boucle silencieuse.
 
-**Un chunk que personne n'a chargé ne peut pas être vérifié.** La salle est comptée comme placée **non vérifiée** (`unverified`) après `verifyMaxTicks: 40` ticks. Le choix est explicite : ne pas relancer une copie déjà faite, et le dire dans `/dbg mem`, plutôt que de boucler.
+**Une copie ne dit jamais si elle a réussi.** Le moteur n'écrit rien, donc il ne peut rien relire. Une salle copiée est comptée comme placée pour la session et comme **non vérifiée** (`unverified`) dans `/dbg mem`. Le choix est explicite : ne pas relancer une copie déjà faite, et ne pas prétendre que le monde l'a confirmée.
+
+**Un palier de difficulté doit être construit dans la salle.** Le code ne pose aucune plaque : il lit le bloc sous le joueur (`onBlockStandStart` → `difficultyForPadBlock`) et téléporte. Une salle qui ne contient pas de Concrete du niveau suivant est un cul-de-sac, et c'est le seul contenu qu'une salle doit fournir en plus de sa géométrie.
 
 ## 11. Tests
 
-`npm test` — 58 tests.
+`npm test` — 59 tests.
 
 - `tests/dungeon/config.test.js` — une couche par difficulté, deux chunks d'écart ; un pad = une difficulté ; Hell est le dernier ; le tirage de salle est stable et étalé ; les huit niveaux tirent dans la même liste ; les salles d'un niveau passent avant les communes ; une salle malformée est ignorée sans casser le niveau ; **la conversion chunk → bloc, y compris sur les coordonnées négatives** ; les 15 salles livrées occupent 15 chunks distincts ; une salle ne porte aucune propriété.
-- `tests/dungeon/loader.test.js` — un faux serveur où **`copyChunk` depuis un chunk non chargé ne fait rien** et où `getBlock` renvoie `null` hors chunk chargé : la copie est une seule, la file est bornée, une copie n'est jamais rejouée, une salle illisible est désactivée puis retirée de la file, une salle qui ne se vérifie pas est oubliée, la hauteur de sol est lue et non configurée, le témoin est écrit par le moteur dans le plafond et non pris au modèle, un niveau vide ne coûte rien.
-- `tests/world-code.test.js` — le bundle réel, dans un contexte `vm`, sur un faux serveur : compte à rebours, entrée, atterrissage sur le sol, gravité coupée puis rendue, pad vers la difficulté suivante, ordre des copies, joueur qui tombe et qui est reposé, aucun bloc écrit hors chunk chargé, commandes `/dbg`.
+- `tests/dungeon/loader.test.js` — un faux serveur où **`copyChunk` depuis un chunk non chargé ne fait rien** et où `getBlock` renvoie `null` hors chunk chargé : la copie est une seule, la file est bornée, une salle n'est jamais recopiée dans la session, une salle illisible est désactivée puis retirée de la file, **aucun bloc n'est écrit nulle part**, rien n'est mis en file pour un chunk non envoyé, la hauteur de sol est lue et non configurée, un niveau vide ne coûte rien.
+- `tests/world-code.test.js` — le bundle réel, dans un contexte `vm`, sur un faux serveur qui compte chaque `setBlock` comme une violation : compte à rebours, entrée, atterrissage sur le sol, gravité coupée puis rendue, une plaque Concrete construite dans la salle qui mène au niveau suivant, ordre des copies, joueur qui tombe et qui est reposé, aucun bloc écrit par le code, commandes `/dbg`.
 
 Ce qui n'est **pas** testé, faute de pouvoir l'être hors du jeu : le coût réel d'une copie de chunk côté serveur, et le délai exact au bout duquel un chunk lu devient écrivable. `chunkWarmupTicks: 3` vient de la mesure faite sur le moteur précédent ; si une salle n'arrive pas en jeu, c'est le premier chiffre à augmenter.
 
@@ -146,12 +148,12 @@ Ce qui n'est **pas** testé, faute de pouvoir l'être hors du jeu : le coût ré
 | Fonction | Signature documentée | Usage |
 | --- | --- | --- |
 | `api.copyChunk` | `copyChunk(fromPos, toPos)` — « Does nothing if the source chunk is not loaded » | la génération entière |
-| `api.getBlock` | `getBlock(x, y, z)` → `BlockName` | lecture du bloc-témoin, du sol des modèles, de la destination d'une copie |
-| `api.setBlock` | `setBlock(x, y, z, blockName)` | le pad, et rien d'autre |
+| `api.getBlock` | `getBlock(x, y, z)` → `BlockName` | lecture du sol des modèles |
+| `api.isBlockInLoadedChunk` | `isBlockInLoadedChunk(x, y, z)` → `boolean` | une destination est-elle envoyée par le serveur ? |
 | `api.setPosition` | `setPosition(entityId, x, y, z)` ou `(entityId, [x,y,z])` | entrée dans un niveau, retour au lobby |
 | `api.setClientOptions` | `setClientOptions(playerId, optionsObj)` | `gravityMultiplier`, pendant tout l'atterrissage |
 | `api.isNearInterrupt` | `isNearInterrupt()` → `boolean` | coupe un scan |
-| `onBlockStandStart` / `onBlockStandStop` | `(playerId, x, y, z, blockName)` | les pads |
+| `onBlockStandStart` / `onBlockStandStop` | `(playerId, x, y, z, blockName)` | les pads, lus et jamais posés |
 | `onRespawnRequest` | retour `true` pour gérer soi-même | reposer le joueur à l'entrée du niveau |
 
 `getEmptyChunk` et `resetChunk` restent écartés : `resetChunk` n'existe pas dans l'API Reference, et `copyChunk` couvre le besoin avec une fonction documentée.

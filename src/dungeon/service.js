@@ -49,31 +49,19 @@ export function createDungeonService(options) {
   }
 
   /**
-   * Writes the pad that leads to the next difficulty, in the middle of a room.
+   * The pads are **built into the rooms**, not written by this engine.
    *
-   * Twenty-five blocks, once per room a player actually lands in. The pad is not
-   * a doorway: it is a floor colour you step on, and it never takes part in the
-   * room's geometry.
+   * A level's rooms carry the Concrete of the level they lead to, and a player
+   * walks on it: `onBlockStandStart` reports the block, the block names the
+   * difficulty, and `usePad` teleports. Nothing is ever written into a chunk — not
+   * a pad, not a marker, not a repair — because a room is hand-built and the code
+   * only ever copies it.
+   *
+   * What this removes, and what it costs: the engine can no longer *guarantee*
+   * that a room has a pad, and it cannot paint one where there is none. A room
+   * without Concrete simply leads nowhere, and that is a building decision, visible
+   * in `/dbg templates` only as "this room has no pad" if someone asks.
    */
-  function writePad(playerId, difficulty) {
-    const next = nextDifficulty(difficulty);
-    if (!next) return;
-    const level = loader.levelState(difficulty);
-    const floorLocalY = loader.findFloorLocalY(level);
-    if (floorLocalY === null) return;
-    const centreX = DUNGEON_CONFIG.originChunkX * SIZE + DUNGEON_CONFIG.landingLocalXZ[0];
-    const centreZ = DUNGEON_CONFIG.originChunkZ * SIZE + DUNGEON_CONFIG.landingLocalXZ[1];
-    const y = floorOfLayer(difficulty) + floorLocalY;
-    // The player's own chunk is loaded — they are standing in it — so this write
-    // lands. It is the only block this engine writes by hand.
-    for (let dx = -2; dx <= 2; dx += 1) {
-      for (let dz = -2; dz <= 2; dz += 1) {
-        api.setBlock(centreX + dx, y, centreZ + dz, next.padBlock);
-      }
-    }
-    log(`pad to ${next.label} written for ${playerId}`);
-  }
-
   /**
    * Puts a player into a level.
    *
@@ -167,7 +155,6 @@ export function createDungeonService(options) {
           state.landed = true;
           state.position = landing;
         }
-        writePad(playerId, difficulty);
         api.sendMessage(playerId, `Level: ${difficulty.label}`);
         // The rooms around the player are planned from here, once: the next scan
         // (a few ticks later) would do the same, but the player would spend those
@@ -187,11 +174,11 @@ export function createDungeonService(options) {
   }
 
   /**
-   * A pad was stepped on.
+   * A pad built into a room was stepped on.
    *
-   * In a dungeon, the pad leads to the next difficulty. In the lobby the pad is
-   * handled by the countdown in the world code, so this only answers "there is
-   * nothing after Hell".
+   * The block names a difficulty, exactly as in the lobby: stepping on the Easy
+   * Concrete of a Very Easy room leads to Easy. In the lobby the same callback goes
+   * through the countdown instead, so one table drives both.
    */
   function usePad(playerId) {
     const dungeon = dungeonOf(playerId);

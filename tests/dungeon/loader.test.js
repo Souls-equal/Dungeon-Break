@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { DUNGEON_CONFIG, findDifficulty, floorOfLayer } from "../../src/dungeon/config.js";
-import { createLoader, chunkOfWorld, surfaceCellOf } from "../../src/dungeon/loader.js";
+import { createLoader, chunkOfWorld } from "../../src/dungeon/loader.js";
 import { reset as resetScheduler } from "../../src/utils/scheduler.js";
 
 const SIZE = DUNGEON_CONFIG.chunkSize;
@@ -98,6 +98,9 @@ function createServer(options = {}) {
         }
       }
     },
+    isBlockInLoadedChunk(x, y, z) {
+      return loadedChunks.has(chunkKeyOf(x, y, z));
+    },
     isNearInterrupt() { return false; },
     log() {},
   };
@@ -129,8 +132,7 @@ function createServer(options = {}) {
           }
         }
       }
-      // A ceiling: the engine writes its own record block there, so a template no
-      // longer has to reserve a corner for it.
+      // A ceiling, so that a room reads as a room and not as an open floor.
       for (let x = 0; x < SIZE; x += 1) {
         for (let z = 0; z < SIZE; z += 1) {
           templateBlocks.set(cellKey(base[0] + x, base[1] + SIZE - 1, base[2] + z), "Smooth Stone");
@@ -180,30 +182,48 @@ test("a room is one chunk copy, and the copy is the documented call", () => {
 });
 
 
-test("the record of a room is its own ceiling block, written after the copy", () => {
+test("the loader never writes a block, anywhere", () => {
   const server = createServer();
-  const base = server.addTemplate(TEMPLATE_A);
+  server.addTemplate(TEMPLATE_A);
   const { loader, level } = createTestLoader(server, ROOMS);
-  // A player in the destination chunk, so the chunk is readable.
+  // A player in the destination chunk, so every read is answered.
   server.api.setPosition("player", [16, floorOfLayer(VERY_EASY), 16]);
-  for (let tick = 0; tick < 5; tick += 1) server.advance();
-
-  // The template chunk has to arrive too: a read only asks for it.
-  server.api.getBlock(TEMPLATE_A[0], TEMPLATE_A[1], TEMPLATE_A[2]);
   for (let tick = 0; tick < 5; tick += 1) server.advance();
 
   const written = server.calls.setBlock.length;
   loader.placeEntrance(VERY_EASY);
+  for (let tick = 0; tick < 20; tick += 1) loader.tick([{ difficulty: VERY_EASY, chunks: [{ x: 0, z: 0 }] }]);
 
-  // One block written, by the engine, in the middle of the ceiling — never taken
-  // from the template, which is hand-built and reserves nothing for us.
-  const own = server.calls.setBlock.slice(written);
-  assert.deepEqual(own.map((call) => [call.x, call.y, call.z, call.name]), [[
-    16, floorOfLayer(VERY_EASY) + SIZE - 1, 16, DUNGEON_CONFIG.surfaceBlock,
-  ]]);
-  // And the template itself is untouched: the copy carries no record block.
-  assert.notEqual(server.templateBlocks.get(`16,${base[1] + SIZE - 1},16`), DUNGEON_CONFIG.surfaceBlock);
-  assert.equal(level.planned.get("0|0"), "placed");
+  assert.deepEqual(server.calls.setBlock.slice(written), [],
+    "the loader wrote into a room: a template is hand-built and must only be copied");
+});
+
+test("a copied room is remembered by the level, and reported as unconfirmed", () => {
+  const server = createServer();
+  server.addTemplate(TEMPLATE_A);
+  const { loader, level } = createTestLoader(server, ROOMS);
+  // The template chunk has to be sent before it can be copied from.
+  loader.warmTemplates(VERY_EASY);
+  server.api.setPosition("player", [16, floorOfLayer(VERY_EASY), 16]);
+  for (let tick = 0; tick < 5; tick += 1) server.advance();
+
+  loader.placeEntrance(VERY_EASY);
+  assert.equal(level.planned.get("0|0"), "placed", "the entrance was not copied");
+  // The honest counter: nothing was read back, and the report says so.
+  assert.equal(level.placed, level.unverified,
+    "a copy is presented as verified when nothing was read back");
+
+  // Within the session, the room is never copied twice.
+  for (let tick = 0; tick < 10; tick += 1) loader.tick([{ difficulty: VERY_EASY, chunks: [{ x: 0, z: 0 }] }]);
+  const sameRoom = server.calls.copy.filter((call) => call.to[0] === 0 && call.to[2] === 0);
+  assert.equal(sameRoom.length, 1, "a room copied in this session was copied again");
+
+  // And once the level has forgotten it — a restart, or a return from a session
+  // that built it — it is copied again. Idempotent, so harmless.
+  level.planned.delete("0|0");
+  loader.placeEntrance(VERY_EASY);
+  const again = server.calls.copy.filter((call) => call.to[0] === 0 && call.to[2] === 0);
+  assert.equal(again.length, 2, "a room of another session is never rebuilt");
 });
 
 test("a copy from an unloaded template is retried, then disabled, never looped", () => {
@@ -222,52 +242,36 @@ test("a copy from an unloaded template is retried, then disabled, never looped",
   assert.equal(level.queue.length <= 1, true, "the queue kept the unusable entry for ever");
 });
 
-test("a copy is verified by reading the destination back, once the room is there", () => {
+test("a room is placed once in a session, and only where the server has sent it", () => {
   const server = createServer();
   server.addTemplate(TEMPLATE_A);
   const { loader, level } = createTestLoader(server, ROOMS);
   loader.warmTemplates(VERY_EASY);
   for (let tick = 0; tick < 5; tick += 1) server.advance();
-  // A player in the destination chunk, which is what makes it readable — and the
-  // realistic case: rooms are copied around a player, not into the void.
   server.api.setPosition("player", [SIZE + 16, floorOfLayer(VERY_EASY), 16]);
-  for (let tick = 0; tick < 5; tick += 1) server.advance();
 
   level.queue.push({ chunkX: 1, chunkZ: 0, template: level.templates[0] });
   loader.placeOne(level);
   assert.equal(server.calls.copy.length, 1, "the copy was not attempted");
-  // The destination chunk is loaded, so the record block is read back in the same
-  // tick: placed is a fact about the world, not a timer.
-  assert.equal(level.planned.get("1|0"), "placed",
-    "a copy whose record block reads back is not marked as placed");
-  assert.equal(level.placed, 1);
-  assert.equal(level.unverified, 0);
-  const marker = surfaceCellOf(VERY_EASY, 1, 0);
-  assert.equal(server.api.getBlock(marker[0], marker[1], marker[2]), DUNGEON_CONFIG.surfaceBlock);
+  assert.equal(level.planned.get("1|0"), "placed");
 
-  // And this chunk is never copied twice — whatever else the scan finds to build
-  // around the player, which is the point of the scan.
+  // Never copied twice, whatever else the scan finds to build around the player.
   for (let tick = 0; tick < 6; tick += 1) loader.tick([{ difficulty: VERY_EASY, chunks: [{ x: 1, z: 0 }] }]);
   const sameChunk = server.calls.copy.filter((call) => call.to[0] === SIZE && call.to[2] === 0);
   assert.equal(sameChunk.length, 1, "a placed chunk was copied again");
 });
 
-test("a chunk that fails verification is forgotten, so a later scan can retry it", () => {
-  const server = createServer();
+test("nothing is queued for a chunk the server has not sent", () => {
+  const server = createServer({ loadDelay: 1000 });
   server.addTemplate(TEMPLATE_A);
   const { loader, level } = createTestLoader(server, ROOMS);
-  loader.warmTemplates(VERY_EASY);
-  for (let tick = 0; tick < 5; tick += 1) server.advance();
 
-  level.queue.push({ chunkX: 2, chunkZ: 0, template: ROOMS[0] });
-  loader.placeOne(level);
-  // The destination is not loaded, so the read says nothing — and the entry waits
-  // for the configured window before it is counted as placed-but-unverified.
-  for (let tick = 0; tick < DUNGEON_CONFIG.verifyMaxTicks + 2; tick += 1) loader.tick([]);
-  assert.equal(level.planned.has("2|0"), true,
-    "a copy behind the player was forgotten, as if it had failed");
-  assert.equal(level.unverified, 1, "the unverified copy is not reported as such");
-  assert.equal(level.failures, 0, "an unloaded destination was counted as a failure");
+  // A player somewhere else entirely: every candidate chunk around the origin is
+  // unsent, and a copy there would be dropped without an error.
+  server.api.setPosition("player", [900, floorOfLayer(VERY_EASY), 900]);
+  for (let tick = 0; tick < 6; tick += 1) loader.tick([{ difficulty: VERY_EASY, chunks: [{ x: 0, z: 0 }] }]);
+  assert.equal(server.calls.copy.length, 0, "a copy was queued for an unloaded destination");
+  assert.equal(level.queue.length, 0);
 });
 
 test("one copy per tick per level, whatever the queue holds", () => {
@@ -290,14 +294,14 @@ test("chunks already recorded are never copied again", () => {
   loader.warmTemplates(VERY_EASY);
   for (let tick = 0; tick < 5; tick += 1) server.advance();
 
-  // The origin chunk is loaded, as it is in the game: a player is standing in it.
+  // The room is placed once by the level, which is the only thing that knows.
   server.api.setPosition("player", [16, floorOfLayer(VERY_EASY), 16]);
   for (let tick = 0; tick < 5; tick += 1) server.advance();
-  const cell = surfaceCellOf(VERY_EASY, 0, 0);
-  server.world.set(`${cell[0]},${cell[1]},${cell[2]}`, DUNGEON_CONFIG.surfaceBlock);
+  loader.placeEntrance(VERY_EASY);
+  const first = server.calls.copy.length;
 
   loader.placeEntrance(VERY_EASY);
-  assert.equal(server.calls.copy.length, 0, "an already built entrance was copied over itself");
+  assert.equal(server.calls.copy.length, first, "an already built entrance was copied over itself");
   assert.equal(level.planned.get("0|0"), "placed");
 });
 
@@ -307,16 +311,16 @@ test("nothing is planned outside what the player has loaded", () => {
   const { loader, level } = createTestLoader(server, ROOMS);
   loader.warmTemplates(VERY_EASY);
 
-  // The player is in the origin chunk; the scan looks at its neighbours, whose
-  // chunks the server has not sent yet. Nothing may be queued for them.
+  // Nothing has been loaded yet: every candidate chunk is unsent, and a copy there
+  // would be dropped in silence.
   loader.planAround(level, 0, 0);
   assert.equal(level.queue.length, 0, "a room was queued in a chunk nobody had loaded");
   for (const call of server.calls.getBlock) {
     assert.equal(Number.isFinite(call.x), true);
   }
 
-  // Once the chunks have arrived, the same scan finds them.
-  for (let tick = 0; tick < 5; tick += 1) server.advance();
+  // Once a player has loaded the area, the same scan finds rooms to build.
+  server.api.setPosition("player", [16, floorOfLayer(VERY_EASY), 16]);
   loader.planAround(level, 0, 0);
   assert.ok(level.queue.length > 0, "no room was queued in a loaded chunk");
   assert.ok(level.queue.length <= DUNGEON_CONFIG.maxPlannedPerScan);

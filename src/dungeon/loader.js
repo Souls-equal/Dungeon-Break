@@ -8,16 +8,14 @@
  *      can be continuously copied to a new position".
  *
  *   2. "NOTE: Does nothing if the source chunk is not loaded." A copy from an
- *      unloaded template is not an error, it is silence. That single sentence is
- *      why this engine looks the way it does: a template is read once before it is
- *      used, the copy is verified by reading the destination back, and a template
- *      that fails the check is disabled for the session instead of being retried
- *      for ever.
+ *      unloaded template is not an error, it is silence. A template is therefore
+ *      read once before it is used, and one that fails the check is disabled for
+ *      the session instead of being retried for ever.
  *
- * The queue is a consequence of a third fact: a chunk no player is near cannot be
- * loaded, so it cannot be read, so its record block says "not placed" whether or
- * not it is. Planning therefore happens only around players, never in the
- * abstract.
+ * The queue is a consequence of a third fact: the engine writes nothing into a
+ * room, so it cannot ask the world whether a room is already there. Planning
+ * therefore happens only around players — never in the abstract — and the level
+ * remembers for the session what it copied.
  *
  * There is no state per room, no cursor, no resumable build, no progress record,
  * no shard, no index. A room is a chunk that was copied, or a chunk that was not.
@@ -29,8 +27,6 @@ import { DUNGEON_CONFIG, floorOfLayer } from "./config.js";
 import { templateFor, templatesFor } from "./templates.js";
 
 const SIZE = DUNGEON_CONFIG.chunkSize;
-/** How many later ticks a copy is given to show up at its destination. */
-const VERIFY_ATTEMPTS = 3;
 
 export function chunkKey(chunkX, chunkZ) {
   return `${chunkX}|${chunkZ}`;
@@ -41,27 +37,10 @@ export function chunkOfWorld(x, z) {
   return { x: Math.floor(x / SIZE), z: Math.floor(z / SIZE) };
 }
 
-/**
- * The world cell that holds the record of a room.
- *
- * The middle of the room's ceiling — the one cell that exists in every room and
- * that no player can stand in. See `DUNGEON_CONFIG.surfaceBlock`.
- */
-export function surfaceCellOf(difficulty, chunkX, chunkZ) {
-  return [
-    chunkX * SIZE + DUNGEON_CONFIG.surfaceLocalXZ,
-    floorOfLayer(difficulty) + SIZE - 1,
-    chunkZ * SIZE + DUNGEON_CONFIG.surfaceLocalXZ,
-  ];
-}
-
 export function createLoader({ api, log }) {
   const say = log || (() => {});
   /** Per level state, created on first use and never rebuilt. */
   const levels = new Map();
-  /** Copies waiting for their verification read. */
-  const pendingVerify = [];
-
   function levelState(difficulty) {
     let level = levels.get(difficulty.id);
     if (!level) {
@@ -77,7 +56,7 @@ export function createLoader({ api, log }) {
         /** Ordered work: the next chunk to copy. */
         queue: [],
         placed: 0,
-        /** Copies counted as placed without a readable destination chunk. */
+        /** Copies made without any way to read them back — see `isPlaced`. */
         unverified: 0,
         failures: 0,
         ticksSinceScan: DUNGEON_CONFIG.scanTicks,
@@ -102,29 +81,37 @@ export function createLoader({ api, log }) {
   }
 
   /**
-   * What the record block of a room says.
+   * Is the destination of a copy loaded?
    *
-   * `"unknown"` when the chunk is not loaded — which is not "empty": the answer
-   * carries no information about the room, and the caller must not queue a copy
-   * from a template the server has not sent yet.
+   * The one question this engine still has to ask, because a copy into a chunk the
+   * server has not sent is dropped without an error. It is answered with
+   * `isBlockInLoadedChunk`, which **reads and writes nothing** — the alternative,
+   * reading a block of the room, would work too but returns `null` for a chunk that
+   * is merely not sent yet, and would make the scan take a decision on an absence.
+   *
+   * No API is assumed: a host that does not provide the function is treated as
+   * "loaded", so the engine degrades to "copy and hope" instead of not building.
    */
-  function surfaceStateOf(difficulty, chunkX, chunkZ) {
-    const cell = surfaceCellOf(difficulty, chunkX, chunkZ);
-    const name = api.getBlock(cell[0], cell[1], cell[2]);
-    if (name === null || name === undefined) return "unknown";
-    return name === DUNGEON_CONFIG.surfaceBlock ? "placed" : "empty";
+  function isDestinationLoaded(difficulty, chunkX, chunkZ) {
+    if (typeof api.isBlockInLoadedChunk !== "function") return true;
+    return api.isBlockInLoadedChunk(chunkX * SIZE, floorOfLayer(difficulty), chunkZ * SIZE) === true;
   }
 
   /**
-   * Marks a room as built, by writing one block of its ceiling.
+   * Has this chunk of this level been copied in this session?
    *
-   * Written after the copy, never part of it: a template is built by hand, and a
-   * hand-built room cannot be asked to carry a block of this engine's choosing in
-   * its ceiling. One `setBlock` per room, in the chunk the player is standing in.
+   * The only available answer, because the engine writes nothing into a room: no
+   * record block to read back, and a copied room looks exactly like an uncopied
+   * one from the world's point of view. So the level remembers what it copied, and
+   * says so honestly — `/dbg mem` counts these as "unconfirmed".
+   *
+   * What that costs, and why it is acceptable: after a restart, or when a player
+   * walks back into a room copied during another session, the level has forgotten
+   * the room and will copy it again. A copy is idempotent — it writes the same
+   * blocks over the same cells — so the cost is one `copyChunk`, not a bug.
    */
-  function markPlaced(difficulty, chunkX, chunkZ) {
-    const cell = surfaceCellOf(difficulty, chunkX, chunkZ);
-    api.setBlock(cell[0], cell[1], cell[2], DUNGEON_CONFIG.surfaceBlock);
+  function isPlaced(level, chunkX, chunkZ) {
+    return level.planned.get(chunkKey(chunkX, chunkZ)) === "placed";
   }
 
   /**
@@ -237,7 +224,11 @@ export function createLoader({ api, log }) {
 
       const template = templateAt(level, x, z);
       if (!template) continue;
-      if (surfaceStateOf(level.difficulty, x, z) !== "empty") continue;
+      // Only a chunk the server has sent. Nothing is written into a room to
+      // recognise it later, and a copy into an unloaded chunk is dropped in silence,
+      // so this is the one check that keeps a scan from queueing work that cannot
+      // happen.
+      if (!isDestinationLoaded(level.difficulty, x, z)) continue;
 
       level.planned.set(key, "queued");
       level.queue.push({ chunkX: x, chunkZ: z, template });
@@ -285,11 +276,11 @@ export function createLoader({ api, log }) {
     const originX = DUNGEON_CONFIG.originChunkX;
     const originZ = DUNGEON_CONFIG.originChunkZ;
     const key = chunkKey(originX, originZ);
-    // Never copied twice: an entrance is placed on every entry into the level, and
-    // a player who dies, leaves and comes back must not trigger a second copy of a
-    // room that is already there. The answer comes from the world, not from the
-    // tally of a previous session.
-    if (surfaceStateOf(difficulty, originX, originZ) === "placed") {
+    // Not copied twice in the same session: an entrance is placed on every entry
+    // into the level, and a player who dies, leaves and comes back must not trigger
+    // a second copy of the same room. Across sessions the room is copied again, and
+    // that is harmless: the same blocks land on the same cells.
+    if (isPlaced(level, originX, originZ)) {
       level.planned.set(key, "placed");
       return template;
     }
@@ -377,72 +368,14 @@ export function createLoader({ api, log }) {
     level.templateAttempts.delete(item.template.index);
 
     api.copyChunk(from, to);
-    level.planned.set(key, "placing");
-    // The record is written straight after the copy, in the same chunk, which the
-    // player is standing in: it is therefore readable at once, and the room is
-    // known to be there without waiting for anything.
-    markPlaced(difficulty, item.chunkX, item.chunkZ);
-    const cell = surfaceCellOf(difficulty, item.chunkX, item.chunkZ);
-    if (api.getBlock(cell[0], cell[1], cell[2]) === DUNGEON_CONFIG.surfaceBlock) {
-      level.placed += 1;
-      level.planned.set(key, "placed");
-      return true;
-    }
-    pendingVerify.push({
-      level,
-      chunkX: item.chunkX,
-      chunkZ: item.chunkZ,
-      attempts: VERIFY_ATTEMPTS,
-    });
+    // Counted as placed at once, because there is nothing to read back: the engine
+    // writes no record into a room, and a copied room is indistinguishable from an
+    // uncopied one. The `unverified` counter says exactly this, and `/dbg mem`
+    // reports it rather than letting the number look like a proof.
+    level.placed += 1;
+    level.unverified += 1;
+    level.planned.set(key, "placed");
     return true;
-  }
-
-  /**
-   * Reads back the copies that are waiting.
-   *
-   * Two outcomes, and both are final: the record block is there, and the room
-   * counts as placed; or it is not after `VERIFY_ATTEMPTS` reads, and the chunk is
-   * forgotten so another scan can queue it again. Nothing here copies.
-   */
-  function verifyPending() {
-    if (pendingVerify.length === 0) return;
-    for (let index = pendingVerify.length - 1; index >= 0; index -= 1) {
-      if (api.isNearInterrupt && api.isNearInterrupt()) return;
-      const entry = pendingVerify[index];
-      entry.age = (entry.age || 0) + 1;
-      const cell = surfaceCellOf(entry.level.difficulty, entry.chunkX, entry.chunkZ);
-      const name = api.getBlock(cell[0], cell[1], cell[2]);
-      const key = chunkKey(entry.chunkX, entry.chunkZ);
-
-      if (name === DUNGEON_CONFIG.surfaceBlock) {
-        entry.level.placed += 1;
-        entry.level.planned.set(key, "placed");
-        pendingVerify.splice(index, 1);
-        continue;
-      }
-      if (name === null || name === undefined) {
-        // The destination chunk is not loaded, so this read says nothing about the
-        // copy. It is not a failure, and it is not a success: the room is ahead of
-        // every player. The entry waits, then counts as placed and is reported as
-        // unverified — the one outcome this engine cannot decide from the world, and
-        // it says so rather than pretending either way.
-        if (entry.age < DUNGEON_CONFIG.verifyMaxTicks) continue;
-        entry.level.placed += 1;
-        entry.level.unverified += 1;
-        entry.level.planned.set(key, "placed");
-        pendingVerify.splice(index, 1);
-        continue;
-      }
-
-      entry.attempts -= 1;
-      if (entry.attempts > 0) continue;
-      // A definite answer, and not the record block: the copy did not land. The
-      // chunk is forgotten so a later scan queues it again — the one recovery this
-      // engine needs, and the reason it has no build-progress state at all.
-      entry.level.failures += 1;
-      entry.level.planned.delete(key);
-      pendingVerify.splice(index, 1);
-    }
   }
 
   /**
@@ -469,7 +402,6 @@ export function createLoader({ api, log }) {
         if (api.isNearInterrupt && api.isNearInterrupt()) break;
       }
     }
-    verifyPending();
   }
 
   /** Everything a report needs, without touching the world. */
@@ -494,7 +426,7 @@ export function createLoader({ api, log }) {
     levelState,
     landingPosition,
     findFloorLocalY,
-    surfaceStateOf,
+    isPlaced,
     planAround,
     placeEntrance,
     placeOne,
