@@ -1204,7 +1204,8 @@ test("a roll with no point left is refused, and the choice tile closes", () => {
   assert.equal(benedictionTiles(world).get("Roll a Benediction").canBuy, false);
   world.context.onPlayerBoughtShopItem("p1", "Benedictions", "Roll a Benediction", {}, "");
   assert.equal(world.helperCards.length, 1, "a roll was given without a point");
-  assert.ok(said(world, "p1").some((line) => /No Benediction point/.test(line)));
+  // No chat while shop stays open — the tile shows it cannot be bought
+  assert.equal(said(world, "p1").filter((line) => typeof line === "string" && /No Benediction point/.test(line)).length, 0);
 });
 
 test("a second roll while an offer is open shows the same three, and reserves nothing", () => {
