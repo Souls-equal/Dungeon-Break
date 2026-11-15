@@ -715,7 +715,7 @@ function applyClientOptions(playerId) {
   // Everything here is a client option, so the next join re-sends the same object.
   try {
     api.setClientOptions(playerId, {
-      secsToRespawn: 0,
+      secsToRespawn: 1,
       auraPerLevel: AURA_PER_LEVEL,
       maxAuraLevel: MAX_AURA_LEVEL,
     });
