@@ -91,8 +91,11 @@ function createWorld(onlinePlayerIds, options = {}) {
   const shopCalls = [];
   /** Auroras reset by the code, and the custom currencies it defined: `player|currency`. */
   const aurasReset = [];
-  /** Every `deleteShopItemForPlayer` call — it must stay empty, that is the shop bug. */
-  const deletedTiles = [];
+  /**
+   * Every `resetShopItemForPlayer` call: that is how a tile is **removed**. The fake applies
+   * it for real (the tile leaves the category), because "hidden" was what the owner saw fail.
+   */
+  const removedTiles = [];
   const currencies = new Map();
   const loaded = new Set();
   const pending = [];
@@ -165,15 +168,14 @@ function createWorld(onlinePlayerIds, options = {}) {
         if (!categories.has(categoryKey)) categories.set(categoryKey, new Map());
         categories.get(categoryKey).set(itemKey, item);
       },
-      // **The code must never delete a live tile**: that was the bug (other buttons vanished),
-      // so the fake records every call instead of quietly allowing it, and a test asserts the
-      // list is empty. It still throws on a missing key, like the game.
-      deleteShopItemForPlayer: (playerId, categoryKey, itemKey) => {
-        deletedTiles.push({ playerId, categoryKey, itemKey });
+      // **How a tile is actually removed**, per the documented API: it deletes this player's
+      // override for the key, and does nothing if there is none — it never throws. The fake
+      // removes it for real, so a tile the code forgets to reset stays visible in the tests.
+      resetShopItemForPlayer: (playerId, categoryKey, itemKey) => {
+        removedTiles.push({ playerId, categoryKey, itemKey });
         const categories = playerShop.get(playerId);
         const items = categories && categories.get(categoryKey);
-        if (!items || !items.has(itemKey)) throw new Error("no such shop item");
-        items.delete(itemKey);
+        if (items) items.delete(itemKey);
       },
       configureShopCategoryForPlayer: (playerId, categoryKey, config) => {
         if (!playerShop.has(playerId)) playerShop.set(playerId, new Map());
@@ -353,7 +355,7 @@ function createWorld(onlinePlayerIds, options = {}) {
     shopCalls,
     aurasReset,
     currencies,
-    deletedTiles,
+    removedTiles,
     dbValues,
     playerShop,
     helperCards,
@@ -1118,19 +1120,14 @@ test("a join offers the roll, and a fresh player has nothing to spend", () => {
   assert.equal(roll.cost, 0, "a roll costs a point, not a currency");
   assert.equal(roll.canBuy, false, "a level-1 player was offered a free roll");
   assert.match(roll.description, /Aura level 1 · 0 points/);
-  // The odds are in the tile, so a player can see what they are betting a point on.
-  assert.match(roll.description, /Common \d+%/);
-  // Every tile the code knows is present, and the ones that do not apply are **disabled**,
-  // never missing: a category whose buttons come and go is the bug the owner reported.
-  const last = tiles.get("Last roll");
-  assert.ok(last, "the last-roll tile is missing");
-  assert.equal(last.canBuy, false);
-  assert.match(last.description, /Nothing chosen yet/);
-  for (const key of ["Choice 1", "Choice 2", "Choice 3"]) {
-    assert.ok(tiles.has(key), `${key} is missing from the category`);
-    assert.equal(tiles.get(key).canBuy, false, `${key} is buyable with no offer`);
-    assert.equal(tiles.get(key).hidden, true, `${key} is visible with no offer`);
-  }
+  // **Two numbers, one line**: the owner had the odds taken off the tile, which is the only
+  // tile a player reads before spending. They are still in `/dbg benedictions`.
+  assert.ok(!/Common \d+%/.test(roll.description), "the odds are back on the roll tile");
+  assert.equal(roll.description.split("\n").length, 1, "the roll tile is more than one line");
+  // **One tile and nothing else.** The three choices do not exist until there is an offer,
+  // and the removal is a real one — no disabled ghost tiles, no "Last roll".
+  assert.deepEqual([...tiles.keys()], ["Roll a Benediction"], "the category has extra tiles");
+  assert.equal(tiles.has("Last roll"), false, "the last-roll tile is back");
 });
 
 test("a roll offers three benedictions and reserves the point; the choice spends it", () => {
@@ -1179,14 +1176,20 @@ test("a roll offers three benedictions and reserves the point; the choice spends
   assert.equal(world.shopCalls.length, 1, "the shop was not closed after the choice");
   assert.equal(world.shopOpen.has("p1"), false, "the shop stayed open");
 
-  // And the category is back to normal: the roll, and the benediction that was picked. The
-  // choice tiles are still there — **hidden**, not deleted — so nothing flickers away.
+  // And the category is back to what it was: the roll tile alone. The three choices are
+  // **removed**, not hidden — `resetShopItemForPlayer`, which is the API's way to delete a
+  // player's tile; `hidden` left them on screen, which is what the owner kept seeing.
   const after = benedictionTiles(world);
-  for (const { tile } of offerTiles(world)) assert.equal(tile.hidden, true, "a choice tile is still visible");
+  assert.deepEqual([...after.keys()], ["Roll a Benediction"], "a choice tile survived the pick");
   assert.equal(after.get("Roll a Benediction").customTitle, "Roll a Benediction");
   assert.match(after.get("Roll a Benediction").description, /2 points/);
-  assert.equal(after.get("Last roll").customTitle, "Last roll");
-  assert.match(after.get("Last roll").description, new RegExp(picked.name));
+  // Every refresh re-asserts the removal (the call is a no-op when the override is gone),
+  // so what matters is *which* keys: the three choices, and never the roll.
+  const removedKeys = new Set(world.removedTiles.map((entry) => entry.itemKey));
+  assert.deepEqual([...removedKeys].sort(), ["Choice 1", "Choice 2", "Choice 3"]);
+  for (const entry of world.removedTiles) assert.equal(entry.categoryKey, "Benedictions");
+  // The benediction is still announced; it just no longer has a tile of its own.
+  assert.equal(world.helperCards[0].text.startsWith(picked.name), true);
 });
 
 test("a roll with no point left is refused, and the choice tile closes", () => {
@@ -1229,8 +1232,7 @@ test("picking a card that is not on the offer does nothing", () => {
 test("nothing is saved: a reconnection starts from zero", () => {
   const world = joinAtLevel(createWorld(["p1"]), 5);
   world.context.onPlayerBoughtShopItem("p1", "Benedictions", "Roll a Benediction", {}, "");
-  const offered = offerTiles(world).filter((entry) => entry.tile.hidden !== true);
-  assert.equal(offered.length, 3, "the offer is not on screen");
+  assert.equal(offerTiles(world).length, 3, "the offer is not on screen");
   // Nothing was written: the points are a currency and the account is memory.
   assert.equal(world.dbValues.size, 0, "the roll wrote to the player database");
 
@@ -1242,31 +1244,36 @@ test("nothing is saved: a reconnection starts from zero", () => {
   // history: that is the whole of "reset the XP when you rejoin".
   assert.equal(world.aurasReset.at(-1).total, 0, "the arena was not reset on the join");
   assert.equal(world.aurasReset.at(-1).playerId, "p1");
-  assert.equal(offerTiles(world).filter((entry) => entry.tile.hidden !== true).length, 0,
-    "a reconnection brought the offer back");
+  assert.equal(offerTiles(world).length, 0, "a reconnection brought the offer back");
   const tiles = benedictionTiles(world);
+  assert.deepEqual([...tiles.keys()], ["Roll a Benediction"], "a reconnection left tiles behind");
   assert.equal(tiles.get("Roll a Benediction").canBuy, false, "a reconnection brought a point back");
-  assert.equal(tiles.get("Last roll").description, "Nothing chosen yet. Roll a Benediction to start.");
   assert.equal(world.dbValues.size, 0, "the join wrote to the player database");
 });
 
-test("no shop tile is ever deleted, in any state", () => {
-  // The owner's bug, pinned: "the other buttons are not hidden" — the old refresh deleted the
-  // category's tiles, and a category shows every tile it has. Every step of a full cycle must
-  // leave the list of deletions empty.
+test("a choice is removed for real, and the roll tile never is", () => {
+  // The owner's two halves of the same bug report: the three choices must **go away**
+  // (`hidden` did not do it), and the roll must **never** go away — a category that loses all
+  // its tiles is the "buttons disappear" side of it.
   const world = joinAtLevel(createWorld(["p1"]), 4);
-  assert.deepEqual(world.deletedTiles, [], "the tiles were deleted right after a join");
+  // The refreshes before the roll reset keys nobody has: the call does nothing then, which is
+  // the documented behaviour and the reason it can be fired blind.
+  const beforeRoll = world.removedTiles.length;
   world.context.onPlayerBoughtShopItem("p1", "Benedictions", "Roll a Benediction", {}, "");
-  assert.deepEqual(world.deletedTiles, [], "a roll deleted the tiles before redrawing them");
+  const offered = [...benedictionTiles(world).keys()].sort();
+  assert.deepEqual(offered, ["Choice 1", "Choice 2", "Choice 3", "Roll a Benediction"].sort(),
+    "the offer is not the roll plus three choices");
+  assert.equal(world.removedTiles.length, beforeRoll, "tiles were removed while the offer was live");
   rollAndChoose(world);
-  assert.deepEqual(world.deletedTiles, [], "a choice deleted the tiles before redrawing them");
-  // And every key is still there afterwards: nothing vanished from the category.
-  const tiles = benedictionTiles(world);
-  for (const key of ["Roll a Benediction", "Last roll", "Choice 1", "Choice 2", "Choice 3"]) {
-    assert.ok(tiles.has(key), `${key} disappeared from the shop`);
-  }
-  // The other categories are untouched by all of this.
-  assert.deepEqual(world.deletedTiles, []);
+  const after = benedictionTiles(world);
+  assert.deepEqual([...after.keys()], ["Roll a Benediction"], "the choices are still in the category");
+  assert.deepEqual([...new Set(world.removedTiles.map((entry) => entry.itemKey))].sort(),
+    ["Choice 1", "Choice 2", "Choice 3"]);
+  assert.ok(!world.removedTiles.some((entry) => entry.itemKey === "Roll a Benediction"),
+    "the roll tile was removed, which empties the category");
+  // A stale click on a removed tile cannot be bought: the offer is over.
+  world.context.onPlayerBoughtShopItem("p1", "Benedictions", "Choice 2", {}, "");
+  assert.equal(world.helperCards.length, 1, "a removed tile still paid out");
 });
 
 test("the points are a custom currency on the HUD, and it is not persistent", () => {
@@ -1313,9 +1320,9 @@ test("a player who gains a level while the shop is open is owed the point", () =
   assert.equal(world.helperCards.length, cards);
 });
 
-test("buying the last-roll tile, or another category, does nothing", () => {
+test("buying a tile that is not in the offer, or another category, does nothing", () => {
   const world = joinAtLevel(createWorld(["p1"]), 9);
-  world.context.onPlayerBoughtShopItem("p1", "Benedictions", "Last roll", {}, "");
+  world.context.onPlayerBoughtShopItem("p1", "Benedictions", "Choice 1", {}, "");
   world.context.onPlayerBoughtShopItem("p1", "Something else", "Roll a Benediction", {}, "");
   assert.equal(world.helperCards.length, 0, "a click that is not a roll drew a card");
   assert.equal(benedictionTiles(world).get("Roll a Benediction").canBuy, true);

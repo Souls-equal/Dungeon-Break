@@ -48,17 +48,6 @@ export function rollMessage(benediction, rarity) {
   ];
 }
 
-/**
- * The shop tile's description.
- *
- * Two colours in one string is not possible — a description that is a string is drawn as
- * one colour — so the rarity is written first, followed by the odds of the whole table,
- * which is the only other thing a player needs before spending a point.
- */
-export function rollDescription() {
-  return `Roll one Benediction. ${rarityOdds().length} rarities, weight by weight: ${oddsOfTable()}`;
-}
-
 /** `Common 60% · Uncommon 25% · …`: the table's odds in one line, for the tile. */
 export function oddsOfTable() {
   return rarityOdds()

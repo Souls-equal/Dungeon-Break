@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import {
   AURA_LEVEL_BASE,
@@ -29,7 +30,6 @@ import {
   nameText,
   oddsOfTable,
   rarityText,
-  rollDescription,
   rollMessage,
   tagText,
 } from "../../src/benediction/presentation.js";
@@ -326,11 +326,18 @@ test("a roll is shown in its rarity's colour, on every surface", () => {
   assert.ok(nameText(benediction, rarity)[0].style.color);
 });
 
-test("the shop tile says what the odds are, in plain text", () => {
-  const description = rollDescription();
-  assert.match(description, /Roll one Benediction/);
-  assert.match(description, new RegExp(oddsOfTable().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  assert.ok(!description.includes("undefined"));
+test("the odds are one function, and the tile does not use them", () => {
+  // The owner removed the odds from the roll tile: it was the busiest thing on a tile that
+  // has to fit a level and a point count. The table is still readable — through the chat
+  // report — so `oddsOfTable` keeps its own tests and the tile is simply shorter.
+  const table = oddsOfTable();
+  assert.match(table, /^Common \d+(\.\d+)?%/);
+  assert.equal(table.split(" · ").length, 6, "the report no longer lists six rarities");
+  assert.ok(!table.includes("undefined"));
+  // `rollDescription` was removed outright: a helper nobody calls is dead weight, and
+  // `npm run check` would not catch it.
+  const source = readFileSync(new URL("../../src/benediction/presentation.js", import.meta.url), "utf8");
+  assert.ok(!source.includes("rollDescription"), "the tile still has a description helper");
 });
 
 test("a colour that is not a hex is passed through, not mangled", () => {
