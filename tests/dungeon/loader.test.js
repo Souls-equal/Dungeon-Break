@@ -1152,33 +1152,42 @@ test("the mob type is drawn per mob, not taken from the top of the list", () => 
 });
 
 test("a type that never answers in a room where the other worked is dropped for the session", () => {
-  // The ban is decided at the end of a room, and needs the type to have been drawn enough
-  // times to have used the room's whole attempt budget: 12 mobs in Hell's five-type roster.
-  const server = createServer();
-  const difficulty = findDifficulty("hell");
-  const attemptSpawnMob = server.api.attemptSpawnMob;
-  server.api.attemptSpawnMob = (mobType, x, y, z, opts) => (
-    mobType === "Zombie" ? null : attemptSpawnMob(mobType, x, y, z, opts)
-  );
-  const { loader, level } = withEntranceRoom(server, { difficulty, rooms: [[1, 0]] });
+  // The ban is decided at the end of a room, and needs the type to have been **drawn**:
+  // which types a room asks for is a draw, so this test pins the draw instead of hoping
+  // for it. `Math.random = () => 0` makes every spawn start at the top of the roster,
+  // which is where `Zombie` sits in Hell — the type the fake server refuses. Without it
+  // the test failed about once in forty runs, which is a coin toss, not a rule.
+  const realRandom = Math.random;
+  Math.random = () => 0;
+  try {
+    const server = createServer();
+    const difficulty = findDifficulty("hell");
+    const attemptSpawnMob = server.api.attemptSpawnMob;
+    server.api.attemptSpawnMob = (mobType, x, y, z, opts) => (
+      mobType === "Zombie" ? null : attemptSpawnMob(mobType, x, y, z, opts)
+    );
+    const { loader, level } = withEntranceRoom(server, { difficulty, rooms: [[1, 0]] });
 
-  // The same room, filled again: the ban is decided at the end of a *room*, and only one
-  // chunk around the entrance is sent to this fake server.
-  for (let room = 0; room < 8 && !level.refusedMobs.has("Zombie|hell"); room += 1) {
+    // The same room, filled again: the ban is decided at the end of a *room*, and only one
+    // chunk around the entrance is sent to this fake server.
+    for (let room = 0; room < 8 && !level.refusedMobs.has("Zombie|hell"); room += 1) {
+      loader.spawnRoomMobs(level, 1, 0, STAND_Y);
+    }
+    // The refusal is filed **per level**: a name the game will not place in Hell must not
+    // take that type away from a level that has not tried it.
+    assert.equal(level.refusedMobs.has("Zombie|hell"), true,
+      "a type that never answered in a working room is still being tried");
+    assert.equal(level.refusedMobs.has("Zombie|veryEasy"), false,
+      "a refusal in Hell was filed against another level");
+
+    // No new attempt for it in the next room: the whole point of dropping it.
+    const before = server.calls.spawnMob.filter((spawn) => spawn.mobType === "Zombie").length;
     loader.spawnRoomMobs(level, 1, 0, STAND_Y);
+    assert.equal(server.calls.spawnMob.filter((spawn) => spawn.mobType === "Zombie").length, before,
+      "a dropped type was asked for again");
+  } finally {
+    Math.random = realRandom;
   }
-  // The refusal is filed **per level**: a name the game will not place in Hell must not
-  // take that type away from a level that has not tried it.
-  assert.equal(level.refusedMobs.has("Zombie|hell"), true,
-    "a type that never answered in a working room is still being tried");
-  assert.equal(level.refusedMobs.has("Zombie|veryEasy"), false,
-    "a refusal in Hell was filed against another level");
-
-  // No new attempt for it in the next room: the whole point of dropping it.
-  const before = server.calls.spawnMob.filter((spawn) => spawn.mobType === "Zombie").length;
-  loader.spawnRoomMobs(level, 1, 0, STAND_Y);
-  assert.equal(server.calls.spawnMob.filter((spawn) => spawn.mobType === "Zombie").length, before,
-    "a dropped type was asked for again");
 });
 
 test("a death keeps the rooms known, so the dungeon can fight again", () => {

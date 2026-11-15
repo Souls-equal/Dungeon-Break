@@ -17,6 +17,7 @@ const CALLBACKS = [
   "onBlockStandStart",
   "onBlockStandStop",
   "onPlayerBoughtShopItem",
+  "onPlayerToggledShopMenu",
   "onPlayerJoin",
   "onPlayerLeave",
   "onRespawnRequest",

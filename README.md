@@ -89,6 +89,7 @@ Le clic est capté par `onPlayerBoughtShopItem`, qui fait **deux choses dans cet
 | `/dbg templates` | Tous les modèles des niveaux utilisés, avec lisible / illisible |
 | `/dbg mem` | Un donjon par ligne, avec son origine, puis les compteurs qui doivent rester bornés |
 | `/dbg seed` | Le niveau et sa couche tirée, en une ligne |
+| `/dbg benedictions` | Niveau d'aura, points, dépenses, derniers tirages, chances — hors donjon aussi |
 
 Une capture d'écran + `/dbg templates` suffisent à diagnostiquer une salle manquante.
 
@@ -110,6 +111,49 @@ Le lobby n'offre que Very Easy, Easy et Medium. Dans un donjon, c'est un bloc Co
 Un niveau **n'a pas de hauteur fixe** : chaque entrée tire son propre cube (voir « Génération »), donc deux donjons ne peuvent pas se rencontrer, ni horizontalement ni verticalement.
 
 Tous les textes visibles par les joueurs sont en anglais.
+
+## Bénédictions : un point par niveau, un point par tirage
+
+L'aura payée par les salles découvertes a maintenant un usage : **chaque niveau d'aura donne un point**, et un point s'échange contre **un tirage de Bénédiction** dans la boutique, catégorie **Benedictions**.
+
+- **Les points ne sont pas comptés, ils sont calculés** : `niveau d'aura − 1 − points dépensés`. Le niveau est celui du jeu (`getAuraInfo`), donc un niveau gagné n'importe où — même hors donjon — est honoré la prochaine fois que la boutique s'ouvre, et aucune reconnexion ne peut en perdre ni en dupliquer un.
+- **La tuile est par joueur** (`createShopItemForPlayer`) : elle affiche *son* niveau, *ses* points et les chances de la table. Elle est redessinée à l'ouverture de la boutique (`onPlayerToggledShopMenu`), après chaque tirage et à la connexion.
+- **Un point, un tirage.** Le tirage est refusé — avec un message — quand il n'y a plus de point, y compris si la tuile cliquée était périmée d'un tick.
+- **Ce qui est dépensé est sauvegardé** (`setPlayerDbValue`, clé `dungeonBreak.benedictions`, sous l'identifiant permanent `getPlayerDbId`), pas le niveau : le niveau reste la réponse du jeu.
+- **Une tuile « Last roll »** garde le dernier tirage sous les yeux du joueur.
+
+### Les six raretés
+
+| Rareté | Couleur | Chance |
+| --- | --- | --- |
+| Common | Gris | ~60 % |
+| Uncommon | Vert | ~25 % |
+| Rare | Bleu | ~9,6 % |
+| Epic | Violet | ~3,6 % |
+| Legendary | Orange | ~1,1 % |
+| Mythic | Rouge | ~0,2 % |
+
+Les poids sont relatifs et normalisés au tirage : une rareté **sans aucune bénédiction est retirée de la table** au lieu d'être tirée puis relancée, donc la somme des chances fait toujours 100 %. Une rareté reste toujours atteignable.
+
+### Les trois familles
+
+**Bénédictions physiques**, **Bénédictions d'équipement**, **Effets de potions** — chaque bénédiction appartient à une seule famille, indiquée sur sa carte.
+
+### Le rendu
+
+| Surface | Ce qu'elle montre | Contrainte d'API |
+| --- | --- | --- |
+| Chat | `Benediction: <nom en couleur> — <famille> · <rareté>`, plus une ligne en texte simple | `CustomTextStyling` : la couleur est un **nom CSS** (`gold`, `lime`…) |
+| Bannière | `<nom> — <rareté>` au milieu de l'écran, 2,5 s | `queueMiddleTextUpper`, texte stylé |
+| Carte | Nom, rareté, famille et description, en haut à droite, 6 s | `sendTopRightHelper` : icône **Font Awesome**, fond en **`rgb()`** (le hex est refusé par la doc), texte **non stylé** |
+
+Deux couleurs par rareté pour cette raison : un hexadécimal pour le fond de la carte (`rgbOf` le convertit), un nom CSS pour le texte. Les icônes sont des icônes **du jeu** (`IngameIconName`) dans le chat, et Font Awesome sur la carte — c'est le seul format que `sendTopRightHelper` accepte.
+
+### Les neuf bénédictions (qui ne font rien encore)
+
+`Iron Hide`, `Field Rations`, `Quick Feet`, `Sturdy Straps`, `Honed Edge`, `Bitter Draught`, `Second Wind`, `Ghost Step`, `Heart of the Dungeon` — au moins une par famille et une par rareté jusqu'à Mythic. **Chacune dit « (No effect yet.) »** : la mécanique, les raretés et le rendu sont là, les effets viendront.
+
+`/dbg benedictions` affiche le niveau, les points, les dépenses, les derniers tirages et les chances — **hors donjon aussi**, puisque le niveau s'y gagne.
 
 ## Génération
 
@@ -193,6 +237,9 @@ src/dungeon/templates.js   coordonnées des modèles, tirage déterministe
 src/dungeon/loader.js      file, copie
 src/dungeon/service.js     entrée, atterrissage, pad, rapports
 src/dungeon/loot.js        coffres, clés, tirage par difficulté
+src/benediction/config.js  raretés, familles, catalogue, chances, tirage
+src/benediction/service.js points, dépenses, historique, sauvegarde
+src/benediction/presentation.js  carte, ligne de chat, tuile de boutique
 src/dungeon/reward.js      noms d’items vérifiés par le build
 src/utils/scheduler.js     scheduler piloté par le callback tick
 src/worldCode.js           lobby, pads, /dbg
@@ -202,7 +249,7 @@ src/worldCode.js           lobby, pads, /dbg
 - `npm run build` régénère le fichier compact.
 - `npm run watch` le régénère à chaque sauvegarde dans `src/`.
 - `npm run check` vérifie que le bundle est à jour, valide les syntaxes, et refuse un bundle où `copyChunk`, `createShopItem` ou la table des modèles ont disparu au minification.
-- `npm test` lance les 114 tests : moteur, configuration, et le bundle réel exécuté dans un `vm` contre un faux serveur qui applique les règles de Bloxd.
+- `npm test` lance les 137 tests : moteur, configuration, et le bundle réel exécuté dans un `vm` contre un faux serveur qui applique les règles de Bloxd.
 
 Le workflow GitHub vérifie la version générée sur les Pull Requests et resynchronise `world-code/` après un merge dans `main`.
 
@@ -212,11 +259,12 @@ Le workflow GitHub vérifie la version générée sur les Pull Requests et resyn
 - **Chaque salle doit avoir son Bedrock en bas et en haut.** C'est le seul contrat, et c'est ce qui permet au moteur de charger, de reconnaître et de ne jamais recopier une salle.
 - **Une salle sans Concrete du niveau suivant est un cul-de-sac.** Le code ne pose aucune plaque : il lit le bloc sous les pieds du joueur.
 - **Les clés ne servent encore à rien** : elles s'empilent dans l'inventaire. La serrure viendra avec les portes verrouillées.
+- **Les bénédictions ne font rien** : elles s'affichent, elles se paient avec un point, et c'est tout. Les effets sont la prochaine étape ; le catalogue est déjà écrit pour les recevoir sans toucher aux raretés ni aux chances.
 - **Pas encore de minerais, de butin, ni de fin de partie.**
 - **Les dix noms du bestiaire sont ceux du jeu, à sa casse près.** Six sont confirmés par la documentation Bloxd (`Draugr Zombie`, `Draugr Skeleton`, `Cave Golem`, `Draugr Knight`, `Zombie`, `Skeleton` — les deux derniers cités par l'encyclopédie, pas par la table des variations) ; `Armour Collector`, `Furnace Knight`, `Lil Knight` et `Scorpion` viennent de la liste des mobs hostiles du jeu, sans confirmation d'API. Un nom refusé ne casse rien : il est abandonné pour ce niveau, et `/dbg level` dit lequel.
 
 ## Documentation Bloxd utilisée
 
 - [API Reference](https://bloxd.io/docs/api-reference) — `copyChunk`, `setBlock`, `getBlock`, `setPosition`, `setClientOptions`, `setClientOption`, `createShopItem`, `isNearInterrupt`
-- [Callbacks](https://bloxd.io/docs/callbacks) — `onBlockStandStart`, `onBlockStandStop`, `onPlayerBoughtShopItem`, `onPlayerJoin`, `onPlayerLeave`, `onRespawnRequest`, `onPlayerClick`, `onPlayerKilledMob`, `onMobDespawned`, `tick`
+- [Callbacks](https://bloxd.io/docs/callbacks) — `onBlockStandStart`, `onBlockStandStop`, `onPlayerBoughtShopItem`, `onPlayerToggledShopMenu`, `onPlayerJoin`, `onPlayerLeave`, `onRespawnRequest`, `onPlayerClick`, `onPlayerKilledMob`, `onMobDespawned`, `tick`
 - [Client Options](https://bloxd.io/docs/client-options) — `gravityMultiplier`, `middleTextUpper`

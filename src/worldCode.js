@@ -24,6 +24,15 @@ import {
 import { DIFFICULTIES, DUNGEON_CONFIG, difficultyForPadBlock } from "./dungeon/config.js";
 import { LOBBY_POSITION, createDungeonService } from "./dungeon/service.js";
 import { isChestBlock } from "./dungeon/loot.js";
+import { RARITIES, categoryOf } from "./benediction/config.js";
+import { createBenedictionService } from "./benediction/service.js";
+import {
+  announcementOf,
+  cardFor,
+  oddsOfTable,
+  rollDescription,
+  rollMessage,
+} from "./benediction/presentation.js";
 
 const LOBBY_CONFIG = {
   countdownSeconds: 10,
@@ -206,6 +215,7 @@ const DEBUG_COMMANDS = {
   seed: ["seed", "seedonly"],
   level: ["level", "dungeon", "dgn"],
   chests: ["chests", "chest", "loot", "keys"],
+  benedictions: ["benedictions", "benediction", "blessings", "rolls"],
 };
 
 function debugSay(playerId, message) {
@@ -257,6 +267,20 @@ function runDebugCommand(playerId, verb) {
           + ` · failed ${row.failures}`,
       );
     }
+    return;
+  }
+  if (verb === "benedictions") {
+    // The whole mechanic in four lines: the level the game reports, the points it pays,
+    // what was spent, and the six rarities with their odds. It works outside a dungeon on
+    // purpose — a level is gained anywhere.
+    const level = auraLevelOf(playerId);
+    const key = accountKeyOf(playerId);
+    const account = benedictions().accountOf(key);
+    const points = benedictions().pointsFor(key, level);
+    debugSay(playerId, `[dbg] aura level ${level} · ${points} point(s) · ${account.spent} spent`);
+    debugSay(playerId, `[dbg] account ${key} · last ${account.history.length} roll(s):`
+      + (account.history.length > 0 ? ` ${account.history.map((entry) => `${entry.name} (${entry.rarity})`).join(", ")}` : " none"));
+    debugSay(playerId, `[dbg] odds ${oddsOfTable()}`);
     return;
   }
   const report = service().reportOf(playerId);
@@ -343,6 +367,194 @@ playerCommand = (playerId, command) => {
 const SHOP_CATEGORY = "Utilities";
 const SPAWN_ITEM = "Teleport to spawn";
 
+// ----------------------------------------------------------- benedictions --
+//
+// A benediction is bought with a **point**, and a point is what an aura level gives. The
+// shop is the whole interface: one tile to roll, one tile that says what the odds are, and
+// one tile that shows the last thing this player rolled. Nothing is drawn in the world and
+// nothing is written into a chunk — a benediction is a record on a player, not a block.
+//
+// The tile is **per player** (`createShopItemForPlayer`): a tile that says "you have 3
+// points" cannot be shared, and the game's own shop would otherwise show one player's
+// count to everybody.
+
+const BENEDICTION_CATEGORY = "Benedictions";
+const ROLL_ITEM = "Roll a Benediction";
+const LAST_ROLL_ITEM = "Last roll";
+const BENEDICTIONS_DB_KEY = "dungeonBreak.benedictions";
+
+/** The bookkeeping, created once for the world. */
+let benedictionService = null;
+
+function benedictions() {
+  if (!benedictionService) benedictionService = createBenedictionService({});
+  return benedictionService;
+}
+
+/**
+ * The key an account is stored under: the game's **permanent** player id.
+ *
+ * A `PlayerId` is a session — a record stored under it is lost on the next connection —
+ * and `getPlayerDbId` is the documented answer to "who is this, really". The fallback is
+ * the session id, so a game without the call still works within one session instead of
+ * throwing on the first roll.
+ */
+function accountKeyOf(playerId) {
+  try {
+    const dbId = api.getPlayerDbId(playerId);
+    if (dbId !== undefined && dbId !== null && String(dbId).length > 0) return String(dbId);
+  } catch (_) {
+    // A missing call is not a reason to lose the roll: the session key still works.
+  }
+  return String(playerId);
+}
+
+/** The aura level of a player, from the game. `1` when the game cannot say. */
+function auraLevelOf(playerId) {
+  try {
+    const info = api.getAuraInfo(playerId);
+    if (info && Number.isFinite(info.level)) return info.level;
+  } catch (_) {
+    // Nothing to do: a level that cannot be read is the level of a fresh player.
+  }
+  return 1;
+}
+
+/** What a player has, as one line: level, points, and the odds of the table. */
+function benedictionSummary(playerId, level) {
+  const points = benedictions().pointsFor(accountKeyOf(playerId), level);
+  return `Aura level ${level} · ${points} point${points === 1 ? "" : "s"} · ${oddsOfTable()}`;
+}
+
+/**
+ * Refreshes this player's benediction tiles.
+ *
+ * Called on a join and after every roll. The tiles are per-player, so this is the only
+ * place that writes them, and the only place that has to know a count changed.
+ */
+function refreshBenedictionTiles(playerId) {
+  const key = accountKeyOf(playerId);
+  const level = auraLevelOf(playerId);
+  const points = benedictions().pointsFor(key, level);
+  const account = benedictions().accountOf(key);
+
+  // One tile, always present: it is the whole interface, and a player without points must
+  // still see what they are saving for.
+  try {
+    api.createShopItemForPlayer(playerId, BENEDICTION_CATEGORY, ROLL_ITEM, {
+      image: "Beacon",
+      customTitle: "Roll a Benediction",
+      description: `${benedictionSummary(playerId, level)}\n${rollDescription()}`,
+      buyButtonText: "Roll",
+      cost: 0,
+      canBuy: points > 0,
+      redDot: points > 0,
+      sortPriority: 10,
+      onBoughtMessage: "Rolling...",
+    });
+  } catch (error) {
+    logShopFailure(ROLL_ITEM, error);
+  }
+
+  // The last roll, as its own tile: the name, in nothing but text, because a shop tile has
+  // one description colour. The rarity is spelled out, which is the part that matters.
+  const last = account.history[0];
+  if (last) {
+    const rarity = RARITIES.find((entry) => entry.id === last.rarity);
+    try {
+      api.createShopItemForPlayer(playerId, BENEDICTION_CATEGORY, LAST_ROLL_ITEM, {
+        image: "Potion Table",
+        customTitle: "Last roll",
+        description: `${last.name} — ${rarity ? rarity.label : last.rarity}`,
+        canBuy: false,
+        sortPriority: 5,
+      });
+    } catch (error) {
+      logShopFailure(LAST_ROLL_ITEM, error);
+    }
+  }
+  return points;
+}
+
+/** One log line per refused tile. A shop is a convenience; it is never a crash. */
+function logShopFailure(itemKey, error) {
+  try {
+    api.log(`[Dungeon] benediction item "${itemKey}" could not be created: ${error && error.message ? error.message : error}`);
+  } catch (_) {
+    // Nothing left to do.
+  }
+}
+
+/**
+ * Pays for one roll and shows it.
+ *
+ * The point is spent by the service, which refuses when there is none — so a stale shop
+ * tile (a sale the game let through one tick late) cannot buy a free roll. The card is
+ * drawn after the chat line, because the card is the part that can fail: the player keeps
+ * the message either way.
+ */
+function rollBenediction(playerId) {
+  const key = accountKeyOf(playerId);
+  const level = auraLevelOf(playerId);
+  const result = benedictions().roll(key, level);
+  if (!result) {
+    api.sendMessage(playerId, "No Benediction point to spend. Discover a new room: every aura level gives one.");
+    refreshBenedictionTiles(playerId);
+    return false;
+  }
+
+  const { benediction, rarity } = result;
+  api.sendMessage(playerId, rollMessage(benediction, rarity));
+  api.sendMessage(
+    playerId,
+    `Benediction: ${benediction.name} — ${rarity.label} · ${categoryOf(benediction.category).label}`
+      + ` · ${result.pointsLeft} point${result.pointsLeft === 1 ? "" : "s"} left`,
+  );
+  // The middle of the screen, big: the rarity is what a player reads first.
+  try {
+    api.queueMiddleTextUpper(playerId, [{ str: announcementOf(benediction, rarity), style: { color: rarity.textColour } }], 2500);
+  } catch (_) {
+    // The message and the card carry the news; a missing banner is not a lost roll.
+  }
+  try {
+    const card = cardFor(benediction, rarity);
+    api.sendTopRightHelper(playerId, card.icon, card.text, card.opts);
+  } catch (_) {
+    // Same: the roll happened.
+  }
+  persistBenedictions(playerId, key);
+  refreshBenedictionTiles(playerId);
+  return true;
+}
+
+/** Writes the account. The database is per player, and a failure is logged, never thrown. */
+function persistBenedictions(playerId, key) {
+  try {
+    api.setPlayerDbValue(playerId, BENEDICTIONS_DB_KEY, JSON.stringify(benedictions().save(key)));
+  } catch (error) {
+    try {
+      api.log(`[Dungeon] benedictions of ${playerId} could not be saved: ${error && error.message ? error.message : error}`);
+    } catch (_) {
+      // Nothing left to do.
+    }
+  }
+}
+
+/** Reads an account back. A fresh player has none, which is an empty account, not an error. */
+function restoreBenedictions(playerId) {
+  const key = accountKeyOf(playerId);
+  let stored = null;
+  try {
+    const raw = api.getPlayerDbValue(playerId, BENEDICTIONS_DB_KEY);
+    if (typeof raw === "string") stored = JSON.parse(raw);
+    else if (raw && typeof raw === "object") stored = raw;
+  } catch (_) {
+    // Unreadable is the same as absent: a player keeps playing, with nothing spent.
+  }
+  benedictions().load(key, stored || {});
+  return key;
+}
+
 const SHOP_ITEMS = [
   {
     category: SHOP_CATEGORY,
@@ -387,6 +599,21 @@ function registerShopItems() {
 }
 
 onPlayerBoughtShopItem = (playerId, categoryKey, itemKey) => {
+  // A benediction roll: the point is checked in the service, so a tile the game let
+  // through one tick after the last roll cannot buy a second one for free.
+  if (categoryKey === BENEDICTION_CATEGORY) {
+    if (itemKey !== ROLL_ITEM) return;
+    try {
+      rollBenediction(playerId);
+    } catch (error) {
+      try {
+        api.log(`[Dungeon] benediction roll failed: ${error && error.message ? error.message : error}`);
+      } catch (_) {
+        // Nothing left to do.
+      }
+    }
+    return;
+  }
   if (categoryKey !== SHOP_CATEGORY || itemKey !== SPAWN_ITEM) return;
   // Teleport and forget are one call, so the tick can never see a player at spawn
   // with a dungeon: `teleportToSpawn` moves first, then drops the record.
@@ -419,12 +646,38 @@ onPlayerJoin = (playerId) => {
   // The shop is re-registered per join: an item created while nobody was online is
   // not always offered to the first player who arrives, and replacing it is free.
   registerShopItems();
+  // Benedictions are **per player**: the account is read back first, so a player who
+  // rolled before keeps what they spent, and the tiles show their own count.
+  restoreBenedictions(playerId);
+  refreshBenedictionTiles(playerId);
   api.setPosition(playerId, LOBBY_POSITION);
   const names = DIFFICULTIES.filter((entry) => entry.fromLobby).map((entry) => entry.label).join(", ");
   api.sendMessage(
     playerId,
     `Welcome to Dungeon Break! Step on a colored Concrete pad to choose your difficulty (${names}).`,
   );
+};
+
+/**
+ * A player opened the shop: the tiles are redrawn, because the count on them is theirs.
+ *
+ * A point is derived from the aura level, and a level can be gained while the shop is
+ * closed — even outside a dungeon. Redrawing on open is what makes the tile true without a
+ * tick spent watching every player's XP.
+ *
+ * Only the opening matters; a close has nothing to redraw.
+ */
+onPlayerToggledShopMenu = (playerId, isOpen) => {
+  if (!isOpen) return;
+  try {
+    refreshBenedictionTiles(playerId);
+  } catch (error) {
+    try {
+      api.log(`[Dungeon] benediction tiles could not be refreshed: ${error && error.message ? error.message : error}`);
+    } catch (_) {
+      // Nothing left to do.
+    }
+  }
 };
 
 onPlayerLeave = (playerId) => {

@@ -1,0 +1,238 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import {
+  AURA_LEVEL_BASE,
+  BENEDICTIONS,
+  CATEGORIES,
+  RARITIES,
+  benedictionsOf,
+  categoryOf,
+  drawBenediction,
+  formatPercent,
+  pointsEarned,
+  pointsLeft,
+  rarityOdds,
+  rarityOf,
+  rgbOf,
+} from "../../src/benediction/config.js";
+import { createBenedictionService } from "../../src/benediction/service.js";
+import {
+  announcementOf,
+  cardFor,
+  nameText,
+  oddsOfTable,
+  rarityText,
+  rollDescription,
+  rollMessage,
+  tagText,
+} from "../../src/benediction/presentation.js";
+
+// ------------------------------------------------------------------ tables --
+
+test("the six rarities are the owner's, in his order and his colours", () => {
+  assert.deepEqual(RARITIES.map((entry) => entry.label), [
+    "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic",
+  ]);
+  // Grey, green, blue, purple, orange, red — the owner's list, one for one.
+  assert.deepEqual(RARITIES.map((entry) => entry.colour), [
+    "#9e9e9e", "#55ff55", "#55aaff", "#c04bff", "#ff9d00", "#ff2d2d",
+  ]);
+  for (const rarity of RARITIES) {
+    assert.ok(rarity.textColour, `${rarity.label} has no colour for styled text`);
+    assert.ok(rarity.weight > 0, `${rarity.label} can never be drawn`);
+  }
+  // Rarer means rarer: the weights strictly fall as the list goes on.
+  for (let index = 1; index < RARITIES.length; index += 1) {
+    assert.ok(RARITIES[index].weight < RARITIES[index - 1].weight,
+      `${RARITIES[index].label} is not rarer than ${RARITIES[index - 1].label}`);
+  }
+});
+
+test("the three families are the owner's, and every benediction belongs to exactly one", () => {
+  assert.deepEqual(CATEGORIES.map((entry) => entry.label), ["Physical", "Equipment", "Potion effect"]);
+  const ids = new Set(BENEDICTIONS.map((entry) => entry.id));
+  assert.equal(ids.size, BENEDICTIONS.length, "two benedictions share an id");
+  for (const benediction of BENEDICTIONS) {
+    assert.ok(categoryOf(benediction.category), `${benediction.name} has no family`);
+    assert.ok(rarityOf(benediction.rarity), `${benediction.name} has no rarity`);
+    assert.ok(benediction.icon, `${benediction.name} has no in-game icon`);
+    assert.ok(benediction.cardIcon, `${benediction.name} has no card icon`);
+    assert.match(benediction.description, /No effect yet\./, `${benediction.name} promises something it does not do`);
+  }
+});
+
+test("every rarity and every family is represented in the catalogue", () => {
+  for (const rarity of RARITIES) {
+    assert.ok(benedictionsOf(rarity.id).length > 0, `nothing is ${rarity.label}`);
+  }
+  for (const category of CATEGORIES) {
+    assert.ok(BENEDICTIONS.some((entry) => entry.category === category.id),
+      `the ${category.label} family is empty`);
+  }
+});
+
+// -------------------------------------------------------------------- odds --
+
+test("the odds are normalised, and reach every rarity", () => {
+  const odds = rarityOdds();
+  assert.equal(odds.length, RARITIES.length, "a rarity was dropped from the table");
+  const total = odds.reduce((sum, entry) => sum + entry.chance, 0);
+  assert.ok(Math.abs(total - 1) < 1e-9, `the chances sum to ${total}`);
+  for (const entry of odds) {
+    assert.ok(entry.chance > 0, `${entry.rarity.label} can never be rolled`);
+    assert.ok(entry.pool.length > 0);
+  }
+  // The shape the weights describe: about 60 % Common, and a Mythic well under 1 %.
+  assert.ok(odds[0].chance > 0.55 && odds[0].chance < 0.65);
+  assert.ok(odds[odds.length - 1].chance < 0.01);
+});
+
+test("a rarity with no benediction is left out instead of being rerolled", () => {
+  // The table follows the catalogue: emptying a rarity must remove its slice of
+  // probability, not turn its rolls into a second draw nobody asked for. The table is a
+  // parameter for exactly this reason.
+  const withoutMythic = BENEDICTIONS.filter((entry) => entry.rarity !== "mythic");
+  const odds = rarityOdds(withoutMythic);
+  assert.equal(odds.length, RARITIES.length - 1, "an empty rarity stayed in the table");
+  assert.ok(!odds.some((entry) => entry.rarity.id === "mythic"));
+  const total = odds.reduce((sum, entry) => sum + entry.chance, 0);
+  assert.ok(Math.abs(total - 1) < 1e-9, `the remaining rarities do not add up: ${total}`);
+
+  // And a draw over the shortened wheel never lands on the empty one.
+  for (let index = 0; index < 500; index += 1) {
+    const draw = drawBenediction(() => index / 500, withoutMythic);
+    assert.notEqual(draw.rarity.id, "mythic");
+  }
+});
+
+test("a draw always answers, whatever the generator says", () => {
+  for (const value of [0, 0.4999, 0.5, 0.999999, 1]) {
+    const draw = drawBenediction(() => value);
+    assert.ok(draw, `a roll of ${value} gave nothing`);
+    assert.ok(draw.benediction);
+    assert.ok(draw.rarity);
+    assert.equal(draw.benediction.rarity, draw.rarity.id);
+  }
+  // A generator that walks the wheel hits each rarity in turn, which is what "by weight"
+  // has to mean: the same table a player sees, drawn in order.
+  const seen = new Set();
+  // 2 000 points around the wheel: a Mythic is 0.2 % of it, so the grain has to be
+  // finer than its slice or the test would accuse the table of a hole it does not have.
+  for (let index = 0; index < 2000; index += 1) {
+    const draw = drawBenediction(() => index / 2000);
+    seen.add(draw.rarity.id);
+  }
+  assert.equal(seen.size, RARITIES.length, "a rarity is unreachable through the wheel");
+});
+
+test("odds are written short and never rounded to nothing", () => {
+  assert.equal(formatPercent(0.6), "60%");
+  assert.equal(formatPercent(0.096), "9.6%");
+  assert.equal(formatPercent(0.002), "0.2%");
+  assert.equal(formatPercent(0.00001), "0.1%", "an unlikely rarity was written as 0%");
+  assert.match(oddsOfTable(), /^Common 60% · Uncommon 25% · /);
+});
+
+// ------------------------------------------------------------------ points --
+
+test("an aura level pays one point, and the first level pays none", () => {
+  assert.equal(AURA_LEVEL_BASE, 1);
+  assert.equal(pointsEarned(1), 0, "a brand-new player was given a point for nothing");
+  assert.equal(pointsEarned(2), 1);
+  assert.equal(pointsEarned(7), 6);
+  assert.equal(pointsLeft(4, 2), 1);
+  assert.equal(pointsLeft(4, 99), 0, "spending more than earned went negative");
+  assert.equal(pointsLeft(NaN, NaN), 0);
+});
+
+// ------------------------------------------------------------------- rolls --
+
+test("a roll spends exactly one point and records what it gave", () => {
+  const service = createBenedictionService({ random: () => 0.5 });
+  assert.equal(service.pointsFor("db-p1", 3), 2);
+  const first = service.roll("db-p1", 3);
+  assert.ok(first, "a point was available and the roll did nothing");
+  assert.equal(first.pointsLeft, 1);
+  assert.equal(service.pointsFor("db-p1", 3), 1);
+  const second = service.roll("db-p1", 3);
+  assert.equal(second.pointsLeft, 0);
+  assert.equal(service.roll("db-p1", 3), null, "a third roll was given for free");
+  assert.deepEqual(service.save("db-p1").history.map((entry) => entry.id), [second.benediction.id, first.benediction.id]);
+  assert.equal(service.save("db-p1").spent, 2);
+});
+
+test("a failed roll does not spend a point", () => {
+  // There is nothing to draw: the service must refuse before it charges.
+  const service = createBenedictionService({ random: () => 0.5 });
+  const before = service.save("db-p1");
+  assert.equal(service.roll("db-p1", 1), null);
+  assert.deepEqual(service.save("db-p1"), before);
+});
+
+test("an account survives a reload, and a new one starts empty", () => {
+  const service = createBenedictionService({ random: () => 0.5 });
+  const rolled = service.roll("db-p1", 5);
+  const stored = JSON.parse(JSON.stringify(service.save("db-p1")));
+
+  const reloaded = createBenedictionService({ random: () => 0.5 });
+  reloaded.load("db-p1", stored);
+  assert.equal(reloaded.pointsFor("db-p1", 5), 3, "a reload refunded a spent point");
+  assert.equal(reloaded.save("db-p1").history[0].id, rolled.benediction.id);
+
+  // Nothing stored is an empty account, not a crash.
+  const fresh = createBenedictionService({ random: () => 0.5 });
+  fresh.load("db-p2", null);
+  assert.equal(fresh.pointsFor("db-p2", 4), 3);
+  assert.deepEqual(fresh.save("db-p2").history, []);
+});
+
+test("the history is bounded, and keeps the newest first", () => {
+  const service = createBenedictionService({ random: () => 0 });
+  for (let index = 0; index < 12; index += 1) service.roll("db-p1", 40);
+  const history = service.save("db-p1").history;
+  assert.equal(history.length, 5);
+  assert.equal(service.save("db-p1").spent, 12);
+});
+
+// ----------------------------------------------------------- presentation --
+
+test("a roll is shown in its rarity's colour, on every surface", () => {
+  const benediction = BENEDICTIONS[0];
+  const rarity = rarityOf(benediction.rarity);
+
+  // Chat: CustomTextStyling, so the name is written in the rarity's colour.
+  const message = rollMessage(benediction, rarity);
+  assert.equal(message[0], "Benediction: ");
+  const styled = message.find((part) => part && part.str === benediction.name);
+  assert.ok(styled, "the name is not in the message");
+  assert.equal(styled.style.color, rarity.textColour);
+  assert.deepEqual(rarityText(rarity)[0].style.color, rarity.textColour);
+  assert.ok(tagText(benediction, rarity)[0].startsWith("Physical"));
+
+  // The card: `sendTopRightHelper` takes rgb() only, and the docs are explicit about it.
+  const card = cardFor(benediction, rarity);
+  assert.equal(card.opts.color, rgbOf(rarity.colour));
+  assert.match(card.opts.color, /^rgb\(\d+, \d+, \d+\)$/);
+  assert.ok(card.text.includes(benediction.name));
+  assert.ok(card.text.includes(rarity.label));
+  assert.ok(card.text.includes("No effect yet."));
+  assert.ok(card.icon.startsWith("fa-solid fa-"));
+  assert.ok(card.opts.duration > 0);
+
+  assert.equal(announcementOf(benediction, rarity), `${benediction.name} — ${rarity.label}`);
+  assert.ok(nameText(benediction, rarity)[0].style.color);
+});
+
+test("the shop tile says what the odds are, in plain text", () => {
+  const description = rollDescription();
+  assert.match(description, /Roll one Benediction/);
+  assert.match(description, new RegExp(oddsOfTable().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.ok(!description.includes("undefined"));
+});
+
+test("a colour that is not a hex is passed through, not mangled", () => {
+  assert.equal(rgbOf("#ff2d2d"), "rgb(255, 45, 45)");
+  assert.equal(rgbOf("rgb(1, 2, 3)"), "rgb(1, 2, 3)");
+  assert.equal(rgbOf(undefined), undefined);
+});
