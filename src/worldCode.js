@@ -43,6 +43,18 @@ const LOBBY_CONFIG = {
   padSwitchGraceTicks: 2,
 };
 
+// Shop visibility: chat is not visible when the shop is open, so no chat
+// message is sent while a player has it open. The set is per player and
+// mirrors `onPlayerToggledShopMenu` plus our own `closeShop`.
+const shopOpen = new Set();
+if (typeof api !== "undefined" && api && typeof api.sendMessage === "function") {
+  const _origSendMessage = api.sendMessage.bind(api);
+  api.sendMessage = (playerId, message) => {
+    if (shopOpen.has(String(playerId))) return;
+    return _origSendMessage(playerId, message);
+  };
+}
+
 // One service for the whole world: two players in the same level see the same
 // rooms, because there is one level, not one per player.
 let dungeonService = null;
@@ -640,9 +652,11 @@ function chooseBenediction(playerId, position) {
     refreshBenedictionTiles(playerId);
     return false;
   }
-  announceBenediction(playerId, result.benediction, result.rarity, result.pointsLeft);
+  // Shop closes first — chat is invisible while it is open, so the
+  // announcement must come after the close to be seen.
   refreshBenedictionTiles(playerId);
   closeShop(playerId);
+  announceBenediction(playerId, result.benediction, result.rarity, result.pointsLeft);
   return true;
 }
 
@@ -655,6 +669,10 @@ function chooseBenediction(playerId, position) {
  * recorded by the time this runs.
  */
 function closeShop(playerId) {
+  const key = String(playerId);
+  const wasOpen = shopOpen.has(key);
+  shopOpen.delete(key);
+  if (!wasOpen) return;
   try {
     api.openShop(playerId, true);
   } catch (error) {
@@ -789,6 +807,16 @@ onPlayerBoughtShopItem = (playerId, categoryKey, itemKey) => {
   const wasInDungeon = service().teleportToSpawn(playerId);
   stopLobbyCountdown(playerId);
   api.setClientOption(playerId, "middleTextUpper", "");
+  // Close shop first so the message is visible (chat hidden in shop).
+  {
+    const key = String(playerId);
+    if (shopOpen.has(key)) {
+      shopOpen.delete(key);
+      try {
+        api.openShop(playerId, true);
+      } catch (_) {}
+    }
+  }
   api.sendMessage(
     playerId,
     wasInDungeon ? "Back to spawn. Your dungeon stopped." : "Back to spawn.",
@@ -837,21 +865,27 @@ onPlayerJoin = (playerId) => {
  * Only the opening matters; a close has nothing to redraw.
  */
 onPlayerToggledShopMenu = (playerId, isOpen) => {
-  if (!isOpen) return;
-  try {
-    refreshBenedictionTiles(playerId);
-  } catch (error) {
+  const key = String(playerId);
+  if (isOpen) {
+    shopOpen.add(key);
     try {
-      api.log(`[Dungeon] benediction tiles could not be refreshed: ${error && error.message ? error.message : error}`);
-    } catch (_) {
-      // Nothing left to do.
+      refreshBenedictionTiles(playerId);
+    } catch (error) {
+      try {
+        api.log(`[Dungeon] benediction tiles could not be refreshed: ${error && error.message ? error.message : error}`);
+      } catch (_) {
+        // Nothing left to do.
+      }
     }
+  } else {
+    shopOpen.delete(key);
   }
 };
 
 onPlayerLeave = (playerId) => {
   stopLobbyCountdown(playerId);
   service().leave(playerId);
+  shopOpen.delete(String(playerId));
   // The account is memory, so a leave is where it is dropped: a session that ends holds
   // nothing, which is the other half of "nothing survives a reconnection".
   benedictions().forget(accountKeyOf(playerId));
@@ -940,6 +974,28 @@ onRespawnRequest = (playerId) => {
   stopLobbyCountdown(playerId);
   service().teleportToSpawn(playerId);
   api.setClientOption(playerId, "middleTextUpper", "");
+  // Reset XP to 0 — same as rejoin — and clear the benediction points.
+  try {
+    api.setTotalAura(playerId, 0);
+  } catch (error) {
+    try {
+      api.log(`[Dungeon] the aura of ${playerId} could not be reset: ${error && error.message ? error.message : error}`);
+    } catch (_) {}
+  }
+  benedictions().forget(accountKeyOf(playerId));
+  showPoints(playerId, 0);
+  refreshBenedictionTiles(playerId);
+  // Shop was open if the death happened via UI — close first so the
+  // death message is visible (chat is not visible in shop).
+  {
+    const key = String(playerId);
+    if (shopOpen.has(key)) {
+      shopOpen.delete(key);
+      try {
+        api.openShop(playerId, true);
+      } catch (_) {}
+    }
+  }
   api.sendMessage(playerId, "You died. Back to spawn — your dungeon stopped.");
   return LOBBY_POSITION;
 };
