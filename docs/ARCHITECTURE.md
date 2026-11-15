@@ -1,6 +1,6 @@
 # Architecture — génération par copies de chunks
 
-**Statut : livré.** 5 modules, 114 tests verts, bundle de 31 k caractères sur les 512 k autorisés.
+**Statut : livré.** 8 modules, 137 tests verts, bundle de 39 k caractères sur les 512 k autorisés.
 
 Ce document remplace l'architecture par ouvertures des Phases 0 à 4, supprimée avec son moteur. Il décrit ce qui existe, pas ce qui est prévu : toute divergence entre ce texte et le code est un défaut du texte.
 
@@ -40,7 +40,10 @@ src/dungeon/config.js      toutes les constantes, la table des difficultés
 src/dungeon/templates.js   où sont les modèles (coordonnées à remplir), le tirage
 src/dungeon/loader.js      la file et la copie
 src/dungeon/service.js     entrée dans un niveau, atterrissage, pad, rapports
-src/worldCode.js           lobby, pads, commandes /dbg
+src/benediction/config.js  raretés, familles, catalogue, chances, tirage
+src/benediction/service.js points, dépenses, historique
+src/benediction/presentation.js  carte, ligne de chat, tuile de boutique
+src/worldCode.js           lobby, pads, boutique, commandes /dbg
 ```
 
 Aucun de ces fichiers ne construit de géométrie, et **aucun n'écrit un bloc** : `loader.js` ne fait que copier, `service.js` que téléporter.
@@ -317,6 +320,64 @@ Trois détails, et chacun est une décision :
 
 L'aura déjà gagnée reste acquise : elle appartient au joueur, pas au run.
 
+## 6septies. Bénédictions : un point par niveau, un point par tirage
+
+L'aura ne sert plus seulement à monter : **chaque niveau d'aura donne un point**, et un point
+s'échange contre un tirage de Bénédiction dans la boutique. Trois modules, trois
+responsabilités, et aucune ne déborde sur les autres :
+
+| Module | Ce qu'il possède | Ce qu'il ignore |
+| --- | --- | --- |
+| `benediction/config.js` | raretés, familles, catalogue, poids, tirages, points | le jeu, le joueur, la boutique |
+| `benediction/service.js` | points dépensés, historique, sauvegarde | `api`, le rendu, le shop |
+| `benediction/presentation.js` | carte, ligne de chat, bannière, description de tuile | où et quand c'est montré |
+
+`src/worldCode.js` ne fait que les appels : c'est la même frontière que pour `src/dungeon/`, et
+c'est ce qui permet de tester la mécanique sans faux serveur.
+
+**Les points sont dérivés, jamais stockés.** `niveau − AURA_LEVEL_BASE − dépensés` : le niveau
+est la réponse du jeu (`getAuraInfo`), et un compteur en mémoire serait une copie qui se
+désynchronise au premier niveau gagné ailleurs. Conséquence voulue : un niveau gagné **hors**
+donjon est honoré, un niveau obtenu par un autre chemin l'est aussi, et une reconnexion ne peut
+ni perdre ni dupliquer un point. Ce qui est écrit en base, c'est **les dépenses et l'historique**
+(`setPlayerDbValue`, clé `dungeonBreak.benedictions`), sous l'identifiant **permanent**
+(`getPlayerDbId`) : un `PlayerId` est une session, et une dépense rangée sous une session
+disparaîtrait à la déconnexion.
+
+**Un point, un tirage — et le refus est dans le service.** La tuile peut être périmée d'un
+tick (le jeu laisse cliquer une tuile qui vient de passer à zéro), donc `roll` vérifie les
+points **avant** de tirer, et un tirage refusé ne coûte rien. Le point est débité avant que le
+résultat soit annoncé, et le tirage ne peut pas échouer tant que le catalogue n'est pas vide.
+
+**La table des raretés suit le catalogue.** `rarityOdds()` retire toute rareté sans aucune
+bénédiction et renormalise : ajouter une Mythique ne change aucune chance, et vider une rareté
+retire sa part de probabilité au lieu de la transformer en relance silencieuse. Les poids sont
+relatifs (1000 / 420 / 160 / 60 / 18 / 4) — soit ~60 / 25 / 9,6 / 3,6 / 1,1 / 0,2 % — et sont
+écrits une fois, dans `RARITIES`.
+
+**Trois surfaces, trois contraintes d'API.** C'est la partie qui a demandé le plus de lectures :
+
+- le **chat** prend `CustomTextStyling`, donc la couleur y est un **nom CSS** (`{ color: "lime" }`)
+  — c'est la forme que la doc utilise elle-même ;
+- la **carte** est `sendTopRightHelper`, qui prend une icône **Font Awesome**, du texte **non
+  stylé**, et un fond en **`rgb()`** : la doc est explicite, le hex n'y fonctionne pas. D'où
+  `rgbOf`, et d'où deux couleurs par rareté dans la même table — un hexadécimal et un nom CSS ;
+- la **tuile de boutique** accepte du texte stylé à la création, mais une description en
+  chaîne est d'une seule couleur : la rareté y est donc **écrite**, suivie des chances de la
+  table.
+
+Une tuile par joueur (`createShopItemForPlayer`) est une obligation, pas un raffinement : un
+compteur de points ne peut pas être une tuile partagée, ou tout le monde lit le compte du
+premier venu. Elle est redessinée à la connexion, à l'ouverture de la boutique
+(`onPlayerToggledShopMenu`) et après chaque tirage — pas à chaque tick, parce que surveiller
+l'XP de tout le monde coûterait un appel par joueur et par tick pour un chiffre que personne ne
+regarde.
+
+**Ce que ce module ne fait pas encore.** Les neuf bénédictions n'ont **aucun effet**, et
+chacune le dit : leur description finit par « (No effect yet.) ». C'est volontaire — la demande
+était le rendu et la mécanique — et c'est aussi ce qui rend la suite peu risquée : un effet
+s'ajoute au catalogue sans toucher aux raretés, aux chances ni à la sauvegarde.
+
 ## 7. Ce qui est lu et écrit dans le monde, et pourquoi
 
 | Opération | Quand | Ce qu'elle remplace |
@@ -356,7 +417,9 @@ Aucune de ces lectures n'est sur le chemin chaud : un scan lit un bloc par chunk
 | `level.populated` | une entrée par salle visitée | un donjon par entrée, détruit par `release` |
 | `level.pendingTuning` | les mobs d'un tick | vidée au tick suivant |
 | `level.refusedMobs` | au plus types × niveaux | une entrée par nom refusé, indexée `type|niveau` |
+| `level.mobRefusals` / `mobRefusalsAtRoomStart` | au plus types × niveaux | deux compteurs par type : la marque ne recule jamais, et elle est avancée **en fin de salle** |
 | `states` (une par entrée) | une `Map` de chunks par entrée | l'état entier est détruit par `release`, donc aucune origine ne survit à un départ |
+| `accounts` (bénédictions) | un par joueur | `spent` et cinq tirages au plus ; le niveau n'y est pas stocké, il est relu au jeu |
 
 Aucune de ces structures ne dépend du nombre de salles construites.
 
@@ -388,14 +451,17 @@ C'est la réponse à un vrai rapport de bug : « The room could not be built » 
 
 ## 11. Tests
 
-`npm test` — 114 tests.
+`npm test` — 137 tests.
 
 - `tests/dungeon/config.test.js` — une difficulté est un ordre et ne porte **aucune** hauteur ; la plage verticale tirée commence au-dessus de `y = 0` et couvre bien 1 000 à 100 000 blocs ; un pad = une difficulté ; Hell est le dernier ; le tirage de salle est stable et étalé ; les huit niveaux tirent dans la même liste ; les salles d'un niveau passent avant les communes ; une salle malformée est ignorée sans casser le niveau ; **la conversion chunk → bloc, y compris sur les coordonnées négatives** ; les 15 salles livrées occupent 15 chunks distincts ; une salle ne porte aucune propriété.
 - `tests/dungeon/loader.test.js` — un état par entrée : chaque entrée tire sa propre place dans le carré configuré, deux entrées vivantes restent à `spawnSeparation` l'une de l'autre, une place n'est tirée qu'une fois, `newOrigin` en donne une autre, un départ la rend et ne laisse rien en mémoire, deux joueurs de la même difficulté ne partagent ni place ni plan ; et un faux serveur où **`copyChunk` depuis un chunk non chargé ne fait rien**, où une copie dans un chunk non envoyé est ignorée, et où **un `getBlock` de chunk non envoyé déclenche l'envoi, deux ticks plus tard** : une salle est une seule copie, la sonde distingue « pas envoyé » / « vide » / « salle déjà là », **et seul le Bedrock compte** : du terrain ordinaire à la même profondeur ne passe pas pour une salle, une salle du redémarrage précédent n'est pas recopiée, une copie est confirmée au tick suivant et jamais dans le sien, la file est bornée, une salle illisible est désactivée puis retirée de la file, **aucun bloc n'est écrit nulle part**, la hauteur de sol est lue et non configurée, un niveau vide ne coûte rien.
 - **mobs** (dans `loader.test.js`) — l'entrée dans une salle peuple les quatre salles autour et jamais celle du joueur ; les mobs sont au Y du joueur, jamais dans un bloc solide, jamais sur les plaques ; une case de plante reste utilisable (`getBlockSolidity`, pas « Air ») ; entrer dans une salle garde ses mobs et tue ceux des autres salles ; le dernier mob écrit le record du coin et le joueur reçoit `CLEAR` ; une salle clear n'est plus jamais peuplée ; un type refusé par le jeu ne casse pas le reste ; la difficulté multiplie les statistiques (Hell : 5 mobs à ×5 PV) ; un mob retiré par le jeu ne rend pas la salle clear ; une salle vidée puis regagnée ne se remplit pas. Et dans `world-code.test.js` : un coffre du donjon donne **une** des cinq clés, déposée au milieu du bloc, devient de l'`Air`, et ce clic ne paie plus ensuite ; un clic sur autre chose (bloc, entité) ne donne ni clé ni écriture ; un coffre du lobby n'est pas touché ; un drop impossible est signalé ; les mobs apparaissent autour de l'entrée, la salle d'entrée est écrite clear, `onPlayerKilledMob` dit `CLEAR` et écrit le record, revenir au spawn tue les mobs, **mourir garde le donjon (même origine, aucune copie) et le repeuple** — le tout sans écrire un bloc.
 - **coffres** (`tests/dungeon/loot.test.js`) — les poids penchent vers le rare à chaque niveau et chaque clé reste possible partout ; le tirage suit la loi (20 000 tirages sur une suite fixe, ±2 points) ; un tirage à 0 et à 1 rendent quand même une clé ; un clic sur un `Chest` est un coffre, un clic ailleurs non ; la position est arrondie vers le bas ; un clic hors donjon ne paie pas ; ouvrir laisse de l'`Air` et dépose la clé à `x + 0.5, y, z + 0.5` ; le bloc est vidé **avant** le drop ; `Iron Chest` n'est plus un coffre.
 - **bestiaire** (dans `loader.test.js`) — chaque niveau tire parmi les mobs débloqués à son niveau ou en dessous ; les multiplicateurs du type se composent avec ceux du niveau (Hell : PV et dégâts vérifiés mob par mob, et la salle est bien mélangée) ; un type refusé par le jeu ne laisse pas la salle vide ; un refus est enregistré **pour son niveau** ; mourir vide les mobs sans oublier les salles, donc le donjon peut encore se remplir ; quitter l'oublie pour de bon.
-- `tests/world-code.test.js` — la boutique `Utilities` (créée, gratuite, avec une image), un clic qui ramène au spawn **et** arrête le donjon — plus aucune salle n'est copiée ensuite et `/dbg` ne voit plus de donjon —, un clic pendant l'entrée qui abandonne l'entrée au lieu de reposer le joueur, et un achat d'autre chose qui ne fait rien ; le bundle réel, dans un contexte `vm`, sur un faux serveur qui compte chaque `setBlock` comme une violation : compte à rebours, entrée, atterrissage sur le sol, gravité coupée puis rendue, une plaque Concrete construite dans la salle qui mène au niveau suivant, ordre des copies, joueur qui tombe et qui est reposé, aucun bloc écrit par le code, `/dbg level` qui dit pourquoi une entrée a échoué, commandes `/dbg`.
+- `tests/benediction/benediction.test.js` — les six raretés sont celles du propriétaire (ordre, couleurs, poids strictement décroissants), les trois familles aussi, et **chaque bénédiction appartient à une famille, à une rareté, et dit qu'elle ne fait rien** ; toute rareté et toute famille a au moins une bénédiction ; les chances sont normalisées et chaque rareté reste atteignable ; une rareté vidée sort de la table **et renormalise** au lieu d'être relancée ; un tirage répond toujours, même à 0 et à 1, et 2 000 points de la roue atteignent les six raretés ; les pourcentages s'écrivent court sans jamais arrondir à 0 % ; un niveau d'aura paie un point et le niveau 1 n'en paie aucun ; un tirage dépense exactement un point, refuse sans point, et un refus ne coûte rien ; un compte relu retrouve ses dépenses, un compte absent est vide, l'historique est borné à cinq et garde le plus récent ; le rendu met le nom dans la couleur de la rareté sur le chat, en `rgb()` sur la carte, et la carte dit « No effect yet. ».
+- `tests/world-code.test.js` — la boutique `Utilities` (créée, gratuite, avec une image), un clic qui ramène au spawn **et** arrête le donjon — plus aucune salle n'est copiée ensuite et `/dbg` ne voit plus de donjon —, un clic pendant l'entrée qui abandonne l'entrée au lieu de reposer le joueur, et un achat d'autre chose qui ne fait rien ; **les bénédictions dans le vrai bundle** : la tuile de tirage est créée par joueur, fermée au niveau 1 et ouverte dès qu'un niveau paie un point, la description donne le niveau et les points, un tirage annonce le nom en couleur puis en texte, dessine une carte en `rgb()` avec une icône Font Awesome, met le nom en bannière, dépense un point et pas deux (même si le jeu rappelle), écrit la dépense en base et la relit, redessine les tuiles à l'ouverture de la boutique quand un niveau a été gagné entre-temps, ne fait rien pour un autre achat, et `/dbg benedictions` répond **hors donjon** ; le bundle réel, dans un contexte `vm`, sur un faux serveur qui compte chaque `setBlock` comme une violation : compte à rebours, entrée, atterrissage sur le sol, gravité coupée puis rendue, une plaque Concrete construite dans la salle qui mène au niveau suivant, ordre des copies, joueur qui tombe et qui est reposé, aucun bloc écrit par le code, `/dbg level` qui dit pourquoi une entrée a échoué, commandes `/dbg`.
+
+**Une instabilité trouvée en route, et corrigée.** Le test « un type qui ne répond jamais dans une salle qui a marché est écarté » échouait environ une fois sur quarante. La cause n'était pas le test : la marque `mobRefusalsAtRoomStart` était avancée **par type, en plein examen**, donc un refus compté après le passage du type était reporté comme « avant » à la salle suivante et n'était plus jamais compté — et un type tiré dans les dernières cases d'une salle n'était jamais examiné du tout. La marque est maintenant avancée **une fois, après l'examen, pour tous les types** : un refus dans une salle qui a marché est toujours vu. Le test, lui, fixe désormais le tirage (`Math.random = () => 0`, restauré dans un `finally`) au lieu de l'espérer — un test de règle ne doit pas dépendre d'un tirage.
 
 Ce qui n'est **pas** testé, faute de pouvoir l'être hors du jeu : le délai exact au bout duquel un chunk lu devient écrivable — `chunkLoadTicks: 2` vient de la mesure faite **en jeu** par le propriétaire du projet, pas d'une simulation. Le coût d'une copie, lui, est connu : moins d'un tick.
 
@@ -414,6 +480,13 @@ Ce qui n'est **pas** testé, faute de pouvoir l'être hors du jeu : le délai ex
 | `api.setBlockData` / `getBlockData` | données **sur** un bloc, effacées quand le bloc change | la marque « coffre ouvert », comme la salle clear |
 | `onRespawnRequest` | `(playerId)` → `true \| void \| number[]` ; **une position** est la réponse à donner pour poser le joueur, `true` veut dire « je téléporte moi-même » | la mort ramène au spawn par le chemin du bouton, et `false` hors donjon |
 | `api.applyAuraChange` | `(playerId, auraDiff)` → nombre appliqué | l'aura d'une salle découverte, payée une fois par run |
+| `api.getAuraInfo` | `(playerId)` → `{ level, totalAura, auraPerLevel }` | le niveau d'aura d'un joueur, **le seul compteur de points** |
+| `api.createShopItemForPlayer` | `(playerId, categoryKey, itemKey, item)` | une tuile par joueur : un compte de points ne se partage pas |
+| `api.getPlayerDbId` | `(playerId)` → `PlayerDbId` | la clé de sauvegarde : un `PlayerId` est une session |
+| `api.getPlayerDbValue` / `setPlayerDbValue` | `(playerId, key)` / `(playerId, key, value)` | les points dépensés et l'historique, pas le niveau |
+| `api.queueMiddleTextUpper` | `(playerId, text, durationMs)` | la bannière d'un tirage |
+| `api.sendTopRightHelper` | `(playerId, icon, text, opts)` — icône Font Awesome, `color` en **`rgb()`** | la carte d'un tirage |
+| `onPlayerToggledShopMenu` | `(playerId, isOpen)` | redessiner les tuiles quand le joueur regarde ses points |
 | `api.attemptSpawnMob` | `(mobType, x, y, z, opts)` → `MobId \| null`, **asynchrone** | les mobs des salles |
 | `api.despawnMob` | `(mobId)` | quitter un donjon, quitter une salle |
 | `api.setMobSetting` / `getMobSetting` | `(mobId, setting, value)` / `(mobId, setting, returnDefault)` | les multiplicateurs de difficulté, appliqués au tick suivant |
@@ -430,3 +503,4 @@ Ce qui n'est **pas** testé, faute de pouvoir l'être hors du jeu : le délai ex
 - **Pads dans le donjon.** Aujourd'hui le pad n'est écrit qu'à l'endroit où le joueur atterrit. Le poser aussi dans les salles suivantes revient à écrire 25 blocs par salle visitée — à décider quand le coût d'une copie sera mesuré en jeu.
 - **Mobs : faits.** Ajouter un mob revient à une entrée dans `MOB_ROSTER` avec son niveau d'ouverture et ses multiplicateurs ; les noms non confirmés par la documentation se vérifient en jeu, `/dbg level` nommant tout nom refusé.
 - **Butin, minerais.** Aucune de ces fonctionnalités ne dépend de la génération : la structure est un décor figé.
+- **Bénédictions : les effets.** Le catalogue, les raretés, les chances, la sauvegarde et le rendu existent ; il reste à donner un effet aux neuf entrées (multiplicateurs du joueur, enchantements d'équipement, effets de potion). Rien dans les tables n'aura à changer : un effet est une propriété de plus sur une entrée, lue par le world code au moment du tirage.

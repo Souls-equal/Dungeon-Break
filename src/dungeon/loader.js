@@ -643,16 +643,29 @@ export function createLoader({ api, log }) {
     // A type that was asked for and never answered, in a room where another type worked,
     // is dropped for the session: `null` still means "a full world", so a type is only
     // condemned when the room proves the world accepts *some* mob at this moment.
-    for (const mob of roster) {
-      if (refusedHere(level, mob.type)) continue;
-      if (spawnableRoster(level).length <= 1) break;
-      const key = refusalKey(level, mob.type);
-      const refusals = level.mobRefusals.get(key) || 0;
-      const before = level.mobRefusalsAtRoomStart.get(key) || 0;
-      level.mobRefusalsAtRoomStart.set(key, refusals);
-      if (refusals > before && mobIds.length > 0) {
-        level.refusedMobs.set(key, "attemptSpawnMob answered null in a room that worked");
+    //
+    // **The comparison is against the count this room started with**, not against the
+    // count left by the previous room. The old form moved its high-water mark forward on
+    // every pass, so a refusal seen *after* the mark was carried into the next room as
+    // "before" and never counted again — and a type drawn in the last attempts of the last
+    // room was never seen at all. A refusal is a refusal: it is filed for every type whose
+    // count grew in this room, whatever the draw did, and the room cannot be filled again
+    // afterwards anyway (`populated` remembers it).
+    if (mobIds.length > 0) {
+      for (const mob of roster) {
+        if (refusedHere(level, mob.type)) continue;
+        const key = refusalKey(level, mob.type);
+        const refusals = level.mobRefusals.get(key) || 0;
+        const before = level.mobRefusalsAtRoomStart.get(key) || 0;
+        if (refusals > before) {
+          level.refusedMobs.set(key, "attemptSpawnMob answered null in a room that worked");
+        }
       }
+    }
+    // The mark for the **next** room: what has been refused so far, including this room.
+    for (const mob of roster) {
+      const key = refusalKey(level, mob.type);
+      level.mobRefusalsAtRoomStart.set(key, level.mobRefusals.get(key) || 0);
     }
 
     trackRoomMobs(level, chunkX, chunkZ, mobIds);
