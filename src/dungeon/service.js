@@ -21,6 +21,7 @@ import {
   findDifficulty,
   floorOfLayer,
   nextDifficulty,
+  roomAuraFor,
 } from "./config.js";
 import { chunkOfWorld, createLoader } from "./loader.js";
 
@@ -213,10 +214,13 @@ export function createDungeonService(options) {
             state.position = landing;
             // The one height every room of this run uses for its mobs.
             state.spawnY = landing[1];
-            // The entrance landing, kept for a death: it is a position that has been
-            // verified once, and it is what `onRespawnRequest` gives back to the game.
-            state.entranceSpot = landing.slice();
-            state.justPlaced = true;
+            // No `entranceSpot` any more: a death goes to spawn (§ `onRespawnRequest`), so
+            // the landing has nothing left to be remembered for.
+            // **No second `justPlaced` here.** The one set on entry already stopped the tick
+            // from reading the teleport to the entrance as a walk; setting it again left a
+            // flag that the next tick could not consume — `state.room` was already the
+            // entrance — so it was the player's *first real step* that got swallowed, and
+            // the first room of the run that went unpaid.
           }
           // The landing and the floor block, in the message a player reads: a player
           // inside a floor is a bug report with two numbers in it.
@@ -235,6 +239,9 @@ export function createDungeonService(options) {
           // otherwise see the player in a room it has never read.
           if (state) state.room = `${entrance.x}|${entrance.z}`;
           loader.enterRoom(level, entrance.x, entrance.z, landing[1]);
+          // Landing in the entrance **is** discovering it: the first room of a run is paid
+          // for here, so the tick never has to call a teleport a walk.
+          if (state) discoverRoom(playerId, state, entrance.x, entrance.z);
           if (onReady) onReady(difficulty, landing);
         }, 1);
       };
@@ -354,38 +361,45 @@ export function createDungeonService(options) {
     const level = loader.levelState(dungeon.difficulty, playerId);
     if (!level.origin) return;
     loader.enterRoom(level, chunkX, chunkZ, dungeon.spawnY);
+    return level;
   }
 
   /**
-   * A player died, and comes back at the entrance of the level they are already in.
+   * Is this room a room **this run** has copied? Two reads, and both cheap.
    *
-   * Three things, in this order:
-   *
-   *   1. **the dungeon's mobs die** — a player who comes back to a room full of the mobs
-   *      that killed them cannot step out of the entrance;
-   *   2. **the rooms around the entrance are filled again**, which is the player's second
-   *      chance and a real fight, not the same one;
-   *   3. the entrance stays clear, and the dungeon keeps its place, its landing height and
-   *      its cleared rooms: dying is not leaving.
-   *
-   * Returns the position the player comes back to, or `null` when there is no dungeon.
-   * **The caller does the teleport**: `onRespawnRequest` returns this position to the game,
-   * which is the documented way to say where a respawn lands (returning `true` instead
-   * means "I teleport myself", and nothing would move the player at all).
+   * `placed` is the loader's own probe: the destination chunk answered Bedrock, so the room
+   * is there and not merely loaded. And the cell at the player's own height must answer — a
+   * chunk that is still being sent reads `null`, and paying for it would pay for a teleport
+   * through a room that does not exist yet.
    */
-  function resetMobs(playerId) {
-    const dungeon = dungeonOf(playerId);
-    if (!dungeon || dungeon.spawnY === undefined || !dungeon.entranceSpot) return null;
-    const level = loader.levelState(dungeon.difficulty, playerId);
-    if (!level.origin) return false;
+  function roomReadable(level, dungeon, chunkX, chunkZ) {
+    if (!level) return false;
+    if (level.planned.get(`${chunkX}|${chunkZ}`) !== "placed") return false;
+    return api.getBlock(
+      chunkX * SIZE + DUNGEON_CONFIG.probeLocalXZ[0],
+      Math.floor(dungeon.spawnY),
+      chunkZ * SIZE + DUNGEON_CONFIG.probeLocalXZ[1],
+    ) !== null;
+  }
 
-    // The rooms around the entrance are asked again — the rooms are still there, so the
-    // question is about mobs, not about chunks.
-    loader.forgetMobs(level, true);
-    const entrance = level.origin;
-    loader.markRoomClear(level, entrance.x, entrance.z);
-    loader.enterRoom(level, entrance.x, entrance.z, dungeon.spawnY);
-    return dungeon.entranceSpot.slice();
+  /**
+   * A player stood in a room for the first time this run: pay for it.
+   *
+   * `applyAuraChange` is the game's XP — aura is what levels a player up — and a dungeon pays
+   * for **exploring** it, not only for surviving it. The amount comes from the level, so the
+   * same room is worth twice as much in Hell as in Very Easy.
+   *
+   * A room is paid for **once per run**, and the run is what remembers: the set lives on the
+   * level and is dropped with it. Walking back into a room of a previous run is walking into
+   * a dungeon nobody has seen.
+   */
+  function discoverRoom(playerId, dungeon, chunkX, chunkZ) {
+    const level = loader.levelState(dungeon.difficulty, playerId);
+    if (!loader.discoverRoom(level, chunkX, chunkZ)) return 0;
+    const aura = roomAuraFor(dungeon.difficulty);
+    const applied = api.applyAuraChange(playerId, aura);
+    api.sendMessage(playerId, `New room discovered: +${typeof applied === "number" ? applied : aura} aura`);
+    return aura;
   }
 
   /**
@@ -413,8 +427,7 @@ export function createDungeonService(options) {
     const drop = openChest(api, { ...chest, itemName: keyItemName(drawn.label) });
     if (!drop) {
       // The world is at its item-drop limit. Saying nothing would look like a chest that
-      // does not work, so the message names the cause and the key is not lost twice over:
-      // the chest is gone either way, and the player knows why.
+      // does not work, so the message names the cause.
       api.sendMessage(playerId, "The key could not be dropped here — the world is full of items.");
       return { ...chest, key: drawn, dropped: false };
     }
@@ -478,7 +491,17 @@ export function createDungeonService(options) {
         if (dungeon.justPlaced) {
           dungeon.justPlaced = false;
         } else {
-          enterRoomIfBuilt(dungeon, playerId, chunk.x, chunk.z);
+          // **A discovery is a walk, and only a walk.** The entrance was paid for when the
+          // player landed (see `discoverRoom` at the end of an entry), and a chunk the world
+          // has not sent is not a room they are standing in — paying for it would pay for a
+          // teleport through a chunk that does not exist yet.
+          // `enterRoom` already asks the world whether the room is there (it fills the rooms
+          // it finds), so the level it returns is the one to ask about a discovery: a room
+          // the loader has not placed is a room the player is not standing in.
+          const level = enterRoomIfBuilt(dungeon, playerId, chunk.x, chunk.z);
+          if (roomReadable(level, dungeon, chunk.x, chunk.z)) {
+            discoverRoom(playerId, dungeon, chunk.x, chunk.z);
+          }
         }
       } else if (ticks % DUNGEON_CONFIG.mobRetryTicks === 0) {
         enterRoomIfBuilt(dungeon, playerId, chunk.x, chunk.z);
@@ -588,7 +611,6 @@ export function createDungeonService(options) {
     mobKilled,
     mobGone,
     clickPosition,
-    resetMobs,
     tick,
     dungeonOf,
     inDungeon,

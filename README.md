@@ -168,11 +168,20 @@ Tous les textes visibles par les joueurs sont en anglais.
   | Ultra Insane | 15 % | 17 % | 20 % | 23 % | 24 % |
   | Hell | 8 % | 16 % | 22 % | 26 % | 28 % |
 
+### Découvrir une salle : de l'aura, une fois par salle
+
+- **Chaque salle visitée pour la première fois du run donne de l'aura** — l'XP du jeu, appliquée par `api.applyAuraChange(playerId, auraDiff)`. Message : `New room discovered: +N aura`.
+- **Une seule fois par salle et par run.** Le run retient ses salles découvertes (`level.discovered`), et le run meurt avec le donjon : rejouer le même niveau repaie tout.
+- **Ce que « découvrir » veut dire ici.** Le joueur **marche** dans un nouveau chunk (§ [`tick`](src/dungeon/service.js)) — pas une téléportation, pas le tick qui suit l'arrivée (`justPlaced`). Et la salle doit être **lisible** : plan posé par la sonde *et* `getBlock` non `null` à la hauteur du joueur. Payer une salle que le client n'a pas encore reçue paierait un trou.
+- **La salle d'entrée est payée à l'atterrissage**, une fois, par le même chemin — le joueur y est *arrivé*, il ne l'a pas traversée.
+- **Le montant dépend du niveau** : `roomAura = 10` en Very Easy, interpolé jusqu'à **20** en Hell (10, 11, 13, 14, 16, 17, 19, 20). Voir `roomAuraFor(difficulty)` dans `src/dungeon/config.js`.
+
 ### Mourir, et revenir
 
-- **La mort ne coûte pas le donjon.** `onRespawnRequest` rend **la position** de l'atterrissage d'entrée — vérifiée à l'arrivée, et jamais recalculée : on revient à l'entrée du **même** niveau, mêmes salles, mêmes salles nettoyées, même hauteur. Rien n'est retiré ni redessiné. (Rendre `true` aurait voulu dire « je téléporte moi-même » : le joueur serait resté là où il est mort.)
-- **Les mobs du donjon meurent avec le joueur**, et **les quatre salles autour de l'entrée sont repeuplées**. Sans ça, on revient dans le tas qui vient de nous tuer, collé à l'entrée — ou dans un donjon où il ne peut plus y avoir de combat. Message : `Back at the entrance — the rooms around you have been restocked.`
-- **Entrer dans un niveau ne ressuscite plus les vieux mobs** : l'ancien donjon est nettoyé avant d'être libéré, et le tick ne prend plus la téléportation d'arrivée pour « le joueur vient d'entrer dans une salle » (l'entrée est déjà clear).
+- **La mort renvoie au spawn, comme le bouton « Teleport to spawn ».** `onRespawnRequest` fait exactement ce que fait le clic de boutique : `setPosition` en `[10, 21, 10]`, puis `stopBuilding`. Le donjon **s'arrête** (le tick ne lit que les joueurs qui ont un donjon), les mobs sont retirés, la place est rendue. Message : `You died. Back to spawn — your dungeon stopped.`
+- **Rien n'est perdu durablement** : l'aura des salles découvertes reste acquise, et un nouveau run retire des salles neuves.
+- **Hors donjon, la mort est laissée au jeu.** `onRespawnRequest` rend `false` : le comportement normal de Bloxd s'applique, le code ne téléporte personne.
+- **Le retour à l'entrée n'existe plus** : `resetMobs` a été retiré avec lui — plus de « Back at the entrance », plus de salle repeuplée sur place (voir § [`src/worldCode.js`](src/worldCode.js)).
 
 ## Sources et version compacte
 
@@ -193,7 +202,7 @@ src/worldCode.js           lobby, pads, /dbg
 - `npm run build` régénère le fichier compact.
 - `npm run watch` le régénère à chaque sauvegarde dans `src/`.
 - `npm run check` vérifie que le bundle est à jour, valide les syntaxes, et refuse un bundle où `copyChunk`, `createShopItem` ou la table des modèles ont disparu au minification.
-- `npm test` lance les 111 tests : moteur, configuration, et le bundle réel exécuté dans un `vm` contre un faux serveur qui applique les règles de Bloxd.
+- `npm test` lance les 114 tests : moteur, configuration, et le bundle réel exécuté dans un `vm` contre un faux serveur qui applique les règles de Bloxd.
 
 Le workflow GitHub vérifie la version générée sur les Pull Requests et resynchronise `world-code/` après un merge dans `main`.
 

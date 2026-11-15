@@ -494,26 +494,29 @@ onMobDespawned = (mobId) => {
   }
 };
 
+/**
+ * A player died. **Dying is a way out now**, and it is the same way as the shop button.
+ *
+ * `teleportToSpawn` is that way: it moves the player to the lobby and forgets the dungeon
+ * in the same call, which is what stops the generator — the tick reads `playerDungeons`, so
+ * dropping the record ends the scan, the queue and the copies for that player, and the mobs
+ * of the dungeon are killed on the way out. Dying and buying "Teleport to spawn" lead to the
+ * same place, through the same function, so they cannot drift apart.
+ *
+ * What comes back is **the position**, never `true`: `true` means "I handle the teleport
+ * myself", and nothing here would move the player — they would respawn where they died.
+ *
+ * A player who is not in a dungeon is left to the game.
+ */
 onRespawnRequest = (playerId) => {
-  // Dying is not a way out of the dungeon, and not a way to lose it either: the player
-  // comes back at the entrance of **the level they are already in**. Same rooms, same
-  // cleared rooms, same landing height — a dungeon is not redrawn for a death.
-  //
-  // What changes is the fight: the mobs of the dungeon are killed, and the rooms around
-  // the entrance are filled again. Coming back into the pack that killed you would trap
-  // the player at the entrance, and a room with its mobs already dead is not a second
-  // chance.
-  //
-  // What comes back is **the position**, not `true`: `true` means "I handle the
-  // teleport myself", and the game would leave the player where they died while this code
-  // never moved them. A position is the documented answer, and it is the entrance landing
-  // that was verified on the way in.
-  const dungeon = service().dungeonOf(playerId);
-  if (!dungeon) return false;
-  const spot = service().resetMobs(playerId);
-  if (!spot) return false;
-  api.sendMessage(playerId, "Back at the entrance — the rooms around you have been restocked.");
-  return spot;
+  // Not in a dungeon: the game's own respawn is the right one, and taking it over would
+  // teleport a lobby player into the lobby for nothing.
+  if (!service().inDungeon(playerId)) return false;
+  stopLobbyCountdown(playerId);
+  service().teleportToSpawn(playerId);
+  api.setClientOption(playerId, "middleTextUpper", "");
+  api.sendMessage(playerId, "You died. Back to spawn — your dungeon stopped.");
+  return LOBBY_POSITION;
 };
 
 // Kept for the reports: the level table is a public part of the world code.

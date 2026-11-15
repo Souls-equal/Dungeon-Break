@@ -71,6 +71,8 @@ function createWorld(onlinePlayerIds, options = {}) {
   // Keys dropped, where they landed, and every block the code set.
   const itemDrops = [];
   const setBlocks = [];
+  // Aura (the game's XP) paid to players.
+  const auraGiven = [];
   const loaded = new Set();
   const pending = [];
   const key = (x, y, z) => `${Math.floor(x)}|${Math.floor(y)}|${Math.floor(z)}`;
@@ -209,6 +211,10 @@ function createWorld(onlinePlayerIds, options = {}) {
         const name = context.api.getBlock(x, y, z);
         return !(name === "Air" || name === "Short Grass");
       },
+      applyAuraChange: (playerId, amount) => {
+        auraGiven.push({ playerId, amount });
+        return amount;
+      },
       createItemDrop: (x, y, z, itemName, amount) => {
         itemDrops.push({ x, y, z, itemName, amount });
         return `drop-${itemDrops.length}`;
@@ -251,6 +257,7 @@ function createWorld(onlinePlayerIds, options = {}) {
     blockDataWrites,
     itemDrops,
     setBlocks,
+    auraGiven,
     clientOptions,
     positions,
     copies,
@@ -788,41 +795,38 @@ test("going back to spawn despawns the mobs of the dungeon", () => {
 
 // --------------------------------------------------------- death and respawn --
 
-test("respawning keeps the dungeon, kills its mobs, and restocks the rooms around the entrance", () => {
+test("dying sends the player to spawn and stops the dungeon, like the shop button", () => {
   const world = createWorld(["p1"]);
   startDungeon(world, "p1");
   world.tick(80);
-  const origin = originOf(world);
+  assert.ok(world.mobs.size > 0, "there were no mobs, so nothing can be cleaned up");
   const copies = world.copies.length;
-  const before = world.mobSpawns.length;
-  const mobsAtDeath = new Set(world.mobs.keys());
-  assert.ok(mobsAtDeath.size > 0, "there were no mobs, so there is nothing to restock");
 
-  // The callback returns the **position** the player comes back to: returning `true` means
-  // "I teleport myself", and nothing moved the player in that case.
   const spot = world.context.onRespawnRequest("p1");
-  assert.ok(Array.isArray(spot), "the respawn did not return a position");
-  const landed = said(world, "p1").find((line) => line.startsWith("Landed at y "));
-  const landingY = Number(landed.split(" ")[3]);
-  assert.equal(spot[1], landingY, "the respawn lands somewhere other than the verified entrance");
+  // A **position**, never `true`: `true` means "I teleport myself", and nothing moved the
+  // player in that case — they would come back where they died.
+  // `Array.from`: the bundle runs in a `vm`, so its arrays have another prototype.
+  assert.deepEqual(Array.from(spot), LOBBY_POSITION, "the respawn did not answer the lobby position");
+  assert.deepEqual(Array.from(world.positions.at(-1).position), LOBBY_POSITION,
+    "the player was not moved to spawn");
+  assert.equal(world.mobs.size, 0, "the mobs of the dungeon survived the death");
+  assert.ok(said(world, "p1").some((message) => message.includes("You died")),
+    "the player was not told what happened");
 
-  // The dungeon is the same one: no new origin, no new room copied for the death.
-  assert.deepEqual(originOf(world), origin, "a death drew a new dungeon");
-  assert.equal(world.copies.length, copies, "a death copied rooms again");
-  // Every mob that was alive is gone, and the rooms around the entrance are asked for
-  // again: the player gets a second chance, not the same pack in the face.
-  for (const mobId of mobsAtDeath) {
-    assert.equal(world.mobs.has(mobId), false, "a mob of the fight that killed the player survived");
-  }
-  world.tick(2);
-  assert.ok(world.mobSpawns.length > before, "the rooms around the entrance were not restocked");
+  // And the dungeon is **over**: no room copied afterwards, and `/dbg` sees no dungeon.
+  world.tick(40);
+  assert.equal(world.copies.length, copies, "a room was copied for a player who died");
+  assert.equal(originOf(world), null, "the player still has a dungeon after dying");
 });
 
-test("respawning outside a dungeon is left to the game", () => {
+test("dying outside a dungeon is left to the game", () => {
   const world = createWorld(["p1"]);
   world.context.onPlayerJoin("p1");
-  assert.equal(world.context.onRespawnRequest("p1"), false,
-    "the code took over a respawn it had no dungeon for");
+  // The game's own respawn is used: no message, no dungeon, and the callback does not take over.
+  const said_before = said(world, "p1").length;
+  const spot = world.context.onRespawnRequest("p1");
+  assert.equal(spot, false, "the code took over a respawn it had no dungeon for");
+  assert.equal(said(world, "p1").length, said_before, "a player with no dungeon was told they died");
 });
 
 // ------------------------------------------------------------------ chests --
@@ -906,4 +910,57 @@ test("a chest whose key cannot be dropped is reported, not silent", () => {
   world.context.onPlayerClick("p1", false, chest[0], chest[1], chest[2], "Chest", null);
   assert.ok(said(world, "p1").some((message) => message.includes("could not be dropped")),
     "a key that could not be dropped was not reported");
+});
+
+// ------------------------------------------------------------- discovering --
+
+test("landing in the entrance pays for the room, once", () => {
+  const world = createWorld(["p1"]);
+  startDungeon(world, "p1");
+  world.tick(40);
+
+  const paid = world.auraGiven.filter((entry) => entry.playerId === "p1");
+  assert.equal(paid.length, 1, "the entrance was paid for more than once");
+  assert.ok(paid[0].amount > 0, "the entrance paid no aura");
+  assert.ok(said(world, "p1").some((message) => message.includes("New room discovered")),
+    "the player was not told they discovered a room");
+});
+
+test("a room pays the first time it is walked into, and only the first time", () => {
+  const world = createWorld(["p1"]);
+  startDungeon(world, "p1");
+  world.tick(40);
+  const [x, y, z] = landingOf(world, "p1");
+  const before = world.auraGiven.length;
+
+  // Walk one room east, into a room the scan has copied: the copy is a tick or two behind
+  // the walk, and a room is only a room once the world shows it.
+  const next = [Math.floor(x) + SIZE, y, Math.floor(z)];
+  world.movePlayer("p1", next);
+  world.tick(30);
+  const afterEast = world.auraGiven.length;
+  assert.ok(afterEast > before, "walking into a new room paid nothing");
+
+  // Stay there: no second payment for the room the player is standing in.
+  world.tick(60);
+  assert.equal(world.auraGiven.length, afterEast, "a room was paid for twice");
+
+  // Come back to the entrance: it was discovered already, so it pays nothing again.
+  world.movePlayer("p1", [x, y, z]);
+  world.tick(3);
+  assert.equal(world.auraGiven.length, afterEast, "a room discovered already paid a second time");
+});
+
+test("a room whose chunk is not readable is not discovered", () => {
+  const world = createWorld(["p1"]);
+  startDungeon(world, "p1");
+  world.tick(40);
+  const [x, y, z] = landingOf(world, "p1");
+  const before = world.auraGiven.length;
+
+  // Far away, in chunks nothing has sent: the position is a teleport through the void, and
+  // paying for it would pay for rooms that are not there.
+  world.movePlayer("p1", [x + SIZE * 40, y, z + SIZE * 40]);
+  world.tick(2);
+  assert.equal(world.auraGiven.length, before, "aura was paid for a room the world never sent");
 });
