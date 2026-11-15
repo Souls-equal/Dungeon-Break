@@ -3,7 +3,7 @@
  * Mirrors the example given by the user exactly.
  */
 
-import { CRATE_KEYS, AIR_CHANCE, LOOT_TABLE } from "./config.js";
+import { CRATE_KEYS, AIR_CHANCE, LOOT_TABLE, CRATE_LOCK_MS } from "./config.js";
 
 export function getWeightedRandomItem(rarity, random = Math.random) {
   const list = LOOT_TABLE[rarity];
@@ -63,7 +63,70 @@ export function consumeKey(api, playerId, rarity) {
   } catch (_) {}
 }
 
+function normalizeChestPos(chestPos) {
+  if (!chestPos) return null;
+  if (Array.isArray(chestPos) && chestPos.length >= 3) return { x: Math.floor(chestPos[0]), y: Math.floor(chestPos[1]), z: Math.floor(chestPos[2]) };
+  if (typeof chestPos === "object" && chestPos !== null) {
+    if (Number.isFinite(chestPos.x) && Number.isFinite(chestPos.y) && Number.isFinite(chestPos.z)) return { x: Math.floor(chestPos.x), y: Math.floor(chestPos.y), z: Math.floor(chestPos.z) };
+    if (Number.isFinite(chestPos[0]) && Number.isFinite(chestPos[1]) && Number.isFinite(chestPos[2])) return { x: Math.floor(chestPos[0]), y: Math.floor(chestPos[1]), z: Math.floor(chestPos[2]) };
+  }
+  return null;
+}
+
+function nowMs(api) {
+  try { if (typeof api.now === "function") return api.now(); } catch (_) {}
+  try { if (typeof api.getTime === "function") return api.getTime(); } catch (_) {}
+  return Date.now();
+}
+
+export function getChestData(api, chestPos) {
+  const p = normalizeChestPos(chestPos);
+  if (!p) return null;
+  try { return api.getBlockData(p.x, p.y, p.z) || {}; } catch (_) { return {}; }
+}
+
+export function setChestOwner(api, chestPos, playerId, rarity) {
+  const p = normalizeChestPos(chestPos);
+  if (!p) return;
+  let existing = {};
+  try { existing = api.getBlockData(p.x, p.y, p.z) || {}; } catch (_) { existing = {}; }
+  if (existing === null || typeof existing !== "object") existing = {};
+  const now = nowMs(api);
+  const merged = {
+    ...existing,
+    crateOwnerId: playerId,
+    crateOwnerName: playerId,
+    crateRarity: rarity,
+    crateOpenedAt: now,
+    crateLockUntil: now + CRATE_LOCK_MS,
+  };
+  try { api.setBlockData(p.x, p.y, p.z, merged); } catch (_) {}
+}
+
+export function isChestLocked(api, chestPos, playerId) {
+  const p = normalizeChestPos(chestPos);
+  if (!p) return false;
+  let data = null;
+  try { data = api.getBlockData(p.x, p.y, p.z); } catch (_) { data = null; }
+  if (!data || typeof data !== "object") return false;
+  if (!data.crateOwnerId || !data.crateLockUntil) return false;
+  if (data.crateOwnerId === playerId) return false; // même joueur a la priorité
+  const now = nowMs(api);
+  return now < data.crateLockUntil;
+}
+
 export function generateChest(api, playerId, chestPos, rarity, random = Math.random) {
+  if (isChestLocked(api, chestPos, playerId)) {
+    const data = getChestData(api, chestPos);
+    const now = nowMs(api);
+    const remaining = data && data.crateLockUntil ? Math.ceil((data.crateLockUntil - now) / 1000) : Math.ceil(CRATE_LOCK_MS / 1000);
+    try {
+      api.sendMessage(playerId, "This crate is being used by " + (data.crateOwnerName || data.crateOwnerId) + " - please wait " + remaining + "s", { color: "red" });
+    } catch (_) {
+      try { api.sendMessage(playerId, "This crate is being used by another player - please wait " + remaining + "s"); } catch (_) {}
+    }
+    return false;
+  }
   if (!hasKey(api, playerId, rarity)) {
     try {
       api.sendMessage(playerId, "You need a " + CRATE_KEYS[rarity] + " to open this chest!", { color: "red" });
@@ -73,6 +136,7 @@ export function generateChest(api, playerId, chestPos, rarity, random = Math.ran
     return false;
   }
   consumeKey(api, playerId, rarity);
+  setChestOwner(api, chestPos, playerId, rarity);
   for (let i = 0; i < 27; i++) {
     if (random() * 100 < AIR_CHANCE[rarity]) {
       try { api.setStandardChestItemSlot(chestPos, i, "Air", 1, playerId); } catch (_) {}
