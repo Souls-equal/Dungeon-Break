@@ -519,16 +519,14 @@ function refreshBenedictionTiles(playerId) {
   showPoints(playerId, points);
 
   try {
-    // One tile, two states, **one line of text**: the level and the points. While an offer
-    // is live the same tile says so and cannot be bought - a roll would cost a second point.
     api.createShopItemForPlayer(playerId, BENEDICTION_CATEGORY, ROLL_ITEM, offer.length > 0
       ? {
         image: "Beacon",
-        customTitle: "Choose one of the three",
-        description: `${benedictionSummary(playerId, level)} · the point is on the table`,
+        customTitle: "Select one",
+        description: "",
         canBuy: false,
         redDot: false,
-        sortPriority: 10,
+        sortPriority: 110,
       }
       : {
         image: "Beacon",
@@ -563,7 +561,7 @@ function refreshBenedictionTiles(playerId) {
 
   try {
     api.configureShopCategoryForPlayer(playerId, BENEDICTION_CATEGORY, {
-      customTitle: offer.length > 0 ? "Choose one" : "Benedictions",
+      customTitle: offer.length > 0 ? "Select one" : "Benedictions",
       redDot: offer.length > 0 || points > 0,
     });
   } catch (_) {
