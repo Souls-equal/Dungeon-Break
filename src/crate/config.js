@@ -2,6 +2,7 @@
  * Crate system — config
  * Keys, air chances and loot tables per rarity.
  * Data only, no api.
+ * Amount supporte soit `amount` fixe, soit `min`/`max` pour tirage aléatoire inclusif.
  */
 
 export const CRATE_KEYS = {
@@ -22,8 +23,8 @@ export const AIR_CHANCE = {
 
 export const LOOT_TABLE = {
   Common: [
-    { name: "Apple", amount: 3, weight: 55 },
-    { name: "Arrow", amount: 5, weight: 35 },
+    { name: "Apple", min: 2, max: 7, weight: 55 },
+    { name: "Arrow", min: 3, max: 8, weight: 35 },
     { name: "Wood Sword", amount: 1, weight: 7 },
     { name: "Wood Helmet", amount: 1, weight: 3 },
     { name: "Wood Boots", amount: 1, weight: 3 },
@@ -38,13 +39,13 @@ export const LOOT_TABLE = {
   ],
 
   Rare: [
-    { name: "Iron Bar", amount: 6, weight: 45 },
-    { name: "Gold Bar", amount: 4, weight: 35 },
+    { name: "Iron Bar", min: 4, max: 8, weight: 45 },
+    { name: "Gold Bar", min: 2, max: 6, weight: 35 },
     { name: "Iron Sword", amount: 1, weight: 20 },
   ],
 
   Epic: [
-    { name: "Diamond", amount: 3, weight: 65 },
+    { name: "Diamond", min: 2, max: 5, weight: 65 },
     { name: "Diamond Sword", amount: 1, weight: 35 },
   ],
 
