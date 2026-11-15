@@ -613,12 +613,9 @@ function rollBenediction(playerId) {
   const level = auraLevelOf(playerId);
   const offer = benedictions().roll(key, level);
   if (!offer) {
-    api.sendMessage(playerId, "No Benediction point to spend. Discover a new room: every aura level gives one.");
     refreshBenedictionTiles(playerId);
     return false;
   }
-  api.sendMessage(playerId, "Three Benedictions are offered. Pick one — it costs a point:");
-  offer.forEach((draw, position) => api.sendMessage(playerId, offerLine(draw, position)));
   refreshBenedictionTiles(playerId);
   return true;
 }
@@ -636,13 +633,14 @@ function chooseBenediction(playerId, position) {
   const level = auraLevelOf(playerId);
   const result = benedictions().choose(key, level, position);
   if (!result) {
-    api.sendMessage(playerId, "That choice is no longer offered. Open the shop again.");
     refreshBenedictionTiles(playerId);
     return false;
   }
-  announceBenediction(playerId, result.benediction, result.rarity, result.pointsLeft);
+  // Shop closes first — chat is invisible while it is open, so the
+  // announcement must come after the close to be seen.
   refreshBenedictionTiles(playerId);
   closeShop(playerId);
+  announceBenediction(playerId, result.benediction, result.rarity, result.pointsLeft);
   return true;
 }
 
@@ -789,6 +787,7 @@ onPlayerBoughtShopItem = (playerId, categoryKey, itemKey) => {
   const wasInDungeon = service().teleportToSpawn(playerId);
   stopLobbyCountdown(playerId);
   api.setClientOption(playerId, "middleTextUpper", "");
+  closeShop(playerId);
   api.sendMessage(
     playerId,
     wasInDungeon ? "Back to spawn. Your dungeon stopped." : "Back to spawn.",
@@ -940,6 +939,18 @@ onRespawnRequest = (playerId) => {
   stopLobbyCountdown(playerId);
   service().teleportToSpawn(playerId);
   api.setClientOption(playerId, "middleTextUpper", "");
+  // Reset XP to 0 — same as rejoin — and clear the benediction points.
+  try {
+    api.setTotalAura(playerId, 0);
+  } catch (error) {
+    try {
+      api.log(`[Dungeon] the aura of ${playerId} could not be reset: ${error && error.message ? error.message : error}`);
+    } catch (_) {}
+  }
+  benedictions().forget(accountKeyOf(playerId));
+  showPoints(playerId, 0);
+  refreshBenedictionTiles(playerId);
+  closeShop(playerId);
   api.sendMessage(playerId, "You died. Back to spawn — your dungeon stopped.");
   return LOBBY_POSITION;
 };

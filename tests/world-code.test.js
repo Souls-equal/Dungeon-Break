@@ -1152,12 +1152,14 @@ test("a roll offers three benedictions and reserves the point; the choice spends
     assert.match(tile.description, /(Common|Uncommon|Rare|Epic|Legendary|Mythic) · /);
     assert.ok(tile.description.includes("No effect yet."));
   }
-  // Nothing was spent, nothing was announced, and the player was told what is on offer.
+  // Chat is not visible while the shop is open — the offer is in the tiles,
+  // not in the chat, and the roll must not spam the chat.
   assert.equal(world.helperCards.length, 0, "a roll drew a card before a choice");
   assert.equal(world.middleTexts.length, 0);
-  assert.ok(said(world, "p1").some((line) => /Three Benedictions are offered/.test(line)));
-  assert.equal(said(world, "p1").filter((line) => /^\d\. /.test(line)).length, 3,
-    "the offer was not listed in chat");
+  assert.equal(said(world, "p1").filter((line) => typeof line === "string" && /Three Benedictions are offered/.test(line)).length, 0,
+    "offer was announced while shop is open");
+  assert.equal(said(world, "p1").filter((line) => typeof line === "string" && /^\d\. /.test(line)).length, 0,
+    "offer was listed in chat while shop open");
 
   // The pick: one point, one message, one card, one banner — and the shop closes.
   const picked = offerTiles(world)[1];
@@ -1202,7 +1204,8 @@ test("a roll with no point left is refused, and the choice tile closes", () => {
   assert.equal(benedictionTiles(world).get("Roll a Benediction").canBuy, false);
   world.context.onPlayerBoughtShopItem("p1", "Benedictions", "Roll a Benediction", {}, "");
   assert.equal(world.helperCards.length, 1, "a roll was given without a point");
-  assert.ok(said(world, "p1").some((line) => /No Benediction point/.test(line)));
+  // No chat while shop stays open — the tile shows it cannot be bought
+  assert.equal(said(world, "p1").filter((line) => typeof line === "string" && /No Benediction point/.test(line)).length, 0);
 });
 
 test("a second roll while an offer is open shows the same three, and reserves nothing", () => {
