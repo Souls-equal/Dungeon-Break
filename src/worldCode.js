@@ -756,7 +756,7 @@ function registerShopItems() {
   try {
     if (typeof api.configureShopCategory === "function") {
       api.configureShopCategory(SHOP_CATEGORY, {
-        customTitle: [{ translationKey: "classicGame.utilities" }],
+        customTitle: [{ translationKey: "classicGame:utilities" }],
       });
     }
   } catch (_) {
@@ -792,7 +792,7 @@ onPlayerBoughtShopItem = (playerId, categoryKey, itemKey) => {
   stopLobbyCountdown(playerId);
   api.setClientOption(playerId, "middleTextUpper", "");
   closeShop(playerId);
-  api.sendMessage(playerId, [{ translationKey: "classicGame.teleportedToSpawn" }]);
+  api.sendMessage(playerId, [{ str: { translationKey: "classicGame:teleportedToSpawn" } }]);
 };
 
 // -------------------------------------------------------------- lifecycle --
