@@ -1,39 +1,32 @@
 /*
- * Points, rolls and the record of what a player rolled.
+ * Points, offers, and the record of what a player chose — **for this session only**.
  *
- * This module holds **state and rules**, never the game: it does not touch `api`, it does
- * not draw a card, and it does not read a shop. `src/worldCode.js` does that, and the
- * separation is what lets the mechanic be tested without a world — the same shape as
- * `src/dungeon/`, where the loader and the service own the state and the world code owns
- * the calls.
+ * The owner's rule: a benediction point is a **custom currency**, and nothing about it has to
+ * survive a reconnection. The aura is reset on join, the points are derived from it, and the
+ * account lives in memory for as long as the player is here. There is no database read, no
+ * database write, and no "my points are on another lobby" to explain.
  *
- * A player's account has two numbers, a list, and an **offer**:
+ * A player's account is four things:
  *
- *   - **level**: their aura level, the game's own (`getAuraInfo().level`), never stored;
  *   - **spent**: points already spent on a chosen benediction;
- *   - **history**: the last few things they chose, for the shop's "last roll" tile;
- *   - **offer**: the three benedictions laid out for them right now, waiting for a choice.
+ *   - **reserved**: points promised to an offer that is still on the table — an offer costs
+ *     its point when it is drawn, not when it is picked, or three offers could be rolled
+ *     from one level's worth of points;
+ *   - **offer**: the three benedictions laid out right now, waiting for a choice;
+ *   - **history**: the last few things they chose, for the shop's "last roll" tile.
  *
- * **A roll is an offer, not a result.** Rolling lays three benedictions out and spends
- * nothing; choosing one spends the point and is the only thing that writes a history. An
- * offer nobody has chosen survives a reconnect, so closing the shop — or the game — is not
- * a way to reroll for free, and a player cannot be charged for a screen they never saw.
+ * The level is **not** part of the account: it is the game's own answer (`getAuraInfo`), read
+ * by the caller, and since the game's aura is reset on join it always starts the session at
+ * level 1 — so the first point is the second level, never something carried in.
  *
- * Points are **derived, never stored**: `level - AURA_LEVEL_BASE - spent`. There is no
- * counter to keep in sync with the game, so a level the player gains while nobody is
- * looking (or through something other than a dungeon) is honoured the next time they look
- * at the shop, and no reconnection can duplicate or lose a point.
- *
- * Persistence is per **player**, keyed by the game's permanent id (`getPlayerDbId`), and
- * written by the caller. What is stored is `spent` and `history`: the level is the game's
- * answer, and storing it would only be a copy that goes stale.
+ * Points are **derived, never counted**: `level - AURA_LEVEL_BASE - spent - reserved`. There
+ * is no counter to keep in sync, no write to lose, and no way for a reconnection to duplicate
+ * anything.
  */
 
-import { BENEDICTIONS, CHOICE_COUNT, drawChoices, pointsLeft, rarityOf } from "./config.js";
+import { BENEDICTIONS, drawChoices, pointsLeft, rarityOf } from "./config.js";
 
-const CATALOGUE = BENEDICTIONS;
-
-/** How many rolls the "last rolls" line remembers. Enough to show, short enough to store. */
+/** How many chosen benedictions the shop's "last roll" keeps. */
 export const HISTORY_LIMIT = 5;
 
 /**
@@ -43,47 +36,28 @@ export const HISTORY_LIMIT = 5;
  */
 export function createBenedictionService(options = {}) {
   const random = options.random || Math.random;
-  /** Permanent player id → { spent, history, offer }. */
+  /** Player id → { spent, reserved, offer, history }. Never written anywhere. */
   const accounts = new Map();
 
-  /**
-   * The account of a player, created empty the first time they are seen.
-   *
-   * The key is the **permanent** id when the caller has one: a player id is a session, and
-   * a record stored under it would be lost on the next connection. `getPlayerDbId` is the
-   * game's answer to "who is this, really".
-   */
   function accountOf(playerKey) {
     let account = accounts.get(playerKey);
     if (!account) {
-      account = { spent: 0, history: [], offer: [] };
+      account = { spent: 0, reserved: 0, offer: [], history: [] };
       accounts.set(playerKey, account);
     }
     return account;
   }
 
-  /** Replaces an account with what was read back from the database. */
-  function load(playerKey, stored) {
-    const account = accountOf(playerKey);
-    account.spent = Number.isFinite(stored && stored.spent) ? Math.max(0, Math.floor(stored.spent)) : 0;
-    account.history = Array.isArray(stored && stored.history)
-      ? stored.history.filter((entry) => entry && typeof entry.id === "string").slice(0, HISTORY_LIMIT)
-      : [];
-    // An offer is stored as **ids**, and read back through the catalogue: a benediction
-    // whose id has disappeared is dropped instead of resurrected from a stale copy.
-    account.offer = Array.isArray(stored && stored.offer)
-      ? stored.offer
-        .map((id) => catalogueDraw(id))
-        .filter((draw) => draw !== null)
-        .slice(0, CHOICE_COUNT)
-      : [];
-    return account;
-  }
-
   /** One catalogue entry by id, as a draw: the shape every surface already knows. */
   function catalogueDraw(id) {
-    const found = CATALOGUE.find((entry) => entry.id === id);
+    const found = BENEDICTIONS.find((entry) => entry.id === id);
     return found ? { benediction: found, rarity: rarityOf(found.rarity) } : null;
+  }
+
+  /** Points this player has not spent and has not promised. */
+  function pointsFor(playerKey, level) {
+    const account = accountOf(playerKey);
+    return pointsLeft(level, account.spent + account.reserved);
   }
 
   /** The account's offer, as draws: what the shop shows. */
@@ -91,56 +65,52 @@ export function createBenedictionService(options = {}) {
     return accountOf(playerKey).offer.slice();
   }
 
-  /** What to write to the database: only what the game does not already know. */
-  function save(playerKey) {
-    const account = accountOf(playerKey);
-    return {
-      spent: account.spent,
-      history: account.history.slice(0, HISTORY_LIMIT),
-      offer: account.offer.map((draw) => draw.benediction.id),
-    };
-  }
-
-  /** Points this player has not spent. `level` is the game's aura level, read by the caller. */
-  function pointsFor(playerKey, level) {
-    return pointsLeft(level, accountOf(playerKey).spent);
-  }
-
   /**
-   * Rolls: **lays out an offer**, and spends nothing.
+   * Rolls: **lays an offer out, and promises its point.**
    *
    * Returns the offer (`[{ benediction, rarity }]`), or `null` when there is no point to
-   * spend or no benediction to offer. An existing offer is **reused**, not redrawn: the
-   * shop calls this every time it is drawn, and a player who closes the shop and comes back
-   * must find the same three choices rather than a fresh roll for free.
+   * spend or no benediction to offer. An existing offer is **reused**, not redrawn: the shop
+   * calls this every time it is drawn, and a player who closes the shop and comes back must
+   * find the same three choices rather than a fresh roll for free.
    *
-   * The point is not checked here twice on purpose — it is checked again on `choose`,
-   * against the live level, because a level can also be *lost* by the game.
+   * The point is reserved here rather than taken here, and the reservation is **held** rather
+   * than spent: `choose` turns it into a spend, a pick that cannot be made after the level's
+   * points moved gives the promise back, and a finished choice has nothing to give back. That
+   * is the one rule that keeps this module honest across a reconnection — nothing is stored,
+   * so nothing can be stale.
    */
   function roll(playerKey, level) {
     const account = accountOf(playerKey);
-    if (pointsLeft(level, account.spent) <= 0) return null;
     if (account.offer.length > 0) return account.offer.slice();
+    if (pointsFor(playerKey, level) <= 0) return null;
     const choices = drawChoices(random);
     if (choices.length === 0) return null;
     account.offer = choices;
+    account.reserved += 1;
     return account.offer.slice();
   }
 
   /**
-   * Chooses one of the offers: **this is what spends the point.**
+   * Chooses one: **this is the point being spent.**
    *
-   * `index` is a position in the current offer, and anything else — a stale shop, a click
-   * on a card that has been redrawn, a pick made after the offer was consumed — returns
-   * `null` and costs nothing. The offered benediction is the one recorded: the offer is a
-   * promise, and re-drawing at the moment of the choice would make the three cards a lie.
+   * `index` is a position in the current offer, and anything else — a stale shop, a click on
+   * a card that has been redrawn, a pick made after the offer was consumed — returns `null`
+   * and costs nothing. The offered benediction is the one recorded: the offer is a promise,
+   * and re-drawing at the moment of the choice would make the three cards a lie.
    */
   function choose(playerKey, level, index) {
     const account = accountOf(playerKey);
     const position = Number.isInteger(index) ? index : -1;
     const chosen = position >= 0 && position < account.offer.length ? account.offer[position] : null;
     if (!chosen) return null;
-    if (pointsLeft(level, account.spent) <= 0) return null;
+    // The level can only go up while a player plays, but a level that is not paying for the
+    // promise any more must not produce a free benediction: the reservation is dropped and
+    // the choice is refused.
+    if (account.reserved <= 0) {
+      account.offer = [];
+      return null;
+    }
+    account.reserved -= 1;
     account.spent += 1;
     account.offer = [];
     account.history.unshift({
@@ -152,19 +122,32 @@ export function createBenedictionService(options = {}) {
     return {
       benediction: chosen.benediction,
       rarity: chosen.rarity,
-      pointsLeft: pointsLeft(level, account.spent),
+      pointsLeft: pointsFor(playerKey, level),
     };
   }
 
-  /** Drops the offer without spending anything: what a shop closing on a fresh look does. */
+  /** Drops the offer without spending it: the promise goes back with it. */
   function clearOffer(playerKey) {
-    accountOf(playerKey).offer = [];
+    const account = accountOf(playerKey);
+    if (account.offer.length > 0 && account.reserved > 0) account.reserved -= 1;
+    account.offer = [];
   }
 
-  /** Forgets everything. Only `/dbg` uses it, and only to prove a reset is a reset. */
-  function forget() {
-    accounts.clear();
+  /**
+   * Forgets a player: what a join and a leave both do.
+   *
+   * **A join forgets too**, and that is the whole of "reset on reconnect": the game's aura is
+   * reset to 0, the account goes with it, and the next level 2 is the first point of a new
+   * session.
+   */
+  function forget(playerKey) {
+    accounts.delete(playerKey);
   }
 
-  return { accountOf, load, save, pointsFor, roll, choose, clearOffer, offerOf, forget };
+  /** Every account, for `/dbg`: what is in memory, and nothing else. */
+  function accountsOf() {
+    return Array.from(accounts.entries()).map(([key, account]) => ({ key, ...account }));
+  }
+
+  return { accountOf, pointsFor, roll, choose, clearOffer, offerOf, forget, accountsOf };
 }
