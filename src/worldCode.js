@@ -72,14 +72,9 @@ function padKey(x, y, z) {
 }
 
 function showCountdown(playerId, difficulty, secondsLeft) {
-  api.setClientOption(
-    playerId,
-    "middleTextUpper",
-    `${difficulty.label} — starting in ${secondsLeft}...`,
-  );
-  try {
-    api.broadcastMessage([{str:{translationKey:"greenvilleGame:spleefGameStartCounter", params:{seconds:`${secondsLeft}s`}}, style:{color:"#ffd700"}}]);
-  } catch (_) {}
+  api.setClientOption(playerId, "middleTextUpper", [
+    { str: { translationKey: "greenvilleGame:spleefGameStartCounter", params: { seconds: `${secondsLeft}s` } }, style: { color: "#ffd700" } },
+  ]);
 }
 
 function stopLobbyCountdown(playerId) {

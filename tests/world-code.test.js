@@ -417,11 +417,21 @@ test("steping on a pad starts a countdown that clears itself on completion", () 
   const world = createWorld(["p1"]);
   world.context.onBlockStandStart("p1", 2, 10, 3, "Lime Concrete");
   assert.ok(said(world, "p1").some((message) => message.includes("Very Easy")));
-  assert.equal(world.clientOptions.at(-1).value, "Very Easy — starting in 10...");
+  {
+    const v = world.clientOptions.at(-1).value;
+    assert.ok(Array.isArray(v), "countdown should be a translation");
+    assert.equal(v[0].str.translationKey, "greenvilleGame:spleefGameStartCounter");
+    assert.equal(v[0].str.params.seconds, "10s");
+    assert.equal(v[0].style.color, "#ffd700");
+  }
 
   world.tick(199);
   assert.equal(world.copies.length, 0, "a room was copied during the countdown");
-  assert.equal(world.clientOptions.at(-1).value, "Very Easy — starting in 1...");
+  {
+    const v = world.clientOptions.at(-1).value;
+    assert.ok(Array.isArray(v));
+    assert.equal(v[0].str.params.seconds, "1s");
+  }
 });
 
 test("moving between same-colour pads keeps the countdown running", () => {
@@ -430,8 +440,11 @@ test("moving between same-colour pads keeps the countdown running", () => {
   world.tick(25);
   world.context.onBlockStandStart("p1", 3, 10, 3, "Lime Concrete");
   world.tick(15);
-  assert.equal(world.clientOptions.at(-1).value, "Very Easy — starting in 8...",
-    "crossing to another pad of the same difficulty restarted the countdown");
+  {
+    const v = world.clientOptions.at(-1).value;
+    assert.equal(v[0].str.params.seconds, "8s",
+      "crossing to another pad of the same difficulty restarted the countdown");
+  }
 });
 
 test("leaving the pad cancels the countdown", () => {
