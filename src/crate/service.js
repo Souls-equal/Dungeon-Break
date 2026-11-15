@@ -18,6 +18,26 @@ export function getWeightedRandomItem(rarity, random = Math.random) {
   return list[0];
 }
 
+export function getAmountForItem(item, random = Math.random) {
+  if (!item) return 1;
+  // Supporte {amount} fixe ou {min,max} aléatoire inclusif, ou {amountMin,amountMax}
+  const hasMinMax = (Number.isFinite(item.min) && Number.isFinite(item.max)) || (Number.isFinite(item.amountMin) && Number.isFinite(item.amountMax));
+  if (Number.isFinite(item.min) && Number.isFinite(item.max)) {
+    const min = Math.floor(item.min);
+    const max = Math.floor(item.max);
+    if (max < min) return min;
+    return Math.floor(random() * (max - min + 1)) + min;
+  }
+  if (Number.isFinite(item.amountMin) && Number.isFinite(item.amountMax)) {
+    const min = Math.floor(item.amountMin);
+    const max = Math.floor(item.amountMax);
+    if (max < min) return min;
+    return Math.floor(random() * (max - min + 1)) + min;
+  }
+  if (Number.isFinite(item.amount)) return item.amount;
+  return 1;
+}
+
 export function hasKey(api, playerId, rarity) {
   const key = CRATE_KEYS[rarity];
   if (!key) return false;
@@ -60,7 +80,8 @@ export function generateChest(api, playerId, chestPos, rarity, random = Math.ran
     }
     const item = getWeightedRandomItem(rarity, random);
     if (!item) continue;
-    try { api.setStandardChestItemSlot(chestPos, i, item.name, item.amount, playerId); } catch (_) {}
+    const amount = getAmountForItem(item, random);
+    try { api.setStandardChestItemSlot(chestPos, i, item.name, amount, playerId); } catch (_) {}
   }
   try {
     api.sendMessage(playerId, "Chest opened (" + rarity + ")!", { color: "lightgray" });
