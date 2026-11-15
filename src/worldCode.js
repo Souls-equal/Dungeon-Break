@@ -372,7 +372,7 @@ playerCommand = (playerId, command) => {
 // moves the player and forgets the dungeon in the same call, so nothing is ever
 // generated for a player who is at spawn.
 
-const SHOP_CATEGORY = "Utilities";
+const SHOP_CATEGORY = "utilities";
 const SPAWN_ITEM = "Teleport to spawn";
 
 // ----------------------------------------------------------- benedictions --
@@ -650,7 +650,13 @@ function chooseBenediction(playerId, position) {
 }
 
 /**
- * Closes the shop, if the game can.
+ * Tracks shop open state — `openShop(playerId, true)` is a toggle, so closing
+ * when closed would open it. This is the bug that made death open the shop.
+ */
+const shopOpen = new Set();
+
+/**
+ * Closes the shop, if the game can and the shop is actually open.
  *
  * `openShop(playerId, toggle)` is the documented door, and `toggle: true` on an open shop is
  * the only way to shut it. It is wrapped because a shop that stays open is a cosmetic
@@ -658,6 +664,7 @@ function chooseBenediction(playerId, position) {
  * recorded by the time this runs.
  */
 function closeShop(playerId) {
+  if (!shopOpen.has(playerId)) return;
   try {
     api.openShop(playerId, true);
   } catch (error) {
@@ -843,6 +850,8 @@ onPlayerJoin = (playerId) => {
  * Only the opening matters; a close has nothing to redraw.
  */
 onPlayerToggledShopMenu = (playerId, isOpen) => {
+  if (isOpen) shopOpen.add(playerId);
+  else shopOpen.delete(playerId);
   if (!isOpen) return;
   try {
     refreshBenedictionTiles(playerId);
@@ -860,6 +869,7 @@ onPlayerLeave = (playerId) => {
   try {
     api.setClientOption(playerId, "middleTextUpper", "");
   } catch (_) {}
+  shopOpen.delete(playerId);
   try {
     closeShop(playerId);
   } catch (_) {}
