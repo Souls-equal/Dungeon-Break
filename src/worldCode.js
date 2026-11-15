@@ -24,7 +24,7 @@ import {
 import { DIFFICULTIES, DUNGEON_CONFIG, difficultyForPadBlock } from "./dungeon/config.js";
 import { LOBBY_POSITION, createDungeonService } from "./dungeon/service.js";
 import { isChestBlock } from "./dungeon/loot.js";
-import { RARITIES, categoryOf } from "./benediction/config.js";
+import { AURA_PER_LEVEL, MAX_AURA_LEVEL, RARITIES, categoryOf } from "./benediction/config.js";
 import { createBenedictionService } from "./benediction/service.js";
 import {
   announcementOf,
@@ -279,8 +279,10 @@ function runDebugCommand(playerId, verb) {
     const key = accountKeyOf(playerId);
     const account = benedictions().accountOf(key);
     const points = benedictions().pointsFor(key, level);
-    debugSay(playerId, `[dbg] aura level ${level} · ${points} point(s) · ${account.spent} spent`);
-    debugSay(playerId, `[dbg] account ${key} · last ${account.history.length} roll(s):`
+    const offer = account.offer.length > 0 ? ` · ${account.offer.length} on offer` : "";
+    debugSay(playerId, `[dbg] aura level ${level}/${MAX_AURA_LEVEL} · ${points} point(s) · ${account.spent} spent${offer}`);
+    debugSay(playerId, `[dbg] scale ${AURA_PER_LEVEL} aura a level · nothing is saved between sessions`);
+    debugSay(playerId, `[dbg] session ${key} · last ${account.history.length} picked:`
       + (account.history.length > 0 ? ` ${account.history.map((entry) => `${entry.name} (${entry.rarity})`).join(", ")}` : " none"));
     debugSay(playerId, `[dbg] odds ${oddsOfTable()}`);
     return;
@@ -383,13 +385,27 @@ const SPAWN_ITEM = "Teleport to spawn";
 const BENEDICTION_CATEGORY = "Benedictions";
 const ROLL_ITEM = "Roll a Benediction";
 const LAST_ROLL_ITEM = "Last roll";
-const BENEDICTIONS_DB_KEY = "dungeonBreak.benedictions";
+/**
+ * The **custom currency** the points are shown in.
+ *
+ * The owner asked for the points to *be* a currency rather than a number in a tile's text:
+ * `setCurrency` defines it for a player and puts it on the HUD, so a point is visible
+ * without opening the shop. It is explicitly **not persistent** — the owner asked for
+ * nothing to survive a reconnection, and the aura it is derived from is reset on join.
+ */
+const POINTS_CURRENCY = "Benediction Point";
 /** The keys of the three choice tiles. Fixed, so the category can be emptied of them. */
 const CHOICE_KEYS = ["Choice 1", "Choice 2", "Choice 3"];
-/** Every tile this code ever puts in the category: what a refresh may delete. */
+/**
+ * **Every tile this code ever puts in the category.** It is used to *restore* them, not to
+ * delete them: the owner saw the other buttons disappearing, and the reason was that a
+ * refresh deleted every known tile before drawing the offer — `createShopItemForPlayer`
+ * replaces a tile with the same key, so drawing again is enough. Old keys stay in the list
+ * so a session that still has one gets it cleaned up once.
+ */
 const BENEDICTION_ITEMS = [ROLL_ITEM, LAST_ROLL_ITEM, ...CHOICE_KEYS];
 
-/** The bookkeeping, created once for the world. */
+/** The bookkeeping, created once for the world. In memory only, by the owner's rule. */
 let benedictionService = null;
 
 function benedictions() {
@@ -398,20 +414,13 @@ function benedictions() {
 }
 
 /**
- * The key an account is stored under: the game's **permanent** player id.
+ * The key an account is held under **for this session**.
  *
- * A `PlayerId` is a session — a record stored under it is lost on the next connection —
- * and `getPlayerDbId` is the documented answer to "who is this, really". The fallback is
- * the session id, so a game without the call still works within one session instead of
- * throwing on the first roll.
+ * It is the player id, because that is what a session is: there is no database read and no
+ * database write, so the permanent id would buy nothing. What it does buy is the promise
+ * that a reconnection starts from nothing — which is exactly the behaviour asked for.
  */
 function accountKeyOf(playerId) {
-  try {
-    const dbId = api.getPlayerDbId(playerId);
-    if (dbId !== undefined && dbId !== null && String(dbId).length > 0) return String(dbId);
-  } catch (_) {
-    // A missing call is not a reason to lose the roll: the session key still works.
-  }
   return String(playerId);
 }
 
@@ -433,45 +442,57 @@ function benedictionSummary(playerId, level) {
 }
 
 /**
- * Empties the category of this player's tiles.
+ * Shows the points on the HUD as the custom currency they are.
  *
- * **A category cannot hold both a roll button and three choices**, and the request says so:
- * rolling *replaces* the shop's buttons with the three choices. So every refresh starts by
- * deleting what this code put there, then creates whatever the player should see now.
- * Deleting an item that is not there throws, and is the normal case for a player's first
- * join, so each delete is guarded on its own: one missing tile must not stop the rest of the
- * category from being rebuilt.
+ * `setCurrency` defines it — one call — and `setCurrencyAmount` moves it. Both are wrapped:
+ * a currency the game refuses is a missing HUD line, while an exception on a join is not.
+ * `persistent: false` is the owner's rule written where it is enforced.
  */
-function clearBenedictionTiles(playerId) {
-  for (const itemKey of BENEDICTION_ITEMS) {
+function showPoints(playerId, points) {
+  try {
+    api.setCurrency(playerId, POINTS_CURRENCY, {
+      amount: points,
+      icon: "fa-solid fa-star",
+      iconColour: "orange",
+      persistent: false,
+    });
+  } catch (error) {
     try {
-      api.deleteShopItemForPlayer(playerId, BENEDICTION_CATEGORY, itemKey);
+      api.log(`[Dungeon] the points currency could not be shown: ${error && error.message ? error.message : error}`);
     } catch (_) {
-      // Not there: nothing to delete, which is not a failure.
+      // Nothing left to do.
     }
+  }
+  try {
+    api.setCurrencyAmount(playerId, POINTS_CURRENCY, points, "Benediction");
+  } catch (_) {
+    // `setCurrency` above already carried the amount; this only keeps the subtext honest.
   }
 }
 
 /**
- * Draws this player's benediction tiles: **either** the roll button **or** the three choices.
+ * Draws this player's benediction tiles.
  *
- * An offer is what the category shows while it waits for a pick. A player who rolls, closes
- * the shop and comes back sees the same three benedictions — the offer lives in the account,
- * not in the shop, so closing the shop is not a free reroll.
+ * **Nothing is deleted.** `createShopItemForPlayer` replaces a tile that already has this
+ * key — the game's documented behaviour, the same reason `registerShopItems` can run twice —
+ * so the three choices simply overwrite the roll button, and the roll button overwrites them
+ * when the offer is gone. The first version of this deleted the tiles first, which is what
+ * made the category flash empty and lose the other buttons the owner reported; the deletion
+ * path is now only ever used for **keys this code no longer has**, never for the live ones.
  *
- * Called on a join, when the shop is opened, after a roll and after a choice. The tiles are
- * per player: a count of points cannot be a shared tile.
+ * Called on a join, when the shop is opened, after a roll and after a choice.
  */
 function refreshBenedictionTiles(playerId) {
   const key = accountKeyOf(playerId);
   const level = auraLevelOf(playerId);
   const points = benedictions().pointsFor(key, level);
   const account = benedictions().accountOf(key);
-  clearBenedictionTiles(playerId);
+  showPoints(playerId, points);
 
   if (account.offer.length > 0) {
     // **The offer.** One tile per benediction, in the order it was drawn: the button says
-    // `Choose`, and picking one is the only thing that spends a point.
+    // `Choose`, and the roll button keeps its key but becomes the way to show the offer is
+    // waiting — it is replaced, not deleted, so the category never looks empty.
     account.offer.forEach((draw, position) => {
       try {
         api.createShopItemForPlayer(playerId, BENEDICTION_CATEGORY, CHOICE_KEYS[position], choiceTile(draw, position));
@@ -479,6 +500,20 @@ function refreshBenedictionTiles(playerId) {
         logShopFailure(CHOICE_KEYS[position], error);
       }
     });
+    // The tiles that are not part of the offer are **replaced** by a quiet placeholder, so
+    // a player cannot click a stale "Roll" or "Last roll" while a choice is pending.
+    try {
+      api.createShopItemForPlayer(playerId, BENEDICTION_CATEGORY, ROLL_ITEM, {
+        image: "Beacon",
+        customTitle: "Choose one of the three",
+        description: `${benedictionSummary(playerId, level)}\nPick a Benediction below — it costs the point.`,
+        canBuy: false,
+        redDot: false,
+        sortPriority: 10,
+      });
+    } catch (error) {
+      logShopFailure(ROLL_ITEM, error);
+    }
     try {
       api.configureShopCategoryForPlayer(playerId, BENEDICTION_CATEGORY, {
         customTitle: "Choose one",
@@ -508,21 +543,45 @@ function refreshBenedictionTiles(playerId) {
     logShopFailure(ROLL_ITEM, error);
   }
 
-  // The last roll, as its own tile: the name in plain text, because a shop tile has one
+  // The last choice, as its own tile: the name in plain text, because a shop tile has one
   // description colour. The rarity is spelled out, which is the part that matters.
   const last = account.history[0];
-  if (last) {
-    const rarity = RARITIES.find((entry) => entry.id === last.rarity);
-    try {
-      api.createShopItemForPlayer(playerId, BENEDICTION_CATEGORY, LAST_ROLL_ITEM, {
+  try {
+    const rarity = last ? RARITIES.find((entry) => entry.id === last.rarity) : null;
+    api.createShopItemForPlayer(playerId, BENEDICTION_CATEGORY, LAST_ROLL_ITEM, last
+      ? {
         image: "Potion Table",
         customTitle: "Last roll",
         description: `${last.name} — ${rarity ? rarity.label : last.rarity}`,
         canBuy: false,
         sortPriority: 5,
+      }
+      // A player who has chosen nothing yet sees a **disabled** tile rather than a missing
+      // one: a category whose buttons come and go is the bug the owner just reported.
+      : {
+        image: "Potion Table",
+        customTitle: "Last roll",
+        description: "Nothing chosen yet. Roll a Benediction to start.",
+        canBuy: false,
+        sortPriority: 5,
+      });
+  } catch (error) {
+    logShopFailure(LAST_ROLL_ITEM, error);
+  }
+  // The three choice tiles are not part of the offer any more: they are replaced by the same
+  // keys with a tile that cannot be bought, so nothing is deleted and nothing is clickable.
+  for (const itemKey of CHOICE_KEYS) {
+    try {
+      api.createShopItemForPlayer(playerId, BENEDICTION_CATEGORY, itemKey, {
+        image: "Beacon",
+        customTitle: "Benediction",
+        description: "Roll a Benediction to be offered three choices.",
+        canBuy: false,
+        hidden: true,
+        sortPriority: 1,
       });
     } catch (error) {
-      logShopFailure(LAST_ROLL_ITEM, error);
+      logShopFailure(itemKey, error);
     }
   }
   try {
@@ -568,11 +627,11 @@ function announceBenediction(playerId, benediction, rarity, pointsLeft) {
 }
 
 /**
- * Rolls: lays three benedictions out and spends **nothing**.
+ * Rolls: lays three benedictions out and **reserves** the point that will pay for the pick.
  *
- * The point is spent by the choice. A roll with no point is refused with a message, and a
- * roll while an offer is open re-shows that offer instead of redrawing it — otherwise a
- * player could roll, look, and roll again until the three were good.
+ * A roll with no point is refused with a message, and a roll while an offer is open re-shows
+ * that offer instead of redrawing it — otherwise a player could roll, look, and roll again
+ * until the three were good.
  */
 function rollBenediction(playerId) {
   const key = accountKeyOf(playerId);
@@ -583,11 +642,8 @@ function rollBenediction(playerId) {
     refreshBenedictionTiles(playerId);
     return false;
   }
-  api.sendMessage(playerId, `Three Benedictions are offered. Pick one — it costs a point:`);
+  api.sendMessage(playerId, "Three Benedictions are offered. Pick one — it costs a point:");
   offer.forEach((draw, position) => api.sendMessage(playerId, offerLine(draw, position)));
-  // The offer goes into the database with the account: closing the game mid-choice must not
-  // give the roll a second life.
-  persistBenedictions(playerId, key);
   refreshBenedictionTiles(playerId);
   return true;
 }
@@ -597,9 +653,8 @@ function rollBenediction(playerId) {
  *
  * The service refuses anything that is not one of the offered benedictions — a stale tile,
  * a card clicked after the offer was consumed — so the shop can never be charged for a
- * choice that was not on screen. Then the shop goes **back to its normal state** and is
- * **closed**, which is the visible half of the request: the pick is final, and the tile that
- * brought the player here is gone.
+ * choice that was not on screen. Then the tiles go **back to their normal state**, the point
+ * on the HUD moves, and the shop is **closed**: the pick is final.
  */
 function chooseBenediction(playerId, position) {
   const key = accountKeyOf(playerId);
@@ -611,7 +666,6 @@ function chooseBenediction(playerId, position) {
     return false;
   }
   announceBenediction(playerId, result.benediction, result.rarity, result.pointsLeft);
-  persistBenedictions(playerId, key);
   refreshBenedictionTiles(playerId);
   closeShop(playerId);
   return true;
@@ -637,32 +691,53 @@ function closeShop(playerId) {
   }
 }
 
-/** Writes the account. The database is per player, and a failure is logged, never thrown. */
-function persistBenedictions(playerId, key) {
+/**
+ * A player's benedictions, **from zero**.
+ *
+ * The owner asked for two things that are the same thing: the point is a currency (so it is
+ * tied to the session, not to an account), and the aura is reset to 0 on a join. Both happen
+ * here: the game's aura is set back to nothing, the in-memory account is dropped, the points
+ * currency is shown at 0, and the tiles are drawn for a player who has chosen nothing yet.
+ *
+ * The side effect is the one wanted: a reconnection is a fresh run, and no database read can
+ * hand back a level, a point, or an offer from the session before.
+ */
+function resetPlayerProgress(playerId) {
+  applyAuraScale(playerId);
   try {
-    api.setPlayerDbValue(playerId, BENEDICTIONS_DB_KEY, JSON.stringify(benedictions().save(key)));
+    api.setTotalAura(playerId, 0);
   } catch (error) {
     try {
-      api.log(`[Dungeon] benedictions of ${playerId} could not be saved: ${error && error.message ? error.message : error}`);
+      api.log(`[Dungeon] the aura of ${playerId} could not be reset: ${error && error.message ? error.message : error}`);
     } catch (_) {
       // Nothing left to do.
     }
   }
+  benedictions().forget(accountKeyOf(playerId));
+  showPoints(playerId, 0);
+  return refreshBenedictionTiles(playerId);
 }
 
-/** Reads an account back. A fresh player has none, which is an empty account, not an error. */
-function restoreBenedictions(playerId) {
-  const key = accountKeyOf(playerId);
-  let stored = null;
+/**
+ * Tells the game what this world's aura is worth: **the scale and the ceiling**.
+ *
+ * Two client options, both documented: `auraPerLevel` (what a level costs) and `maxAuraLevel`
+ * (the highest level, `0` meaning "aura off"). They are set on every join because a client
+ * option is per player and does not survive a reconnection either.
+ */
+function applyAuraScale(playerId) {
   try {
-    const raw = api.getPlayerDbValue(playerId, BENEDICTIONS_DB_KEY);
-    if (typeof raw === "string") stored = JSON.parse(raw);
-    else if (raw && typeof raw === "object") stored = raw;
-  } catch (_) {
-    // Unreadable is the same as absent: a player keeps playing, with nothing spent.
+    api.setClientOptions(playerId, {
+      auraPerLevel: AURA_PER_LEVEL,
+      maxAuraLevel: MAX_AURA_LEVEL,
+    });
+  } catch (error) {
+    try {
+      api.log(`[Dungeon] the aura scale could not be applied: ${error && error.message ? error.message : error}`);
+    } catch (_) {
+      // The game's own defaults still work; the shop says what it reads.
+    }
   }
-  benedictions().load(key, stored || {});
-  return key;
 }
 
 const SHOP_ITEMS = [
@@ -761,10 +836,9 @@ onPlayerJoin = (playerId) => {
   // The shop is re-registered per join: an item created while nobody was online is
   // not always offered to the first player who arrives, and replacing it is free.
   registerShopItems();
-  // Benedictions are **per player**: the account is read back first, so a player who
-  // rolled before keeps what they spent, and the tiles show their own count.
-  restoreBenedictions(playerId);
-  refreshBenedictionTiles(playerId);
+  // **A join is a new run**: aura back to 0, points back to 0, no offer, no history.
+  // Nothing is read from a database, because nothing was ever written to one.
+  resetPlayerProgress(playerId);
   api.setPosition(playerId, LOBBY_POSITION);
   const names = DIFFICULTIES.filter((entry) => entry.fromLobby).map((entry) => entry.label).join(", ");
   api.sendMessage(
@@ -798,6 +872,9 @@ onPlayerToggledShopMenu = (playerId, isOpen) => {
 onPlayerLeave = (playerId) => {
   stopLobbyCountdown(playerId);
   service().leave(playerId);
+  // The account is memory, so a leave is where it is dropped: a session that ends holds
+  // nothing, which is the other half of "nothing survives a reconnection".
+  benedictions().forget(accountKeyOf(playerId));
 };
 
 /**

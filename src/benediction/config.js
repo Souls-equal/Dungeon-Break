@@ -139,6 +139,27 @@ export const BENEDICTIONS = [
 ];
 
 /**
+ * The **XP scale of this world**, written once and applied to every player.
+ *
+ * The game charges `auraPerLevel` aura for each level and stops at `maxAuraLevel`; by
+ * default that is 100 aura a level, and a cap the owner wants lower so a run's aura buys
+ * something instead of dribbling into empty levels. Both numbers are set here and pushed by
+ * `setClientOptions` — the game is told, rather than the code guessing what it charges.
+ *
+ * `AURA_PER_LEVEL` also decides what a room's aura is worth in levels, so it is a balance
+ * number as much as an API one: 10 aura a room at 50 a level is a point every five rooms,
+ * and a Very Easy run — the entrance plus the ring of rooms around it — pays for roughly one
+ * choice.
+ */
+export const AURA_PER_LEVEL = 50;
+
+/**
+ * The highest level this world allows. **Lowered from the game's own ceiling**, and the
+ * pool of points is the level itself: a player who reaches it holds the whole ladder.
+ */
+export const MAX_AURA_LEVEL = 40;
+
+/**
  * The level a player starts at: a fresh player is level 1 with no aura, and therefore
  * **no points**. Points are `level - AURA_LEVEL_BASE`, which is what the owner asked for —
  * one point per level gained, not one per level reached.
@@ -147,6 +168,11 @@ export const AURA_LEVEL_BASE = 1;
 
 /** Points earned per aura level. The owner asked for one. */
 export const POINTS_PER_LEVEL = 1;
+
+/** Every point this world can pay out: the whole ladder, from level 1 to the cap. */
+export function maxPoints() {
+  return (MAX_AURA_LEVEL - AURA_LEVEL_BASE) * POINTS_PER_LEVEL;
+}
 
 /**
  * How many benedictions a roll **offers**. The owner asked for three: enough that the
@@ -266,7 +292,14 @@ export function pointsEarned(level) {
   return Math.max(0, reached - AURA_LEVEL_BASE) * POINTS_PER_LEVEL;
 }
 
-/** Points left: what the levels paid for, minus what has been rolled. Never negative. */
+/**
+ * Points left: what the levels paid for, minus what has been **held** — the ones spent on a
+ * choice and the ones waiting in the current offer. Never negative.
+ *
+ * The offer counts as spent on purpose: three cards on the table are three points promised,
+ * and a player must not be able to roll three offers from one level's worth of points by
+ * spending on credit.
+ */
 export function pointsLeft(level, spent) {
   const used = Number.isFinite(spent) ? Math.max(0, Math.floor(spent)) : 0;
   return Math.max(0, pointsEarned(level) - used);

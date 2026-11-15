@@ -89,7 +89,7 @@ Le clic est capté par `onPlayerBoughtShopItem`, qui fait **deux choses dans cet
 | `/dbg templates` | Tous les modèles des niveaux utilisés, avec lisible / illisible |
 | `/dbg mem` | Un donjon par ligne, avec son origine, puis les compteurs qui doivent rester bornés |
 | `/dbg seed` | Le niveau et sa couche tirée, en une ligne |
-| `/dbg benedictions` | Niveau d'aura, points, dépenses, dernières bénédictions choisies, chances — hors donjon aussi |
+| `/dbg benedictions` | Niveau d'aura sur le plafond, points, dépenses, offre en cours, dernières bénédictions choisies, échelle et chances — hors donjon aussi |
 
 Une capture d'écran + `/dbg templates` suffisent à diagnostiquer une salle manquante.
 
@@ -112,22 +112,35 @@ Un niveau **n'a pas de hauteur fixe** : chaque entrée tire son propre cube (voi
 
 Tous les textes visibles par les joueurs sont en anglais.
 
-## Bénédictions : un point par niveau, trois choix, un point par choix
+## Bénédictions : des points en devise, trois choix, un point par choix
 
 L'aura payée par les salles découvertes a maintenant un usage : **chaque niveau d'aura donne un point**, et un point s'échange contre **une Bénédiction choisie parmi trois** dans la boutique, catégorie **Benedictions**.
 
-Le geste, tel qu'il se joue dans le shop :
+Le geste, tel qu'il se joue :
 
-1. la catégorie affiche **une** tuile : `Roll a Benediction` — niveau, points et chances ;
-2. ce clic **remplace toute la catégorie** par **trois** tuiles, trois bénédictions tirées au hasard selon leurs probabilités ;
-3. cliquer l'une des trois (`Choose`, image par famille, description avec rareté et famille) **dépense le point**, annonce le résultat — chat, bannière, carte —, **referme la boutique**, et la catégorie **revient à son état normal** (`Roll a Benediction` + `Last roll`).
+1. la catégorie affiche `Roll a Benediction` (niveau, points, chances) ;
+2. ce clic **remplace les tuiles de la catégorie** par **trois** bénédictions tirées au hasard selon leurs probabilités ;
+3. cliquer l'une des trois (`Choose`) **dépense le point**, annonce le résultat — chat, bannière, carte —, **referme la boutique**, et les tuiles **reviennent à leur état normal**.
 
-- **Le tirage ne coûte rien, le choix coûte un point.** C'est ce qui rend les trois cartes honnêtes : elles sont l'offre, et l'offre ne se paie qu'une fois, au moment où elle devient une bénédiction.
-- **Trois tirages indépendants, tous différents.** Chaque case a les chances de la table (une Mythique a donc ~0,2 % dans chacune des trois) ; un doublon est retiré et retiré à nouveau, parce qu'une offre `Iron Hide`, `Iron Hide`, `Quick Feet` n'est pas un choix. Un catalogue de moins de trois est servi tel qu'il est.
-- **Pas de re-roll gratuit.** Une offre en attente est **conservée** : re-cliquer `Roll a Benediction` (impossible depuis que la catégorie est remplacée), fermer la boutique, ou même se déconnecter, redonne **les mêmes trois**. L'offre est sauvegardée avec le compte (clé `dungeonBreak.benedictions`, sous l'identifiant permanent `getPlayerDbId`), donc relaisser le jeu n'est pas un moyen de retirer.
-- **Les points ne sont pas comptés, ils sont calculés** : `niveau d'aura − 1 − points dépensés`. Le niveau est celui du jeu (`getAuraInfo`) : un niveau gagné n'importe où — même hors donjon — est honoré la prochaine fois que la boutique s'ouvre.
-- **Tout est par joueur** (`createShopItemForPlayer`, `deleteShopItemForPlayer`, `configureShopCategoryForPlayer`) : un compte de points et une offre ne peuvent pas être des tuiles partagées. La catégorie est **vidée puis reconstruite** à chaque rafraîchissement (connexion, ouverture de la boutique, tirage, choix), ce qui garantit qu'elle ne contient jamais à la fois le bouton de tirage et les trois choix.
-- **Une tuile « Last roll »** garde la dernière bénédiction **choisie** sous les yeux du joueur.
+**Les points sont une devise du jeu** (`setCurrency`), affichée sur le HUD avec son icône, et **non persistante** : `persistent: false`. Le compte est en mémoire, le niveau vient du jeu, et **rien ne survit à une reconnexion**.
+
+- **Le tirage réserve un point, le choix le dépense.** Trois cartes sur la table sont une promesse : elle se paie au moment où elle devient un choix, et une promesse non tenue (offre abandonnée) rend son point. C'est ce qui interdit de tirer trois offres avec les points d'un seul niveau.
+- **Trois tirages indépendants, tous différents.** Chaque case a les chances de la table (une Mythique à ~0,2 % dans chacune), un doublon est retiré, et un catalogue de moins de trois est servi tel quel.
+- **Pas de re-roll gratuit.** Une offre en attente est **réutilisée** : re-cliquer, fermer la boutique, revenir — les mêmes trois.
+- **Les points ne sont pas comptés, ils sont calculés** : `niveau d'aura − 1 − dépensés − réservés`. Le niveau est celui du jeu (`getAuraInfo`), relu à chaque rafraîchissement.
+- **Rien n'est jamais supprimé.** Une catégorie de shop montre toutes ses tuiles : plutôt que de les supprimer puis de les recréer (ce qui faisait disparaître les autres boutons), le code **réécrit les mêmes clés** — `createShopItemForPlayer` remplace — et celles qui ne s'appliquent pas deviennent **désactivées** (`canBuy: false`) ou **masquées** (`hidden: true`). Aucune tuile ne manque jamais.
+- **Tout est par joueur** (`createShopItemForPlayer`, `configureShopCategoryForPlayer`) : un compte de points et une offre ne peuvent pas être des tuiles partagées.
+
+### L'échelle d'aura, et le plafond
+
+Le monde **impose son échelle** à la connexion, par deux options client documentées :
+
+| Option | Valeur | Pourquoi |
+| --- | --- | --- |
+| `auraPerLevel` | `50` | une salle vaut 10 à 20 d'aura : un point tous les trois à cinq salles |
+| `maxAuraLevel` | `40` | le plafond **abaissé** : 39 points dans toute une partie, et l'aura d'un run ne se perd plus dans des niveaux vides |
+
+**Une connexion remet l'aura à 0** (`setTotalAura`), oublie le compte en mémoire, remet la devise à 0 et redessine les tuiles d'un joueur qui n'a rien choisi. Se déconnecter puis revenir, c'est repartir de zéro : c'est la règle demandée, et elle est écrite dans `resetPlayerProgress`.
 
 ### Les six raretés
 
@@ -160,7 +173,7 @@ Deux couleurs par rareté pour cette raison : un hexadécimal pour le fond de la
 
 `Iron Hide`, `Field Rations`, `Quick Feet`, `Sturdy Straps`, `Honed Edge`, `Bitter Draught`, `Second Wind`, `Ghost Step`, `Heart of the Dungeon` — au moins une par famille et une par rareté jusqu'à Mythic. **Chacune dit « (No effect yet.) »** : la mécanique, les raretés et le rendu sont là, les effets viendront.
 
-`/dbg benedictions` affiche le niveau, les points, les dépenses, les derniers tirages et les chances — **hors donjon aussi**, puisque le niveau s'y gagne.
+`/dbg benedictions` affiche le niveau sur le plafond, les points, les dépenses, l'offre en cours, les dernières bénédictions choisies, l'échelle d'aura et les chances — **hors donjon aussi**, puisque le niveau s'y gagne.
 
 ## Génération
 
@@ -245,7 +258,7 @@ src/dungeon/loader.js      file, copie
 src/dungeon/service.js     entrée, atterrissage, pad, rapports
 src/dungeon/loot.js        coffres, clés, tirage par difficulté
 src/benediction/config.js  raretés, familles, catalogue, chances, tirage
-src/benediction/service.js points, dépenses, historique, sauvegarde
+src/benediction/service.js points, réserve, offre, historique (mémoire seule)
 src/benediction/presentation.js  carte, ligne de chat, tuile de boutique
 src/dungeon/reward.js      noms d’items vérifiés par le build
 src/utils/scheduler.js     scheduler piloté par le callback tick
@@ -256,7 +269,7 @@ src/worldCode.js           lobby, pads, /dbg
 - `npm run build` régénère le fichier compact.
 - `npm run watch` le régénère à chaque sauvegarde dans `src/`.
 - `npm run check` vérifie que le bundle est à jour, valide les syntaxes, et refuse un bundle où `copyChunk`, `createShopItem` ou la table des modèles ont disparu au minification.
-- `npm test` lance les 143 tests : moteur, configuration, et le bundle réel exécuté dans un `vm` contre un faux serveur qui applique les règles de Bloxd.
+- `npm test` lance les 148 tests : moteur, configuration, et le bundle réel exécuté dans un `vm` contre un faux serveur qui applique les règles de Bloxd.
 
 Le workflow GitHub vérifie la version générée sur les Pull Requests et resynchronise `world-code/` après un merge dans `main`.
 
