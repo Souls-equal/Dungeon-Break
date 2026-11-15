@@ -77,6 +77,9 @@ function showCountdown(playerId, difficulty, secondsLeft) {
     "middleTextUpper",
     `${difficulty.label} — starting in ${secondsLeft}...`,
   );
+  try {
+    api.broadcastMessage([{str:{translationKey:"greenvilleGame:spleefGameStartCounter", params:{seconds:`${secondsLeft}s`}}, style:{color:"#ffd700"}}]);
+  } catch (_) {}
 }
 
 function stopLobbyCountdown(playerId) {
@@ -724,7 +727,7 @@ const SHOP_ITEMS = [
     item: {
       image: "spawnicon.png",
       customTitle: [{ translationKey: "classicGame:teleportToLobbySpawn" }],
-      description: "Return to the lobby, at spawn. Stops the dungeon you are in.",
+      description: [],
       cost: 0,
       canBuy: true,
       sortPriority: 0,
@@ -790,14 +793,11 @@ onPlayerBoughtShopItem = (playerId, categoryKey, itemKey) => {
   if (categoryKey !== SHOP_CATEGORY || itemKey !== SPAWN_ITEM) return;
   // Teleport and forget are one call, so the tick can never see a player at spawn
   // with a dungeon: `teleportToSpawn` moves first, then drops the record.
-  const wasInDungeon = service().teleportToSpawn(playerId);
+  service().teleportToSpawn(playerId);
   stopLobbyCountdown(playerId);
   api.setClientOption(playerId, "middleTextUpper", "");
   closeShop(playerId);
-  api.sendMessage(
-    playerId,
-    wasInDungeon ? "Back to spawn. Your dungeon stopped." : "Back to spawn.",
-  );
+  api.sendMessage(playerId, [{ translationKey: "classicGame.teleportedToSpawn" }]);
 };
 
 // -------------------------------------------------------------- lifecycle --
