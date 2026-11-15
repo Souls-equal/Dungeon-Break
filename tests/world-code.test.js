@@ -792,7 +792,7 @@ test("a player at spawn is never a player with a dungeon", () => {
 
   // The shop item teleports to spawn, and the dungeon must stop **before** that:
   // the alternative is a generator reading the chunk spawn happens to be in.
-  world.context.onPlayerBoughtShopItem("p1", "Utilities", "Teleport to spawn", {}, "");
+  world.context.onPlayerBoughtShopItem("p1", "utilities", "Teleport to spawn", {}, "");
 
   // The teleport happened, and it is the spawn position.
   const last = world.positions.at(-1).position;
@@ -816,7 +816,7 @@ test("a teleport during the entrance wait abandons the entrance", () => {
   world.context.onBlockStandStart("p1", 2, 10, 3, "Lime Concrete");
   world.tick(10 * 20 + 1);
   assert.ok(!said(world, "p1").includes("Level: Very Easy"));
-  world.context.onPlayerBoughtShopItem("p1", "Utilities", "Teleport to spawn", {}, "");
+  world.context.onPlayerBoughtShopItem("p1", "utilities", "Teleport to spawn", {}, "");
   world.tick(20);
   assert.ok(!said(world, "p1").includes("Level: Very Easy"),
     "the entrance was completed after the player had gone to spawn");
@@ -826,7 +826,7 @@ test("a teleport during the entrance wait abandons the entrance", () => {
 test("the shop offers spawn in a Utilities category", () => {
   const world = createWorld(["p1"]);
   world.context.onPlayerJoin("p1");
-  const items = world.shop.get("Utilities");
+  const items = world.shop.get("utilities");
   assert.ok(items, "the Utilities category was not created");
   const spawn = items.get("Teleport to spawn");
   assert.ok(spawn, "the spawn item was not created");
@@ -841,7 +841,7 @@ test("buying anything else does nothing", () => {
   startDungeon(world, "p1");
   tickUntil(world, () => said(world, "p1").includes("Level: Very Easy"), 400);
   const lastDungeonPosition = world.positions.at(-1).position;
-  world.context.onPlayerBoughtShopItem("p1", "Utilities", "Something else", {}, "");
+  world.context.onPlayerBoughtShopItem("p1", "utilities", "Something else", {}, "");
   assert.deepEqual(world.positions.at(-1).position, lastDungeonPosition);
   assert.ok(world.context.playerCommand("p1", "level"));
   assert.ok(!said(world, "p1").some((message) => /not in a dungeon/.test(message)));
@@ -891,7 +891,7 @@ test("going back to spawn despawns the mobs of the dungeon", () => {
   startDungeon(world, "p1");
   world.tick(80);
   assert.ok(world.mobs.size > 0, "no mob was spawned, so there is nothing to clean up");
-  world.context.onPlayerBoughtShopItem("p1", "Utilities", "Teleport to spawn");
+  world.context.onPlayerBoughtShopItem("p1", "utilities", "Teleport to spawn");
   assert.equal(world.mobs.size, 0, "a mob of the dungeon survived the way back to spawn");
   assert.equal(world.context.DUNGEON_LEVELS.length, 8);
 });
@@ -1336,7 +1336,7 @@ test("buying a tile that is not in the offer, or another category, does nothing"
   // each other.
   startDungeon(world, "p1");
   tickUntil(world, () => said(world, "p1").includes("Level: Very Easy"), 400);
-  world.context.onPlayerBoughtShopItem("p1", "Utilities", "Teleport to spawn", {}, "");
+  world.context.onPlayerBoughtShopItem("p1", "utilities", "Teleport to spawn", {}, "");
   assert.deepEqual(Array.from(world.positions.at(-1).position), LOBBY_POSITION);
 });
 

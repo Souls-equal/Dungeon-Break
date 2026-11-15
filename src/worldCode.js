@@ -367,7 +367,7 @@ playerCommand = (playerId, command) => {
 // moves the player and forgets the dungeon in the same call, so nothing is ever
 // generated for a player who is at spawn.
 
-const SHOP_CATEGORY = "Utilities";
+const SHOP_CATEGORY = "utilities";
 const SPAWN_ITEM = "Teleport to spawn";
 
 // ----------------------------------------------------------- benedictions --
@@ -723,11 +723,8 @@ const SHOP_ITEMS = [
     key: SPAWN_ITEM,
     item: {
       image: "spawnicon.png",
-      customTitle: "Teleport to spawn",
+      customTitle: [{ translationKey: "classicGame:teleportToLobbySpawn" }],
       description: "Return to the lobby, at spawn. Stops the dungeon you are in.",
-      buyButtonText: [{ translationKey: "classicGame:teleportToLobbySpawn" }],
-      // Free, and a purchase rather than a display tile: the callback is what tells
-      // the code a player asked for it.
       cost: 0,
       canBuy: true,
       sortPriority: 0,
