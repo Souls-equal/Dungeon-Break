@@ -210,6 +210,21 @@ export const DUNGEON_CONFIG = {
   //
   // There is therefore no setting here for where chests are, or how to find them.
 
+  // -------------------------------------------------------------- discovery ---
+  // A room is worth **aura** the first time a player stands in it: the game's XP is aura
+  // (`applyAuraChange`), and a dungeon rewards exploring it, not just surviving it.
+  //
+  // Paid once per room **per run**, and the memory is the dungeon's, not the world's: a
+  // room is discovered in the run that discovered it, and the next entry — a new place, a
+  // new run — is a dungeon nobody has seen yet. That is a `Set` per level, dropped with
+  // `release`, so nothing can grow past one dungeon.
+  //
+  // The aura is multiplied by the level's position in the ladder, so the same room is
+  // worth more in Hell than in Very Easy — the same idea as the mobs.
+  roomAura: 10,
+  // A room whose chunk is not readable yet is not discovered: the player is standing in a
+  // room the world has not sent, and paying for it would pay for a teleport.
+
   // Chat message shown once when the catalogue has no template for a level.
   missingTemplatesMessage:
     "This level has no room templates yet. Fill ROOM_TEMPLATES in src/dungeon/templates.js.",
@@ -302,6 +317,19 @@ export const CHEST_KEYS = [
   { key: "Gold Key", label: "Gold", rarity: "epic", veryEasy: 5, hell: 26 },
   { key: "Diamond Key", label: "Diamond", rarity: "legendary", veryEasy: 1, hell: 28 },
 ];
+
+/**
+ * The aura a level pays for discovering a room.
+ *
+ * From `roomAura` at Very Easy up to double it at Hell: a deeper dungeon is harder and its
+ * rooms are worth more, which is the same shape as the mobs and the keys.
+ */
+export function roomAuraFor(difficulty) {
+  const rank = DIFFICULTIES.findIndex((entry) => entry.id === difficulty.id);
+  const level = rank < 0 ? 0 : rank;
+  const steps = Math.max(1, DIFFICULTIES.length - 1);
+  return Math.round(DUNGEON_CONFIG.roomAura * (1 + level / steps));
+}
 
 /**
  * The keys a level can give, with the weight each one has there.

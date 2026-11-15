@@ -1,6 +1,6 @@
 # Architecture — génération par copies de chunks
 
-**Statut : livré.** 5 modules, 111 tests verts, bundle de 32 k caractères sur les 512 k autorisés.
+**Statut : livré.** 5 modules, 114 tests verts, bundle de 31 k caractères sur les 512 k autorisés.
 
 Ce document remplace l'architecture par ouvertures des Phases 0 à 4, supprimée avec son moteur. Il décrit ce qui existe, pas ce qui est prévu : toute divergence entre ce texte et le code est un défaut du texte.
 
@@ -230,6 +230,41 @@ de `setBlockData` sur un coffre : ces trois choses venaient de l'idée qu'il fal
 sont les coffres et se souvenir lesquels étaient ouverts. Un bloc qui disparaît répond aux deux
 questions sans mémoire, et `/dbg chests` n'a plus rien à compter — il rappelle la règle.
 
+## 6quinquies. Découvrir une salle : de l'aura, une fois, et seulement en marchant
+
+Un donjon n'est pas seulement une série de combats : c'est un endroit à **explorer**, et le
+propriétaire a demandé que l'exploration paie. Chaque salle où le joueur met les pieds pour la
+première fois du run donne de l'**aura** — l'XP du jeu, celui des niveaux — par
+`api.applyAuraChange(playerId, auraDiff)`.
+
+| Question | Réponse | Pourquoi |
+| --- | --- | --- |
+| combien ? | `roomAuraFor(difficulty)` | 10 en Very Easy, interpolé linéairement jusqu'à 20 en Hell : une salle profonde vaut le double |
+| quand ? | quand le chunk de la position change | la seule définition vérifiable de « entrer dans une salle » |
+| une seule fois ? | `level.discovered`, un `Set` sur le niveau | la mémoire appartient au run, et le run est libéré avec le donjon |
+| quelle preuve ? | `planned === "placed"` **et** `getBlock(...) !== null` | une salle que le client n'a pas reçue n'est pas une salle où l'on est |
+
+**« Marcher » exclut deux choses, et c'est le cœur du module.** Une téléportation — l'arrivée
+dans le niveau, un retour au spawn — n'est pas une visite : le tick qui la suit verrait un
+changement de chunk et paierait une salle que le joueur n'a pas parcourue. `state.justPlaced`,
+posé à l'entrée, consomme ce tick. Et **la salle d'entrée est payée à l'atterrissage**, par le
+même `discoverRoom`, une fois : le joueur y arrive, il ne la traverse pas.
+
+**Un flag qui ne s'efface pas coûte le premier pas.** La première version posait `justPlaced`
+deux fois — à l'entrée, puis à l'atterrissage. Le second n'était jamais consommé par le tick
+(le chunk de l'atterrissage était déjà celui de l'entrée, donc `entered` était faux), et c'était
+donc **le premier vrai déplacement du joueur** qu'il avalait : la deuxième salle du run ne
+payait rien. Le flag n'est plus posé qu'à l'entrée, où il est sûr — c'est ce que le test
+« a room pays the first time it is walked into » fixe.
+
+**L'ordre du paiement est l'ordre de la preuve.** `enterRoom` d'abord (il remplit les salles
+qu'il trouve et rend `null` si le niveau n'a pas encore d'origine), puis `roomReadable`, puis
+`applyAuraChange`. Une salle non lisible n'est pas payée, et le tick suivant — quand le chunk
+est arrivé — la paiera : rien n'est perdu, rien n'est payé en avance.
+
+Le message est `New room discovered: +N aura`, avec le montant réellement appliqué par le jeu
+(`applyAuraChange` rend un nombre ; à défaut, le montant demandé).
+
 ## 6bis. Sortir : le spawn est une boutique, et le donjon s'arrête là
 
 Le spawn normal du jeu est désactivé dans ce monde, et le propriétaire l'a confirmé : il n'y a
@@ -260,6 +295,27 @@ laissé au spawn, sans copie et sans message de niveau.
 
 Ce que la boutique **ne fait pas** : elle ne détruit rien dans le monde. Les salles restent où
 elles sont, et c'est le jeu qui vide la carte quand le propriétaire active son réglage.
+
+## 6sexies. Mourir : le même chemin que le bouton spawn
+
+La mort ne ramène plus à l'entrée du donjon. Le propriétaire a demandé qu'elle fasse **ce que
+fait le bouton « Teleport to spawn »** : `onRespawnRequest` téléporte en `[10, 21, 10]` et
+appelle `stopBuilding` — le donjon s'arrête, ses mobs sont retirés, sa place est rendue. Une
+mort est donc une sortie, pas une seconde chance.
+
+Trois détails, et chacun est une décision :
+
+- **Hors donjon, la main est laissée au jeu.** Le callback rend `false` : le code ne téléporte
+  personne et ne prétend pas gérer une mort qui ne le concerne pas.
+- **Le retour est une position, jamais `true`.** `true` veut dire « je gère le respawn
+  moi-même » — le contrat du callback — et une position est le seul moyen de faire déplacer le
+  joueur par le jeu. Ici la position rendue est `LOBBY_POSITION` **et** le code a déjà téléporté
+  via `teleportToSpawn`, la fonction exacte du bouton de boutique : un seul chemin, donc un seul
+  comportement à tester.
+- **`resetMobs` a disparu avec le retour à l'entrée.** Repeupler les quatre salles autour de
+  l'entrée n'a plus d'objet : il n'y a plus d'entrée où revenir.
+
+L'aura déjà gagnée reste acquise : elle appartient au joueur, pas au run.
 
 ## 7. Ce qui est lu et écrit dans le monde, et pourquoi
 
@@ -332,7 +388,7 @@ C'est la réponse à un vrai rapport de bug : « The room could not be built » 
 
 ## 11. Tests
 
-`npm test` — 111 tests.
+`npm test` — 114 tests.
 
 - `tests/dungeon/config.test.js` — une difficulté est un ordre et ne porte **aucune** hauteur ; la plage verticale tirée commence au-dessus de `y = 0` et couvre bien 1 000 à 100 000 blocs ; un pad = une difficulté ; Hell est le dernier ; le tirage de salle est stable et étalé ; les huit niveaux tirent dans la même liste ; les salles d'un niveau passent avant les communes ; une salle malformée est ignorée sans casser le niveau ; **la conversion chunk → bloc, y compris sur les coordonnées négatives** ; les 15 salles livrées occupent 15 chunks distincts ; une salle ne porte aucune propriété.
 - `tests/dungeon/loader.test.js` — un état par entrée : chaque entrée tire sa propre place dans le carré configuré, deux entrées vivantes restent à `spawnSeparation` l'une de l'autre, une place n'est tirée qu'une fois, `newOrigin` en donne une autre, un départ la rend et ne laisse rien en mémoire, deux joueurs de la même difficulté ne partagent ni place ni plan ; et un faux serveur où **`copyChunk` depuis un chunk non chargé ne fait rien**, où une copie dans un chunk non envoyé est ignorée, et où **un `getBlock` de chunk non envoyé déclenche l'envoi, deux ticks plus tard** : une salle est une seule copie, la sonde distingue « pas envoyé » / « vide » / « salle déjà là », **et seul le Bedrock compte** : du terrain ordinaire à la même profondeur ne passe pas pour une salle, une salle du redémarrage précédent n'est pas recopiée, une copie est confirmée au tick suivant et jamais dans le sien, la file est bornée, une salle illisible est désactivée puis retirée de la file, **aucun bloc n'est écrit nulle part**, la hauteur de sol est lue et non configurée, un niveau vide ne coûte rien.
@@ -356,7 +412,8 @@ Ce qui n'est **pas** testé, faute de pouvoir l'être hors du jeu : le délai ex
 | `onPlayerClick` | `(playerId, wasAltClick, x, y, z, block, targetEId)` | un clic sur un coffre de donjon |
 | `api.giveItem` | `(playerId, itemName, itemAmount, attributes)` → nombre ajouté | la clé trouvée ; `0` = inventaire plein |
 | `api.setBlockData` / `getBlockData` | données **sur** un bloc, effacées quand le bloc change | la marque « coffre ouvert », comme la salle clear |
-| `onRespawnRequest` | `(playerId)` → `true \| void \| number[]` ; **une position** est la réponse à donner pour poser le joueur, `true` veut dire « je téléporte moi-même » | reposer le joueur à l'atterrissage d'entrée, vérifié à l'arrivée |
+| `onRespawnRequest` | `(playerId)` → `true \| void \| number[]` ; **une position** est la réponse à donner pour poser le joueur, `true` veut dire « je téléporte moi-même » | la mort ramène au spawn par le chemin du bouton, et `false` hors donjon |
+| `api.applyAuraChange` | `(playerId, auraDiff)` → nombre appliqué | l'aura d'une salle découverte, payée une fois par run |
 | `api.attemptSpawnMob` | `(mobType, x, y, z, opts)` → `MobId \| null`, **asynchrone** | les mobs des salles |
 | `api.despawnMob` | `(mobId)` | quitter un donjon, quitter une salle |
 | `api.setMobSetting` / `getMobSetting` | `(mobId, setting, value)` / `(mobId, setting, returnDefault)` | les multiplicateurs de difficulté, appliqués au tick suivant |

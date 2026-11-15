@@ -95,6 +95,8 @@ export function createLoader({ api, log }) {
       mobs: new Map(),
       /** Rooms that have been asked for mobs, so one room is never populated twice. */
       populated: new Set(),
+      /** Rooms this run has already paid for, "x|z": the memory of a discovery. */
+      discovered: new Set(),
       /**
        * "type|difficulty" → why the game refused it, so it is never tried again this
        * session. Keyed by level as well as type on purpose: a name the game rejects in
@@ -762,6 +764,20 @@ export function createLoader({ api, log }) {
   }
 
   /**
+   * Is this the first time this run stands in this room?
+   *
+   * The answer is recorded as it is given: asking twice is asking about one room twice, and
+   * the caller pays once. The set lives on the level and dies with `release`, so a new entry
+   * — a new place — discovers everything again, which is what a new run means.
+   */
+  function discoverRoom(level, chunkX, chunkZ) {
+    const key = chunkKey(chunkX, chunkZ);
+    if (level.discovered.has(key)) return false;
+    level.discovered.add(key);
+    return true;
+  }
+
+  /**
    * A player entered a room: its four neighbours get mobs, the others lose theirs.
    *
    * This is the owner's rule, and it is also the only memory-safe version of it: mobs
@@ -1317,6 +1333,7 @@ export function createLoader({ api, log }) {
     spawnRoomMobs,
     mobKilled,
     mobGone,
+    discoverRoom,
     forgetMobs,
     forgetMobsForGood,
     flushMobTuning,
