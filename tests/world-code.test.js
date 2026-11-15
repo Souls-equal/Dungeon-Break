@@ -84,6 +84,10 @@ function createWorld(onlinePlayerIds, options = {}) {
   /** The cards drawn in the top-right corner, and the banners queued mid-screen. */
   const helperCards = [];
   const middleTexts = [];
+  /** Which players have the shop open, the category configuration, and every open/close. */
+  const shopOpen = new Set();
+  const shopCategories = [];
+  const shopCalls = [];
   const loaded = new Set();
   const pending = [];
   const key = (x, y, z) => `${Math.floor(x)}|${Math.floor(y)}|${Math.floor(z)}`;
@@ -154,6 +158,32 @@ function createWorld(onlinePlayerIds, options = {}) {
         const categories = playerShop.get(playerId);
         if (!categories.has(categoryKey)) categories.set(categoryKey, new Map());
         categories.get(categoryKey).set(itemKey, item);
+      },
+      // Deleting an item that is not there throws in the game, and the code relies on that
+      // being harmless — so the fake throws too.
+      deleteShopItemForPlayer: (playerId, categoryKey, itemKey) => {
+        const categories = playerShop.get(playerId);
+        const items = categories && categories.get(categoryKey);
+        if (!items || !items.has(itemKey)) throw new Error("no such shop item");
+        items.delete(itemKey);
+      },
+      configureShopCategoryForPlayer: (playerId, categoryKey, config) => {
+        if (!playerShop.has(playerId)) playerShop.set(playerId, new Map());
+        const categories = playerShop.get(playerId);
+        if (!categories.has(categoryKey)) categories.set(categoryKey, new Map());
+        shopCategories.push({ playerId, categoryKey, config });
+      },
+      // `openShop(playerId, toggle)`: a toggle on an open shop closes it. The fake counts
+      // what it was asked, because "the shop closes itself" is part of the request.
+      openShop: (playerId, toggle) => {
+        const wasOpen = shopOpen.has(playerId);
+        if (toggle === true) {
+          if (wasOpen) shopOpen.delete(playerId);
+          else shopOpen.add(playerId);
+        } else {
+          shopOpen.add(playerId);
+        }
+        shopCalls.push({ playerId, toggle: Boolean(toggle), wasOpen });
       },
       // Benedictions: the game's aura level, a permanent id, and the player database.
       getAuraInfo: (playerId) => ({
@@ -298,6 +328,9 @@ function createWorld(onlinePlayerIds, options = {}) {
     setBlocks,
     auraGiven,
     auraLevels,
+    shopOpen,
+    shopCategories,
+    shopCalls,
     dbValues,
     playerShop,
     helperCards,
@@ -1023,6 +1056,21 @@ function benedictionTiles(world, playerId = "p1") {
   return categories ? categories.get("Benedictions") : undefined;
 }
 
+/** Rolls, then picks the first of the three, as a player does in two clicks. */
+function rollAndChoose(world, playerId = "p1", position = 0) {
+  world.context.onPlayerBoughtShopItem(playerId, "Benedictions", "Roll a Benediction", {}, "");
+  world.context.onPlayerBoughtShopItem(playerId, "Benedictions", `Choice ${position + 1}`, {}, "");
+}
+
+/** The three benedictions currently on offer, as `{ name, tile }`. */
+function offerTiles(world, playerId = "p1") {
+  const tiles = benedictionTiles(world, playerId);
+  if (!tiles) return [];
+  return ["Choice 1", "Choice 2", "Choice 3"]
+    .filter((key) => tiles.has(key))
+    .map((key) => ({ key, name: tiles.get(key).customTitle, tile: tiles.get(key) }));
+}
+
 test("a join offers the roll, and a fresh player has nothing to spend", () => {
   const world = createWorld(["p1"]);
   world.context.onPlayerJoin("p1");
@@ -1039,7 +1087,7 @@ test("a join offers the roll, and a fresh player has nothing to spend", () => {
   assert.equal(tiles.has("Last roll"), false);
 });
 
-test("an aura level gives a point, and a roll spends exactly one", () => {
+test("a roll offers three benedictions and spends nothing; the choice spends the point", () => {
   const world = createWorld(["p1"], { auraLevel: 4 });
   world.context.onPlayerJoin("p1");
   const tiles = benedictionTiles(world);
@@ -1047,64 +1095,113 @@ test("an aura level gives a point, and a roll spends exactly one", () => {
   assert.match(tiles.get("Roll a Benediction").description, /Aura level 4 · 3 points/);
 
   world.context.onPlayerBoughtShopItem("p1", "Benedictions", "Roll a Benediction", {}, "");
-  // The roll is announced twice on purpose: once styled — the name in its rarity's
-  // colour — and once in plain text, which is the line every client can read.
-  const lines = said(world, "p1");
-  const styled = lines.filter((line) => Array.isArray(line));
-  const plain = lines.filter((line) => typeof line === "string");
+  // **The roll replaces the category with three choices.** No roll button, no "last roll":
+  // the shop is the offer, which is the request.
+  const offered = benedictionTiles(world);
+  assert.equal(offered.has("Roll a Benediction"), false, "the roll button survived the roll");
+  assert.equal(offerTiles(world).length, 3, "three choices were not offered");
+  for (const { tile } of offerTiles(world)) {
+    assert.equal(tile.canBuy, true, "an offered benediction cannot be picked");
+    assert.equal(tile.buyButtonText, "Choose");
+    assert.match(tile.description, /(Common|Uncommon|Rare|Epic|Legendary|Mythic) · /);
+    assert.ok(tile.description.includes("No effect yet."));
+  }
+  // Nothing was spent, nothing was announced, and the player was told what is on offer.
+  assert.equal(world.helperCards.length, 0, "a roll drew a card before a choice");
+  assert.equal(world.middleTexts.length, 0);
+  assert.ok(said(world, "p1").some((line) => /Three Benedictions are offered/.test(line)));
+  assert.equal(said(world, "p1").filter((line) => /^\d\. /.test(line)).length, 3,
+    "the offer was not listed in chat");
+
+  // The pick: one point, one message, one card, one banner — and the shop closes.
+  const picked = offerTiles(world)[1];
+  world.shopOpen.add("p1");
+  world.context.onPlayerBoughtShopItem("p1", "Benedictions", picked.key, {}, "");
+  const styled = said(world, "p1").filter((line) => Array.isArray(line));
   assert.equal(styled.length, 1, "the styled announcement is missing or duplicated");
   assert.deepEqual(styled[0][0], "Benediction: ");
-  assert.ok(plain.some((line) => line.startsWith("Benediction: ")), "the roll was not announced in plain text");
-  assert.ok(plain.some((line) => /point/.test(line) && /left/.test(line)), "the player was not told what is left");
-
-  // The card and the banner: the visual half of the feature.
-  assert.equal(world.helperCards.length, 1, "no card was drawn");
+  assert.equal(styled[0][1].str, picked.name, "the announced benediction is not the one picked");
+  assert.ok(said(world, "p1").some((line) => typeof line === "string" && line.includes("2 points left")));
+  assert.equal(world.helperCards.length, 1, "no card was drawn for the pick");
   const card = world.helperCards[0];
-  assert.equal(card.playerId, "p1");
+  assert.ok(card.text.startsWith(picked.name), "the card is not the benediction that was picked");
   assert.match(card.icon, /^fa-solid fa-/);
   assert.match(card.opts.color, /^rgb\(/, "the card background was not an rgb() colour");
   assert.ok(card.text.includes("No effect yet."), "the card promises an effect that does not exist");
   assert.equal(world.middleTexts.length, 1, "no banner was queued");
-  assert.match(world.middleTexts[0].text[0].str, / — (Common|Uncommon|Rare|Epic|Legendary|Mythic)$/);
+  assert.equal(world.shopCalls.length, 1, "the shop was not closed after the choice");
+  assert.equal(world.shopOpen.has("p1"), false, "the shop stayed open");
 
-  // Two rolls left, and the tiles say so; the last roll tile now exists.
+  // And the category is back to normal: the roll, and the benediction that was picked.
   const after = benedictionTiles(world);
+  assert.equal(offerTiles(world).length, 0, "the offer is still on screen after the choice");
+  assert.ok(after.has("Roll a Benediction"), "the roll button did not come back");
   assert.match(after.get("Roll a Benediction").description, /2 points/);
-  assert.ok(after.get("Last roll"), "the last roll was not kept");
-  assert.equal(world.helperCards[0].playerId, "p1");
+  assert.equal(after.get("Last roll").customTitle, "Last roll");
+  assert.match(after.get("Last roll").description, new RegExp(picked.name));
+});
 
-  // Spend the rest, then the tile closes and a fourth click buys nothing.
-  world.context.onPlayerBoughtShopItem("p1", "Benedictions", "Roll a Benediction", {}, "");
-  world.context.onPlayerBoughtShopItem("p1", "Benedictions", "Roll a Benediction", {}, "");
-  assert.equal(world.helperCards.length, 3);
-  world.context.onPlayerBoughtShopItem("p1", "Benedictions", "Roll a Benediction", {}, "");
-  assert.equal(world.helperCards.length, 3, "a roll was given without a point");
+test("a roll with no point left is refused, and the choice tile closes", () => {
+  const world = createWorld(["p1"], { auraLevel: 2 });
+  world.context.onPlayerJoin("p1");
+  rollAndChoose(world);
+  assert.equal(world.helperCards.length, 1);
+  // One point, one benediction: the tile now says so and cannot be bought.
   assert.equal(benedictionTiles(world).get("Roll a Benediction").canBuy, false);
+  world.context.onPlayerBoughtShopItem("p1", "Benedictions", "Roll a Benediction", {}, "");
+  assert.equal(world.helperCards.length, 1, "a roll was given without a point");
   assert.ok(said(world, "p1").some((line) => /No Benediction point/.test(line)));
 });
 
-test("a roll is paid for once, even if the game calls back twice", () => {
-  const world = createWorld(["p1"], { auraLevel: 2 });
+test("a second roll while an offer is open shows the same three, and costs nothing", () => {
+  const world = createWorld(["p1"], { auraLevel: 3 });
   world.context.onPlayerJoin("p1");
   world.context.onPlayerBoughtShopItem("p1", "Benedictions", "Roll a Benediction", {}, "");
+  const first = offerTiles(world).map((entry) => entry.name);
   world.context.onPlayerBoughtShopItem("p1", "Benedictions", "Roll a Benediction", {}, "");
-  assert.equal(world.helperCards.length, 1, "one point bought two rolls");
+  assert.deepEqual(offerTiles(world).map((entry) => entry.name), first,
+    "a second roll redrew the offer, which is a free reroll");
+  assert.equal(benedictionTiles(world).get("Roll a Benediction"), undefined);
 });
 
-test("spent points are written to the player's database and read back", () => {
+test("picking a card that is not on the offer does nothing", () => {
+  const world = createWorld(["p1"], { auraLevel: 5 });
+  world.context.onPlayerJoin("p1");
+  // Before any roll: no offer, so no choice can be picked.
+  world.context.onPlayerBoughtShopItem("p1", "Benedictions", "Choice 1", {}, "");
+  assert.equal(world.helperCards.length, 0, "a choice was picked from an offer that did not exist");
+  assert.equal(world.shopCalls.length, 0, "the shop was closed for nothing");
+  world.context.onPlayerBoughtShopItem("p1", "Benedictions", "Roll a Benediction", {}, "");
+  const offer = offerTiles(world).map((entry) => entry.name);
+  // A stale click on a card that has been redrawn: the offer is gone, so it costs nothing.
+  world.context.onPlayerBoughtShopItem("p1", "Benedictions", "Choice 1", {}, "");
+  assert.equal(world.helperCards.length, 1);
+  world.context.onPlayerBoughtShopItem("p1", "Benedictions", "Choice 1", {}, "");
+  assert.equal(world.helperCards.length, 1, "one offer paid for two choices");
+  assert.ok(offer.length === 3);
+});
+
+test("the offer and the spending are written to the player's database and read back", () => {
   const world = createWorld(["p1"], { auraLevel: 5 });
   world.context.onPlayerJoin("p1");
   world.context.onPlayerBoughtShopItem("p1", "Benedictions", "Roll a Benediction", {}, "");
+  const offered = offerTiles(world).map((entry) => entry.name);
   const stored = world.dbValues.get("p1").get("dungeonBreak.benedictions");
-  assert.ok(typeof stored === "string", "nothing was persisted");
-  const parsed = JSON.parse(stored);
-  assert.equal(parsed.spent, 1);
-  assert.equal(parsed.history.length, 1);
+  assert.ok(typeof stored === "string", "the offer was not persisted");
+  assert.equal(JSON.parse(stored).spent, 0, "a roll spent a point in the database");
+  assert.equal(JSON.parse(stored).offer.length, 3);
 
-  // A new session for the same player: the level is the game's, the spending is theirs.
+  // A new session for the same player: the offer is still there, so nothing was rerolled.
   const reloaded = createWorld(["p1"], { auraLevel: 5 });
+  reloaded.dbValues.set("p1", new Map([["dungeonBreak.benedictions", stored]]));
   reloaded.context.onPlayerJoin("p1");
-  assert.match(benedictionTiles(reloaded).get("Roll a Benediction").description, /4 points/);
+  assert.deepEqual(offerTiles(reloaded).map((entry) => entry.name), offered,
+    "a reconnect redrew the offer");
+  reloaded.context.onPlayerBoughtShopItem("p1", "Benedictions", "Choice 2", {}, "");
+  const saved = JSON.parse(reloaded.dbValues.get("p1").get("dungeonBreak.benedictions"));
+  assert.equal(saved.spent, 1, "the pick was not saved");
+  assert.deepEqual(saved.offer, [], "the offer was saved after being consumed");
+  assert.equal(saved.history.length, 1);
 });
 
 test("a player who gains a level while the shop is open is owed the point", () => {
@@ -1118,12 +1215,13 @@ test("a player who gains a level while the shop is open is owed the point", () =
   // is refreshed when it is looked at rather than on a tick spent watching everybody's XP.
   world.context.onPlayerToggledShopMenu("p1", true);
   assert.match(benedictionTiles(world).get("Roll a Benediction").description, /Aura level 6 · 5 points/);
-  world.context.onPlayerBoughtShopItem("p1", "Benedictions", "Roll a Benediction", {}, "");
+  rollAndChoose(world);
   assert.equal(world.helperCards.length, 1);
   assert.match(benedictionTiles(world).get("Roll a Benediction").description, /4 points/);
-  // And a close redraws nothing: there is nothing new to show.
+  // And a close redraws nothing new: there is nothing to show.
+  const cards = world.helperCards.length;
   world.context.onPlayerToggledShopMenu("p1", false);
-  assert.equal(world.helperCards.length, 1);
+  assert.equal(world.helperCards.length, cards);
 });
 
 test("buying the last-roll tile, or another category, does nothing", () => {
@@ -1145,11 +1243,9 @@ test("buying the last-roll tile, or another category, does nothing", () => {
 test("the bundle names only benedictions that exist, and no rarity twice", () => {
   const world = createWorld(["p1"], { auraLevel: 20 });
   world.context.onPlayerJoin("p1");
-  // Roll every point of a level-20 player, which reaches deep into the table.
+  // Spend every point of a level-20 player, which reaches deep into the table.
   const rolls = 19;
-  for (let index = 0; index < rolls; index += 1) {
-    world.context.onPlayerBoughtShopItem("p1", "Benedictions", "Roll a Benediction", {}, "");
-  }
+  for (let index = 0; index < rolls; index += 1) rollAndChoose(world, "p1", index % 3);
   assert.equal(world.helperCards.length, rolls);
   const names = new Set(world.helperCards.map((card) => card.text.split("\n")[0]));
   for (const name of names) {
@@ -1173,7 +1269,7 @@ const BENEDICTION_RARITIES = new Set([
 test("/dbg benedictions reports the level, the points and the odds, outside a dungeon", () => {
   const world = createWorld(["p1"], { auraLevel: 7 });
   world.context.onPlayerJoin("p1");
-  world.context.onPlayerBoughtShopItem("p1", "Benedictions", "Roll a Benediction", {}, "");
+  rollAndChoose(world);
   const before = world.messages.length;
   assert.equal(world.context.playerCommand("p1", "benedictions"), true);
   const lines = world.messages.slice(before).map((entry) => entry.message);

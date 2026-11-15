@@ -148,6 +148,12 @@ export const AURA_LEVEL_BASE = 1;
 /** Points earned per aura level. The owner asked for one. */
 export const POINTS_PER_LEVEL = 1;
 
+/**
+ * How many benedictions a roll **offers**. The owner asked for three: enough that the
+ * choice is a choice, few enough that a shop screen holds them without scrolling.
+ */
+export const CHOICE_COUNT = 3;
+
 /** The rarity with this id, or `null` for a name nobody uses. */
 export function rarityOf(id) {
   return RARITIES.find((entry) => entry.id === id) || null;
@@ -214,6 +220,44 @@ export function drawBenediction(random = Math.random, catalogue = BENEDICTIONS) 
   // the last entry is the floor of the draw, never nothing.
   const index = Math.min(picked.pool.length - 1, Math.floor(random() * picked.pool.length));
   return { benediction: picked.pool[index], rarity: picked.rarity };
+}
+
+/**
+ * Draws the **offer**: `CHOICE_COUNT` benedictions from the whole wheel, all different.
+ *
+ * It is `CHOICE_COUNT` independent draws of `drawBenediction`, not one benediction per
+ * rarity: the odds a player sees are the odds of every slot, so a Mythic has the same
+ * ~0.2 % chance in all three — three shots at it, not one rarity dealt out by hand.
+ *
+ * **All different**, because an offer of `Iron Hide`, `Iron Hide`, `Quick Feet` is not a
+ * choice. A repeated draw is thrown away and drawn again: the pool is far larger than
+ * three, so this settles in a try or two, and a catalogue too small to fill an offer is
+ * filled with whatever it has rather than padded with a duplicate.
+ */
+export function drawChoices(random = Math.random, catalogue = BENEDICTIONS) {
+  const wanted = Math.min(CHOICE_COUNT, catalogue.length);
+  const picked = [];
+  const taken = new Set();
+  // The bound is a guard, not a rule: a catalogue of three would otherwise loop for ever
+  // once every entry is taken, which cannot happen before `wanted` is reached.
+  for (let tries = 0; picked.length < wanted && tries < catalogue.length * 8; tries += 1) {
+    const draw = drawBenediction(random, catalogue);
+    if (!draw || taken.has(draw.benediction.id)) continue;
+    taken.add(draw.benediction.id);
+    picked.push(draw);
+  }
+  // A generator that always lands on the same entry cannot fill the offer by drawing, and
+  // the guarantee is worth more than the draw: what is missing is taken from the catalogue,
+  // so three choices are three **different** benedictions even then.
+  if (picked.length < wanted) {
+    for (const benediction of catalogue) {
+      if (picked.length >= wanted) break;
+      if (taken.has(benediction.id)) continue;
+      taken.add(benediction.id);
+      picked.push({ benediction, rarity: rarityOf(benediction.rarity) });
+    }
+  }
+  return picked;
 }
 
 /** Points earned by reaching this aura level, spending included. */

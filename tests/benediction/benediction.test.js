@@ -4,11 +4,13 @@ import assert from "node:assert/strict";
 import {
   AURA_LEVEL_BASE,
   BENEDICTIONS,
+  CHOICE_COUNT,
   CATEGORIES,
   RARITIES,
   benedictionsOf,
   categoryOf,
   drawBenediction,
+  drawChoices,
   formatPercent,
   pointsEarned,
   pointsLeft,
@@ -134,6 +136,25 @@ test("odds are written short and never rounded to nothing", () => {
   assert.match(oddsOfTable(), /^Common 60% · Uncommon 25% · /);
 });
 
+test("three choices are drawn, all different, from the whole wheel", () => {
+  for (let index = 0; index < 200; index += 1) {
+    const choices = drawChoices();
+    assert.equal(choices.length, CHOICE_COUNT);
+    assert.equal(new Set(choices.map((draw) => draw.benediction.id)).size, CHOICE_COUNT,
+      "an offer repeated a benediction");
+    for (const draw of choices) assert.equal(draw.benediction.rarity, draw.rarity.id);
+  }
+  // A catalogue too small for three is filled to what it has, never padded with a copy.
+  const two = BENEDICTIONS.slice(0, 2);
+  const small = drawChoices(Math.random, two);
+  assert.equal(small.length, 2);
+  assert.equal(new Set(small.map((draw) => draw.benediction.id)).size, 2);
+  // And a generator that never moves still fills the offer from the catalogue.
+  const stuck = drawChoices(() => 0.999999);
+  assert.equal(stuck.length, CHOICE_COUNT);
+  assert.equal(new Set(stuck.map((draw) => draw.benediction.id)).size, CHOICE_COUNT);
+});
+
 // ------------------------------------------------------------------ points --
 
 test("an aura level pays one point, and the first level pays none", () => {
@@ -148,48 +169,93 @@ test("an aura level pays one point, and the first level pays none", () => {
 
 // ------------------------------------------------------------------- rolls --
 
-test("a roll spends exactly one point and records what it gave", () => {
+test("a roll lays out three choices and spends nothing", () => {
   const service = createBenedictionService({ random: () => 0.5 });
   assert.equal(service.pointsFor("db-p1", 3), 2);
-  const first = service.roll("db-p1", 3);
-  assert.ok(first, "a point was available and the roll did nothing");
-  assert.equal(first.pointsLeft, 1);
+  const offer = service.roll("db-p1", 3);
+  assert.equal(offer.length, 3, "the roll did not offer three benedictions");
+  assert.equal(new Set(offer.map((draw) => draw.benediction.id)).size, 3, "a choice was duplicated");
+  // **Nothing is spent by a roll**: the point is the pick.
+  assert.equal(service.pointsFor("db-p1", 3), 2);
+  assert.equal(service.save("db-p1").spent, 0);
+  assert.deepEqual(service.save("db-p1").history, []);
+});
+
+test("rolling again while an offer is open shows the same three", () => {
+  // Otherwise a player could roll, look, and roll again until the three were good — which
+  // is a reroll nobody paid for.
+  const service = createBenedictionService({ random: () => 0.5 });
+  const first = service.roll("db-p1", 4);
+  const second = service.roll("db-p1", 4);
+  assert.deepEqual(second.map((draw) => draw.benediction.id), first.map((draw) => draw.benediction.id));
+});
+
+test("choosing spends exactly one point, and only once", () => {
+  const service = createBenedictionService({ random: () => 0.5 });
+  const offer = service.roll("db-p1", 3);
+  const chosen = service.choose("db-p1", 3, 1);
+  assert.ok(chosen, "a point was available and the choice did nothing");
+  assert.equal(chosen.benediction.id, offer[1].benediction.id, "the choice is not the card that was picked");
+  assert.equal(chosen.pointsLeft, 1);
   assert.equal(service.pointsFor("db-p1", 3), 1);
-  const second = service.roll("db-p1", 3);
-  assert.equal(second.pointsLeft, 0);
-  assert.equal(service.roll("db-p1", 3), null, "a third roll was given for free");
-  assert.deepEqual(service.save("db-p1").history.map((entry) => entry.id), [second.benediction.id, first.benediction.id]);
-  assert.equal(service.save("db-p1").spent, 2);
+  assert.equal(service.save("db-p1").spent, 1);
+  assert.deepEqual(service.save("db-p1").history.map((entry) => entry.id), [chosen.benediction.id]);
+  // The offer is consumed: the same pick cannot be made twice.
+  assert.equal(service.choose("db-p1", 3, 1), null, "one offer paid for two choices");
+  assert.equal(service.save("db-p1").spent, 1);
 });
 
-test("a failed roll does not spend a point", () => {
-  // There is nothing to draw: the service must refuse before it charges.
+test("a choice that is not in the offer costs nothing", () => {
   const service = createBenedictionService({ random: () => 0.5 });
+  service.roll("db-p1", 3);
   const before = service.save("db-p1");
-  assert.equal(service.roll("db-p1", 1), null);
-  assert.deepEqual(service.save("db-p1"), before);
+  for (const index of [-1, 3, 99, 1.5, undefined]) {
+    assert.equal(service.choose("db-p1", 3, index), null, `index ${index} was accepted`);
+  }
+  assert.deepEqual(service.save("db-p1"), before, "a refused choice spent something");
 });
 
-test("an account survives a reload, and a new one starts empty", () => {
+test("a roll and a choice with no point left are refused", () => {
   const service = createBenedictionService({ random: () => 0.5 });
-  const rolled = service.roll("db-p1", 5);
+  assert.equal(service.roll("db-p1", 1), null, "the first level paid a point");
+  const broke = createBenedictionService({ random: () => 0.5 });
+  broke.roll("db-p2", 2);
+  broke.choose("db-p2", 2, 0);
+  // A level that goes backwards (a lost level) must not leave a spendable offer behind.
+  broke.clearOffer("db-p2");
+  assert.equal(broke.roll("db-p2", 1), null);
+});
+
+test("an account survives a reload, offer included", () => {
+  const service = createBenedictionService({ random: () => 0.5 });
+  service.roll("db-p1", 5);
+  service.choose("db-p1", 5, 0);
+  const chosen = service.save("db-p1").history[0];
+  service.roll("db-p1", 5);
+  const offer = service.offerOf("db-p1").map((draw) => draw.benediction.id);
   const stored = JSON.parse(JSON.stringify(service.save("db-p1")));
 
   const reloaded = createBenedictionService({ random: () => 0.5 });
   reloaded.load("db-p1", stored);
   assert.equal(reloaded.pointsFor("db-p1", 5), 3, "a reload refunded a spent point");
-  assert.equal(reloaded.save("db-p1").history[0].id, rolled.benediction.id);
+  assert.equal(reloaded.save("db-p1").history[0].id, chosen.id);
+  // **The offer comes back too**: closing the game mid-choice must not reroll it.
+  assert.deepEqual(reloaded.offerOf("db-p1").map((draw) => draw.benediction.id), offer);
 
   // Nothing stored is an empty account, not a crash.
   const fresh = createBenedictionService({ random: () => 0.5 });
   fresh.load("db-p2", null);
   assert.equal(fresh.pointsFor("db-p2", 4), 3);
   assert.deepEqual(fresh.save("db-p2").history, []);
+  assert.deepEqual(fresh.offerOf("db-p2"), []);
 });
 
 test("the history is bounded, and keeps the newest first", () => {
   const service = createBenedictionService({ random: () => 0 });
-  for (let index = 0; index < 12; index += 1) service.roll("db-p1", 40);
+  for (let index = 0; index < 12; index += 1) {
+    service.roll("db-p1", 40);
+    service.choose("db-p1", 40, 0);
+  }
   const history = service.save("db-p1").history;
   assert.equal(history.length, 5);
   assert.equal(service.save("db-p1").spent, 12);

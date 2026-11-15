@@ -7,11 +7,17 @@
  * `src/dungeon/`, where the loader and the service own the state and the world code owns
  * the calls.
  *
- * A player's account has three numbers and a list:
+ * A player's account has two numbers, a list, and an **offer**:
  *
- *   - **level**: their aura level, the game's own (`getAuraInfo().level`);
- *   - **spent**: points already rolled;
- *   - **history**: the last few things they rolled, for the shop's "last roll" tile.
+ *   - **level**: their aura level, the game's own (`getAuraInfo().level`), never stored;
+ *   - **spent**: points already spent on a chosen benediction;
+ *   - **history**: the last few things they chose, for the shop's "last roll" tile;
+ *   - **offer**: the three benedictions laid out for them right now, waiting for a choice.
+ *
+ * **A roll is an offer, not a result.** Rolling lays three benedictions out and spends
+ * nothing; choosing one spends the point and is the only thing that writes a history. An
+ * offer nobody has chosen survives a reconnect, so closing the shop — or the game — is not
+ * a way to reroll for free, and a player cannot be charged for a screen they never saw.
  *
  * Points are **derived, never stored**: `level - AURA_LEVEL_BASE - spent`. There is no
  * counter to keep in sync with the game, so a level the player gains while nobody is
@@ -23,7 +29,9 @@
  * answer, and storing it would only be a copy that goes stale.
  */
 
-import { drawBenediction, pointsLeft } from "./config.js";
+import { BENEDICTIONS, CHOICE_COUNT, drawChoices, pointsLeft, rarityOf } from "./config.js";
+
+const CATALOGUE = BENEDICTIONS;
 
 /** How many rolls the "last rolls" line remembers. Enough to show, short enough to store. */
 export const HISTORY_LIMIT = 5;
@@ -35,7 +43,7 @@ export const HISTORY_LIMIT = 5;
  */
 export function createBenedictionService(options = {}) {
   const random = options.random || Math.random;
-  /** Permanent player id → { spent, history }. */
+  /** Permanent player id → { spent, history, offer }. */
   const accounts = new Map();
 
   /**
@@ -48,7 +56,7 @@ export function createBenedictionService(options = {}) {
   function accountOf(playerKey) {
     let account = accounts.get(playerKey);
     if (!account) {
-      account = { spent: 0, history: [] };
+      account = { spent: 0, history: [], offer: [] };
       accounts.set(playerKey, account);
     }
     return account;
@@ -61,13 +69,36 @@ export function createBenedictionService(options = {}) {
     account.history = Array.isArray(stored && stored.history)
       ? stored.history.filter((entry) => entry && typeof entry.id === "string").slice(0, HISTORY_LIMIT)
       : [];
+    // An offer is stored as **ids**, and read back through the catalogue: a benediction
+    // whose id has disappeared is dropped instead of resurrected from a stale copy.
+    account.offer = Array.isArray(stored && stored.offer)
+      ? stored.offer
+        .map((id) => catalogueDraw(id))
+        .filter((draw) => draw !== null)
+        .slice(0, CHOICE_COUNT)
+      : [];
     return account;
+  }
+
+  /** One catalogue entry by id, as a draw: the shape every surface already knows. */
+  function catalogueDraw(id) {
+    const found = CATALOGUE.find((entry) => entry.id === id);
+    return found ? { benediction: found, rarity: rarityOf(found.rarity) } : null;
+  }
+
+  /** The account's offer, as draws: what the shop shows. */
+  function offerOf(playerKey) {
+    return accountOf(playerKey).offer.slice();
   }
 
   /** What to write to the database: only what the game does not already know. */
   function save(playerKey) {
     const account = accountOf(playerKey);
-    return { spent: account.spent, history: account.history.slice(0, HISTORY_LIMIT) };
+    return {
+      spent: account.spent,
+      history: account.history.slice(0, HISTORY_LIMIT),
+      offer: account.offer.map((draw) => draw.benediction.id),
+    };
   }
 
   /** Points this player has not spent. `level` is the game's aura level, read by the caller. */
@@ -76,30 +107,58 @@ export function createBenedictionService(options = {}) {
   }
 
   /**
-   * Spends one point and draws a benediction.
+   * Rolls: **lays out an offer**, and spends nothing.
    *
-   * Returns `{ benediction, rarity, pointsLeft }`, or `null` when there is nothing to
-   * spend — the caller says so to the player. The point is spent **before** the draw is
-   * reported, and the draw cannot fail: `drawBenediction` always answers while the
-   * catalogue has one entry, and an empty catalogue is refused here rather than paid for.
+   * Returns the offer (`[{ benediction, rarity }]`), or `null` when there is no point to
+   * spend or no benediction to offer. An existing offer is **reused**, not redrawn: the
+   * shop calls this every time it is drawn, and a player who closes the shop and comes back
+   * must find the same three choices rather than a fresh roll for free.
+   *
+   * The point is not checked here twice on purpose — it is checked again on `choose`,
+   * against the live level, because a level can also be *lost* by the game.
    */
   function roll(playerKey, level) {
     const account = accountOf(playerKey);
     if (pointsLeft(level, account.spent) <= 0) return null;
-    const draw = drawBenediction(random);
-    if (!draw) return null;
+    if (account.offer.length > 0) return account.offer.slice();
+    const choices = drawChoices(random);
+    if (choices.length === 0) return null;
+    account.offer = choices;
+    return account.offer.slice();
+  }
+
+  /**
+   * Chooses one of the offers: **this is what spends the point.**
+   *
+   * `index` is a position in the current offer, and anything else — a stale shop, a click
+   * on a card that has been redrawn, a pick made after the offer was consumed — returns
+   * `null` and costs nothing. The offered benediction is the one recorded: the offer is a
+   * promise, and re-drawing at the moment of the choice would make the three cards a lie.
+   */
+  function choose(playerKey, level, index) {
+    const account = accountOf(playerKey);
+    const position = Number.isInteger(index) ? index : -1;
+    const chosen = position >= 0 && position < account.offer.length ? account.offer[position] : null;
+    if (!chosen) return null;
+    if (pointsLeft(level, account.spent) <= 0) return null;
     account.spent += 1;
+    account.offer = [];
     account.history.unshift({
-      id: draw.benediction.id,
-      name: draw.benediction.name,
-      rarity: draw.rarity.id,
+      id: chosen.benediction.id,
+      name: chosen.benediction.name,
+      rarity: chosen.rarity.id,
     });
     account.history = account.history.slice(0, HISTORY_LIMIT);
     return {
-      benediction: draw.benediction,
-      rarity: draw.rarity,
+      benediction: chosen.benediction,
+      rarity: chosen.rarity,
       pointsLeft: pointsLeft(level, account.spent),
     };
+  }
+
+  /** Drops the offer without spending anything: what a shop closing on a fresh look does. */
+  function clearOffer(playerKey) {
+    accountOf(playerKey).offer = [];
   }
 
   /** Forgets everything. Only `/dbg` uses it, and only to prove a reset is a reset. */
@@ -107,5 +166,5 @@ export function createBenedictionService(options = {}) {
     accounts.clear();
   }
 
-  return { accountOf, load, save, pointsFor, roll, forget };
+  return { accountOf, load, save, pointsFor, roll, choose, clearOffer, offerOf, forget };
 }
