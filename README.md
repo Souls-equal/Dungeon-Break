@@ -128,7 +128,8 @@ Le geste, tel qu'il se joue :
 - **Trois tirages indépendants, tous différents.** Chaque case a les chances de la table (une Mythique à ~0,2 % dans chacune), un doublon est retiré, et un catalogue de moins de trois est servi tel quel.
 - **Pas de re-roll gratuit.** Une offre en attente est **réutilisée** : re-cliquer, fermer la boutique, revenir — les mêmes trois.
 - **Les points ne sont pas comptés, ils sont calculés** : `niveau d'aura − 1 − dépensés − réservés`. Le niveau est celui du jeu (`getAuraInfo`), relu à chaque rafraîchissement.
-- **Rien n'est jamais supprimé.** Une catégorie de shop montre toutes ses tuiles : plutôt que de les supprimer puis de les recréer (ce qui faisait disparaître les autres boutons), le code **réécrit les mêmes clés** — `createShopItemForPlayer` remplace — et celles qui ne s'appliquent pas deviennent **désactivées** (`canBuy: false`) ou **masquées** (`hidden: true`). Aucune tuile ne manque jamais.
+- **Les trois choix sont retirés pour de vrai.** `hidden: true` ne les faisait pas disparaître (constaté en jeu). Le seul moyen documenté de retirer une tuile à un joueur est **`resetShopItemForPlayer`**, qui supprime son override pour la clé : les trois choix sont créés au tirage, puis **supprimés** dès que l'offre est finie. Ne jamais toucher au contraire la tuile `Roll`, qui doit toujours rester : une catégorie vidée de ses tuiles, c'est le bug des boutons qui disparaissent.
+- **La tuile `Roll` tient en une ligne : le niveau et les points.** Les probabilités y étaient, elles l'alourdissaient pour rien — elles restent dans `/dbg benedictions`. Et la tuile `Last roll` est **supprimée** : le dernier choix est déjà annoncé en chat et sur la carte, une tuile de plus ne faisait que surcharger la catégorie.
 - **Tout est par joueur** (`createShopItemForPlayer`, `configureShopCategoryForPlayer`) : un compte de points et une offre ne peuvent pas être des tuiles partagées.
 
 ### L'échelle d'aura, et le plafond

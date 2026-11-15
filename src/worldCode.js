@@ -24,7 +24,7 @@ import {
 import { DIFFICULTIES, DUNGEON_CONFIG, difficultyForPadBlock } from "./dungeon/config.js";
 import { LOBBY_POSITION, createDungeonService } from "./dungeon/service.js";
 import { isChestBlock } from "./dungeon/loot.js";
-import { AURA_PER_LEVEL, MAX_AURA_LEVEL, RARITIES, categoryOf } from "./benediction/config.js";
+import { AURA_PER_LEVEL, MAX_AURA_LEVEL, categoryOf } from "./benediction/config.js";
 import { createBenedictionService } from "./benediction/service.js";
 import {
   announcementOf,
@@ -32,7 +32,6 @@ import {
   choiceTile,
   offerLine,
   oddsOfTable,
-  rollDescription,
   rollMessage,
 } from "./benediction/presentation.js";
 
@@ -384,7 +383,18 @@ const SPAWN_ITEM = "Teleport to spawn";
 
 const BENEDICTION_CATEGORY = "Benedictions";
 const ROLL_ITEM = "Roll a Benediction";
-const LAST_ROLL_ITEM = "Last roll";
+/**
+ * The keys of the three choice tiles, and **the only tiles that ever come and go**.
+ *
+ * A shop category shows every tile it has: there is no known way to hide one from the list,
+ * and the engine has no `deleteShopItemForPlayer` at all. What it does have is
+ * `resetShopItemForPlayer`, which **deletes this player's override** for a key — the tile
+ * then falls back to whatever the category itself holds, and disappears when nothing does.
+ * That is the documented way to take a tile away, so the choice tiles are created for the
+ * offer and reset once the offer is over. The roll tile never moves, which is why the
+ * category is never empty: a shop with no tiles left would be the "buttons disappear" bug.
+ */
+const CHOICE_KEYS = ["Choice 1", "Choice 2", "Choice 3"];
 /**
  * The **custom currency** the points are shown in.
  *
@@ -394,16 +404,6 @@ const LAST_ROLL_ITEM = "Last roll";
  * nothing to survive a reconnection, and the aura it is derived from is reset on join.
  */
 const POINTS_CURRENCY = "Benediction Point";
-/** The keys of the three choice tiles. Fixed, so the category can be emptied of them. */
-const CHOICE_KEYS = ["Choice 1", "Choice 2", "Choice 3"];
-/**
- * **Every tile this code ever puts in the category.** It is used to *restore* them, not to
- * delete them: the owner saw the other buttons disappearing, and the reason was that a
- * refresh deleted every known tile before drawing the offer — `createShopItemForPlayer`
- * replaces a tile with the same key, so drawing again is enough. Old keys stay in the list
- * so a session that still has one gets it cleaned up once.
- */
-const BENEDICTION_ITEMS = [ROLL_ITEM, LAST_ROLL_ITEM, ...CHOICE_KEYS];
 
 /** The bookkeeping, created once for the world. In memory only, by the owner's rule. */
 let benedictionService = null;
@@ -435,10 +435,15 @@ function auraLevelOf(playerId) {
   return 1;
 }
 
-/** What a player has, as one line: level, points, and the odds of the table. */
+/**
+ * What a player has, as one short line: the level and the points.
+ *
+ * The odds **used to be here** and are gone: the owner called the tile overloaded, and a
+ * player who wants them has `/dbg benedictions`. Two numbers, one line, that is the tile.
+ */
 function benedictionSummary(playerId, level) {
   const points = benedictions().pointsFor(accountKeyOf(playerId), level);
-  return `Aura level ${level} · ${points} point${points === 1 ? "" : "s"} · ${oddsOfTable()}`;
+  return `Aura level ${level} · ${points} point${points === 1 ? "" : "s"}`;
 }
 
 /**
@@ -471,14 +476,37 @@ function showPoints(playerId, points) {
 }
 
 /**
- * Draws this player's benediction tiles.
+ * Removes this player's override of a tile, which is how a tile is taken away.
  *
- * **Nothing is deleted.** `createShopItemForPlayer` replaces a tile that already has this
- * key — the game's documented behaviour, the same reason `registerShopItems` can run twice —
- * so the three choices simply overwrite the roll button, and the roll button overwrites them
- * when the offer is gone. The first version of this deleted the tiles first, which is what
- * made the category flash empty and lose the other buttons the owner reported; the deletion
- * path is now only ever used for **keys this code no longer has**, never for the live ones.
+ * `resetShopItemForPlayer` deletes the per-player item and does **nothing** if this player
+ * has none — the documented behaviour, and the reason it can be called blind on every
+ * refresh. The old code called a `deleteShopItemForPlayer` that the API does not have: the
+ * call threw, the cleanup silently did nothing, and the three choice tiles stayed on screen
+ * — which is exactly what the owner saw.
+ */
+function removePlayerTile(playerId, itemKey) {
+  try {
+    api.resetShopItemForPlayer(playerId, BENEDICTION_CATEGORY, itemKey);
+    return true;
+  } catch (error) {
+    try {
+      api.log(`[Dungeon] benediction tile "${itemKey}" could not be removed: ${error && error.message ? error.message : error}`);
+    } catch (_) {
+      // Nothing left to do.
+    }
+    return false;
+  }
+}
+
+/**
+ * Draws this player's benediction tiles: the roll, and the offer when there is one.
+ *
+ * **The roll is the one tile that always exists**, so the category is never empty — the
+ * shop bug the owner reported was a category being emptied. While an offer is live, three
+ * `Choose` tiles join it; when the offer ends (`choose` consumed it, or it was dropped) they
+ * are **deleted** with `resetShopItemForPlayer`, not hidden. Nothing else is ever touched:
+ * `Last roll` is not drawn at all any more — the owner found it noise — and the roll tile's
+ * description is a single line, level and points, because the odds made it unreadable.
  *
  * Called on a join, when the shop is opened, after a roll and after a choice.
  */
@@ -487,110 +515,59 @@ function refreshBenedictionTiles(playerId) {
   const level = auraLevelOf(playerId);
   const points = benedictions().pointsFor(key, level);
   const account = benedictions().accountOf(key);
+  const offer = account.offer;
   showPoints(playerId, points);
 
-  if (account.offer.length > 0) {
-    // **The offer.** One tile per benediction, in the order it was drawn: the button says
-    // `Choose`, and the roll button keeps its key but becomes the way to show the offer is
-    // waiting — it is replaced, not deleted, so the category never looks empty.
-    account.offer.forEach((draw, position) => {
-      try {
-        api.createShopItemForPlayer(playerId, BENEDICTION_CATEGORY, CHOICE_KEYS[position], choiceTile(draw, position));
-      } catch (error) {
-        logShopFailure(CHOICE_KEYS[position], error);
-      }
-    });
-    // The tiles that are not part of the offer are **replaced** by a quiet placeholder, so
-    // a player cannot click a stale "Roll" or "Last roll" while a choice is pending.
-    try {
-      api.createShopItemForPlayer(playerId, BENEDICTION_CATEGORY, ROLL_ITEM, {
+  try {
+    // One tile, two states, **one line of text**: the level and the points. While an offer
+    // is live the same tile says so and cannot be bought - a roll would cost a second point.
+    api.createShopItemForPlayer(playerId, BENEDICTION_CATEGORY, ROLL_ITEM, offer.length > 0
+      ? {
         image: "Beacon",
         customTitle: "Choose one of the three",
-        description: `${benedictionSummary(playerId, level)}\nPick a Benediction below — it costs the point.`,
+        description: `${benedictionSummary(playerId, level)} · the point is on the table`,
         canBuy: false,
         redDot: false,
         sortPriority: 10,
+      }
+      : {
+        image: "Beacon",
+        customTitle: "Roll a Benediction",
+        description: benedictionSummary(playerId, level),
+        buyButtonText: "Roll",
+        cost: 0,
+        canBuy: points > 0,
+        redDot: points > 0,
+        sortPriority: 10,
+        onBoughtMessage: "Rolling...",
       });
-    } catch (error) {
-      logShopFailure(ROLL_ITEM, error);
-    }
-    try {
-      api.configureShopCategoryForPlayer(playerId, BENEDICTION_CATEGORY, {
-        customTitle: "Choose one",
-        redDot: true,
-      });
-    } catch (_) {
-      // The title is a nicety; the tiles are the feature.
-    }
-    return points;
-  }
-
-  // **The roll.** One tile, always present: it is the whole interface, and a player without
-  // points must still see what they are saving for.
-  try {
-    api.createShopItemForPlayer(playerId, BENEDICTION_CATEGORY, ROLL_ITEM, {
-      image: "Beacon",
-      customTitle: "Roll a Benediction",
-      description: `${benedictionSummary(playerId, level)}\n${rollDescription()}`,
-      buyButtonText: "Roll",
-      cost: 0,
-      canBuy: points > 0,
-      redDot: points > 0,
-      sortPriority: 10,
-      onBoughtMessage: "Rolling...",
-    });
   } catch (error) {
     logShopFailure(ROLL_ITEM, error);
   }
 
-  // The last choice, as its own tile: the name in plain text, because a shop tile has one
-  // description colour. The rarity is spelled out, which is the part that matters.
-  const last = account.history[0];
-  try {
-    const rarity = last ? RARITIES.find((entry) => entry.id === last.rarity) : null;
-    api.createShopItemForPlayer(playerId, BENEDICTION_CATEGORY, LAST_ROLL_ITEM, last
-      ? {
-        image: "Potion Table",
-        customTitle: "Last roll",
-        description: `${last.name} — ${rarity ? rarity.label : last.rarity}`,
-        canBuy: false,
-        sortPriority: 5,
-      }
-      // A player who has chosen nothing yet sees a **disabled** tile rather than a missing
-      // one: a category whose buttons come and go is the bug the owner just reported.
-      : {
-        image: "Potion Table",
-        customTitle: "Last roll",
-        description: "Nothing chosen yet. Roll a Benediction to start.",
-        canBuy: false,
-        sortPriority: 5,
-      });
-  } catch (error) {
-    logShopFailure(LAST_ROLL_ITEM, error);
-  }
-  // The three choice tiles are not part of the offer any more: they are replaced by the same
-  // keys with a tile that cannot be bought, so nothing is deleted and nothing is clickable.
-  for (const itemKey of CHOICE_KEYS) {
+  // **The choices second**, after the roll tile above: `createShopItemForPlayer` is what
+  // creates the category, so resetting a key in a category that does not exist yet is an
+  // avoidable edge. The screen order is `sortPriority`, not creation order.
+  CHOICE_KEYS.forEach((itemKey, position) => {
+    const draw = offer[position];
+    if (!draw) {
+      removePlayerTile(playerId, itemKey);
+      return;
+    }
     try {
-      api.createShopItemForPlayer(playerId, BENEDICTION_CATEGORY, itemKey, {
-        image: "Beacon",
-        customTitle: "Benediction",
-        description: "Roll a Benediction to be offered three choices.",
-        canBuy: false,
-        hidden: true,
-        sortPriority: 1,
-      });
+      api.createShopItemForPlayer(playerId, BENEDICTION_CATEGORY, itemKey, choiceTile(draw, position));
     } catch (error) {
       logShopFailure(itemKey, error);
     }
-  }
+  });
+
   try {
     api.configureShopCategoryForPlayer(playerId, BENEDICTION_CATEGORY, {
-      customTitle: "Benedictions",
-      redDot: points > 0,
+      customTitle: offer.length > 0 ? "Choose one" : "Benedictions",
+      redDot: offer.length > 0 || points > 0,
     });
   } catch (_) {
-    // Same: the title is a nicety.
+    // The title is a nicety; the tiles are the feature.
   }
   return points;
 }
