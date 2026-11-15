@@ -350,8 +350,12 @@ aucune** fonction de sauvegarde.
 | --- | --- | --- |
 | `auraPerLevel` | `50` | une salle (10 à 20 d'aura) achète un point tous les trois à cinq salles |
 | `maxAuraLevel` | `40` | plafond **abaissé** : 39 points dans une partie, et l'aura d'un run ne se perd pas dans des niveaux vides |
+| `autoRespawn` / `secsToRespawn` | `true` / `3` | la règle de respawn du propriétaire, envoyée dans le **même** appel |
 
-**Une connexion repart de zéro.** `setTotalAura(playerId, 0)`, oubli du compte en mémoire,
+Un seul `setClientOptions` par connexion porte les quatre options : l'échelle d'aura et le respawn
+ne peuvent pas se perdre l'un l'autre.
+
+**Une connexion repart de zéro.** `setTotalAura(playerId, 0)` (après `setClientOptions`), oubli du compte en mémoire,
 devise à 0, tuiles redessinées : c'est `resetPlayerProgress`, appelé par `onPlayerJoin`. Une
 déconnexion réussie n'a donc rien à conserver, et une reconnexion ne peut pas rapporter un
 niveau, un point ni une offre.

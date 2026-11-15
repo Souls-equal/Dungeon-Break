@@ -139,6 +139,7 @@ Le monde **impose son échelle** à la connexion, par deux options client docume
 | --- | --- | --- |
 | `auraPerLevel` | `50` | une salle vaut 10 à 20 d'aura : un point tous les trois à cinq salles |
 | `maxAuraLevel` | `40` | le plafond **abaissé** : 39 points dans toute une partie, et l'aura d'un run ne se perd plus dans des niveaux vides |
+| `autoRespawn` / `secsToRespawn` | `true` / `3` | la règle de respawn, envoyée dans le même `setClientOptions` |
 
 **Une connexion remet l'aura à 0** (`setTotalAura`), oublie le compte en mémoire, remet la devise à 0 et redessine les tuiles d'un joueur qui n'a rien choisi. Se déconnecter puis revenir, c'est repartir de zéro : c'est la règle demandée, et elle est écrite dans `resetPlayerProgress`.
 

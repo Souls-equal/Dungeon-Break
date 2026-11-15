@@ -1288,6 +1288,10 @@ test("the aura scale and the ceiling are pushed to the game on a join", () => {
   const ceiling = world.clientOptions.filter((entry) => entry.option === "maxAuraLevel").at(-1);
   assert.equal(scale.value, AURA_PER_LEVEL, "the world's aura scale was not applied");
   assert.equal(ceiling.value, MAX_AURA_LEVEL, "the world's aura ceiling was not applied");
+  // The owner's respawn rule travels in the same call: one `setClientOptions` on a join.
+  const respawn = world.clientOptions.filter((entry) => entry.option === "autoRespawn").at(-1);
+  assert.equal(respawn.value, true, "autoRespawn was lost");
+  assert.equal(world.clientOptions.filter((entry) => entry.option === "secsToRespawn").at(-1).value, 3);
 });
 
 test("a player who gains a level while the shop is open is owed the point", () => {

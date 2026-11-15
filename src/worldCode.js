@@ -703,7 +703,7 @@ function closeShop(playerId) {
  * hand back a level, a point, or an offer from the session before.
  */
 function resetPlayerProgress(playerId) {
-  applyAuraScale(playerId);
+  applyClientOptions(playerId);
   try {
     api.setTotalAura(playerId, 0);
   } catch (error) {
@@ -725,9 +725,13 @@ function resetPlayerProgress(playerId) {
  * (the highest level, `0` meaning "aura off"). They are set on every join because a client
  * option is per player and does not survive a reconnection either.
  */
-function applyAuraScale(playerId) {
+function applyClientOptions(playerId) {
+  // Two rules, one call: the owner's respawn (`autoRespawn`, 3 s) and the world's aura scale.
+  // Everything here is a client option, so the next join re-sends the same object.
   try {
     api.setClientOptions(playerId, {
+      autoRespawn: true,
+      secsToRespawn: 3,
       auraPerLevel: AURA_PER_LEVEL,
       maxAuraLevel: MAX_AURA_LEVEL,
     });
@@ -833,6 +837,7 @@ tick = () => {
 };
 
 onPlayerJoin = (playerId) => {
+  // The owner's respawn rule and the aura scale travel together: they are the same call.
   // The shop is re-registered per join: an item created while nobody was online is
   // not always offered to the first player who arrives, and replacing it is free.
   registerShopItems();
