@@ -203,7 +203,7 @@ export const DUNGEON_CONFIG = {
   // deep room is worth opening and a Very Easy one is not a shortcut to a Diamond Key.
   //
   // **Nothing is searched and nothing is predicted**: a room's chests are in its build, and
-  // `onPlayerClick` names the block that was clicked. The only test is `block === "Chest"`.
+  // `onPlayerClick` names the block that was clicked. The only test is `block.includes("Chest")`.
   // Opening a chest replaces it with `Air` and drops the key at the middle of the block —
   // the emptied block is the whole memory of "already opened", and a room copied again
   // (a new entry, a new place) gets its chest back.

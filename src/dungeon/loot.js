@@ -17,15 +17,14 @@ import { DUNGEON_CONFIG, chestKeysFor } from "./config.js";
 const SIZE = DUNGEON_CONFIG.chunkSize;
 
 /**
- * The block a dungeon chest is: **`Chest`, and only `Chest`**.
+ * The block a dungeon chest is: **any block whose name contains `Chest`**.
  *
- * The owner put it plainly: the builds hold ordinary chests, no iron or gold ones, so one
- * name is the whole test — and a name this code invents is a chest that never pays out.
+ * The builds hold ordinary chests, but the game reports rotations as
+ * `Chest`, `Chest North`, `Trapped Chest`, etc. One substring test covers
+ * them all, and no other chest exists on the map.
  */
-const CHEST_BLOCKS = new Set(["Chest"]);
-
 export function isChestBlock(name) {
-  return typeof name === "string" && CHEST_BLOCKS.has(name);
+  return typeof name === "string" && name.includes("Chest");
 }
 
 /**

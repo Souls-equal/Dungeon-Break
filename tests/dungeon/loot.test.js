@@ -151,9 +151,12 @@ test("the chest is emptied before the key is created, so a failure cannot duplic
   assert.deepEqual(order, ["air", "drop"], "the key was created before the chest was removed");
 });
 
-test("chest block names: Chest, and nothing else", () => {
+test("chest block names: any block containing Chest", () => {
   assert.equal(isChestBlock("Chest"), true);
-  assert.equal(isChestBlock("Iron Chest"), false, "the builds hold plain chests only");
+  // Rotations and trapped variants all contain "Chest"
+  assert.equal(isChestBlock("Chest North"), true);
+  assert.equal(isChestBlock("Trapped Chest"), true);
+  assert.equal(isChestBlock("Iron Chest"), true, "every chest variant is accepted — none except plain chests are on the map");
   assert.equal(isChestBlock("Air"), false);
   assert.equal(isChestBlock(null), false);
   assert.equal(isChestBlock(undefined), false);
