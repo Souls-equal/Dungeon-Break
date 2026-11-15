@@ -723,11 +723,7 @@ const SHOP_ITEMS = [
     key: SPAWN_ITEM,
     item: {
       image: "spawnicon.png",
-      customTitle: "Teleport to spawn",
-      description: "Return to the lobby, at spawn. Stops the dungeon you are in.",
-      buyButtonText: [{ translationKey: "classicGame:teleportToLobbySpawn" }],
-      // Free, and a purchase rather than a display tile: the callback is what tells
-      // the code a player asked for it.
+      customTitle: [{ translationKey: "classicGame:teleportToLobbySpawn" }],
       cost: 0,
       canBuy: true,
       sortPriority: 0,
