@@ -1142,7 +1142,9 @@ test("a roll offers three benedictions and reserves the point; the choice spends
   // offer is waiting, and the three choices are the only buyable tiles.
   const offered = benedictionTiles(world);
   assert.equal(offered.get("Roll a Benediction").canBuy, false, "the roll button survived the roll");
-  assert.match(offered.get("Roll a Benediction").customTitle, /Choose one of the three/);
+  assert.match(offered.get("Roll a Benediction").customTitle, /Select one/);
+  assert.equal(offered.get("Roll a Benediction").description, "");
+  assert.equal(offered.get("Roll a Benediction").sortPriority, 110);
   assert.equal(offerTiles(world).length, 3, "three choices were not offered");
   for (const { tile } of offerTiles(world)) {
     assert.equal(tile.canBuy, true, "an offered benediction cannot be picked");
