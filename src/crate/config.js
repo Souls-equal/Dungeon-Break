@@ -5,11 +5,11 @@
  */
 
 export const CRATE_KEYS = {
-  Common: "Green Paintball",
-  Uncommon: "Cyan Paintball",
-  Rare: "Blue Paintball",
-  Epic: "Purple Paintball",
-  Legendary: "Yellow Paintball",
+  Common: "Wooden Key",
+  Uncommon: "Stone Key",
+  Rare: "Iron Key",
+  Epic: "Gold Key",
+  Legendary: "Diamond Key",
 };
 
 export const AIR_CHANCE = {
