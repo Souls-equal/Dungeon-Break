@@ -372,7 +372,7 @@ playerCommand = (playerId, command) => {
 // moves the player and forgets the dungeon in the same call, so nothing is ever
 // generated for a player who is at spawn.
 
-const SHOP_CATEGORY = "utilities";
+const SHOP_CATEGORY = "Utilities";
 const SPAWN_ITEM = "Teleport to spawn";
 
 // ----------------------------------------------------------- benedictions --
@@ -711,7 +711,7 @@ function resetPlayerProgress(playerId) {
  * option is per player and does not survive a reconnection either.
  */
 function applyClientOptions(playerId) {
-  // Two rules, one call: the owner's respawn (`autoRespawn`, 3 s) and the world's aura scale.
+  // Aura scale + respawn timing; autoRespawn removed due to game bug (now secsToRespawn:0)
   // Everything here is a client option, so the next join re-sends the same object.
   try {
     api.setClientOptions(playerId, {
@@ -764,17 +764,8 @@ function registerShopItems() {
       }
     }
   }
-  // Category display name — not just the id — via customTitle with translationKey.
-  // Supports translationKeys as CustomTextStyling, like the button above.
-  try {
-    if (typeof api.configureShopCategory === "function") {
-      api.configureShopCategory(SHOP_CATEGORY, {
-        customTitle: [{ translationKey: "classicGame:utilities" }],
-      });
-    }
-  } catch (_) {
-    // The title is a nicety; the tile is the feature.
-  }
+  // Category display: id is already "Utilities" (capitalized), no translation needed
+  // (translationKey classicGame:utilities does not work on category names)
 }
 
 onPlayerBoughtShopItem = (playerId, categoryKey, itemKey) => {
