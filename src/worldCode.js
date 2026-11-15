@@ -758,6 +758,11 @@ tick = () => {
 };
 
 onPlayerJoin = (playerId) => {
+  api.setClientOptions(playerId, {
+    autoRespawn:True,
+    secsToRespawn:3,
+    
+  })
   // The shop is re-registered per join: an item created while nobody was online is
   // not always offered to the first player who arrives, and replacing it is free.
   registerShopItems();
