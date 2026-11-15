@@ -40,6 +40,7 @@ import {
   hasKey as crateHasKey,
   consumeKey as crateConsumeKey,
   generateChest as crateGenerateChest,
+  isChestLocked as crateIsChestLocked,
 } from "./crate/service.js";
 
 const LOBBY_CONFIG = {
@@ -977,6 +978,25 @@ onRespawnRequest = (playerId) => {
   closeShop(playerId);
   api.sendMessage(playerId, "You died. Back to spawn — your dungeon stopped.");
   return LOBBY_POSITION;
+};
+
+// ----------------------------------------------------------- crate lock — prevent stealing --
+onPlayerAttemptOpenChest = (playerId, x, y, z, isMoonstoneChest, isIronChest) => {
+  if (isMoonstoneChest) return;
+  try {
+    if (crateIsChestLocked(api, [x, y, z], playerId)) {
+      let data = null;
+      try { data = api.getBlockData(x, y, z); } catch (_) {}
+      const now = (typeof api.now === "function" ? api.now() : Date.now());
+      const remaining = data && data.crateLockUntil ? Math.ceil((data.crateLockUntil - now) / 1000) : 8;
+      try {
+        api.sendMessage(playerId, "This crate is being used by " + (data.crateOwnerName || data.crateOwnerId) + " - please wait " + remaining + "s", { color: "red" });
+      } catch (_) {
+        try { api.sendMessage(playerId, "This crate is being used by another player - please wait " + remaining + "s"); } catch (_) {}
+      }
+      return "preventOpen";
+    }
+  } catch (_) {}
 };
 
 // ----------------------------------------------------------- crate — global arrow API for code blocks --
