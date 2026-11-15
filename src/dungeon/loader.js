@@ -767,7 +767,12 @@ export function createLoader({ api, log }) {
       // mob on its old health, and scaling only `initialHealth` would leave it capped.
       // Two decimals, not one: 5 × (1.75 × 3) is 26.25 damage, and a tenth of that is a
       // balance change nobody asked for.
-      api.setMobSetting(mobId, setting, Math.round(base * factor * 100) / 100);
+      // Health must be an integer — the game rejects fractional HP.
+      const isHealth = setting === "maxHealth" || setting === "initialHealth";
+      const value = isHealth
+        ? Math.round(base * factor)
+        : Math.round(base * factor * 100) / 100;
+      api.setMobSetting(mobId, setting, value);
     };
     scale("maxHealth", factors.health);
     scale("initialHealth", factors.health);

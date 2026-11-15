@@ -1089,10 +1089,10 @@ test("the difficulty multiplies the stats of the mobs it spawns", () => {
     // same health as a Zombie's 1.0 in Hell, and both are harder than in Very Easy.
     const type = MOB_ROSTER.find((entry) => entry.type === mob.type);
     assert.ok(type, `a mob of a type not in the roster was spawned: ${mob.type}`);
-    // A tolerance, not an equality: the setting is rounded to two decimals so a mob's
-    // stats stay readable numbers, and 1.15 × 5 is not exact in binary.
+    // Health is an integer — the game rejects fractional HP — while damage stays
+    // readable at two decimals (1.15 × 5 is not exact in binary).
     const health = (type.health === undefined ? 1 : type.health) * hell.health;
-    assert.ok(Math.abs(mob.settings.get("maxHealth") - 150 * health) < 0.01,
+    assert.ok(mob.settings.get("maxHealth") === Math.round(150 * health),
       `the health multiplier of ${mob.type} was not applied: `
         + `${mob.settings.get("maxHealth")} instead of ${150 * health}`);
     const damage = (type.damage === undefined ? 1 : type.damage) * hell.damage;
