@@ -21,6 +21,8 @@ export const AIR_CHANCE = {
   Legendary: 30,
 };
 
+export const CRATE_LOCK_MS = 8000;
+
 export const LOOT_TABLE = {
   Common: [
     { name: "Apple", min: 1, max: 5, weight: 55 },
