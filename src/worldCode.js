@@ -722,12 +722,10 @@ const SHOP_ITEMS = [
     category: SHOP_CATEGORY,
     key: SPAWN_ITEM,
     item: {
-      // A block name is an image the game already has, which keeps this readable in
-      // every world. `api.getBlock` is not involved: nothing is placed.
-      image: "Lime Concrete",
+      image: "spawnicon.png",
       customTitle: "Teleport to spawn",
       description: "Return to the lobby, at spawn. Stops the dungeon you are in.",
-      buyButtonText: "Teleport",
+      buyButtonText: [{ translationKey: "classicGame:teleportToLobbySpawn" }],
       // Free, and a purchase rather than a display tile: the callback is what tells
       // the code a player asked for it.
       cost: 0,
