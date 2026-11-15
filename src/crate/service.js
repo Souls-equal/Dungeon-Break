@@ -85,6 +85,16 @@ export function getChestData(api, chestPos) {
   try { return api.getBlockData(p.x, p.y, p.z) || {}; } catch (_) { return {}; }
 }
 
+function getPlayerDisplayName(api, playerId) {
+  try {
+    if (typeof api.getEntityName === "function") {
+      const name = api.getEntityName(playerId);
+      if (name) return name;
+    }
+  } catch (_) {}
+  return playerId;
+}
+
 export function setChestOwner(api, chestPos, playerId, rarity) {
   const p = normalizeChestPos(chestPos);
   if (!p) return;
@@ -92,10 +102,11 @@ export function setChestOwner(api, chestPos, playerId, rarity) {
   try { existing = api.getBlockData(p.x, p.y, p.z) || {}; } catch (_) { existing = {}; }
   if (existing === null || typeof existing !== "object") existing = {};
   const now = nowMs(api);
+  const displayName = getPlayerDisplayName(api, playerId);
   const merged = {
     ...existing,
     crateOwnerId: playerId,
-    crateOwnerName: playerId,
+    crateOwnerName: displayName,
     crateRarity: rarity,
     crateOpenedAt: now,
     crateLockUntil: now + CRATE_LOCK_MS,
@@ -120,8 +131,13 @@ export function generateChest(api, playerId, chestPos, rarity, random = Math.ran
     const data = getChestData(api, chestPos);
     const now = nowMs(api);
     const remaining = data && data.crateLockUntil ? Math.ceil((data.crateLockUntil - now) / 1000) : Math.ceil(CRATE_LOCK_MS / 1000);
+    let ownerDisplay = data && (data.crateOwnerName || data.crateOwnerId) ? (data.crateOwnerName || data.crateOwnerId) : "another player";
+    // privilégie getEntityName pour afficher le pseudo au lieu de l'id
+    if (data && data.crateOwnerId) {
+      try { const n = api.getEntityName ? api.getEntityName(data.crateOwnerId) : null; if (n) ownerDisplay = n; } catch (_) {}
+    }
     try {
-      api.sendMessage(playerId, "This crate is being used by " + (data.crateOwnerName || data.crateOwnerId) + " - please wait " + remaining + "s", { color: "red" });
+      api.sendMessage(playerId, "This crate is being used by " + ownerDisplay + " - please wait " + remaining + "s", { color: "red" });
     } catch (_) {
       try { api.sendMessage(playerId, "This crate is being used by another player - please wait " + remaining + "s"); } catch (_) {}
     }

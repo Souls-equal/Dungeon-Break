@@ -943,6 +943,11 @@ onMobDespawned = (mobId) => {
   }
 };
 
+// Empêche tout PvP — demandé explicitement
+onPlayerDamagingOtherPlayer = (attackingPlayer, damagedPlayer, damageDealt, withItem, bodyPartHit, damagerDbId, damageInfo) => {
+  return "prevent";
+};
+
 /**
  * A player died. **Dying is a way out now**, and it is the same way as the shop button.
  *
@@ -989,8 +994,10 @@ onPlayerAttemptOpenChest = (playerId, x, y, z, isMoonstoneChest, isIronChest) =>
       try { data = api.getBlockData(x, y, z); } catch (_) {}
       const now = (typeof api.now === "function" ? api.now() : Date.now());
       const remaining = data && data.crateLockUntil ? Math.ceil((data.crateLockUntil - now) / 1000) : 8;
+      let ownerDisplay = data && (data.crateOwnerName || data.crateOwnerId) ? (data.crateOwnerName || data.crateOwnerId) : "another player";
+      try { const n = api.getEntityName ? api.getEntityName(data.crateOwnerId) : null; if (n) ownerDisplay = n; } catch (_) {}
       try {
-        api.sendMessage(playerId, "This crate is being used by " + (data.crateOwnerName || data.crateOwnerId) + " - please wait " + remaining + "s", { color: "red" });
+        api.sendMessage(playerId, "This crate is being used by " + ownerDisplay + " - please wait " + remaining + "s", { color: "red" });
       } catch (_) {
         try { api.sendMessage(playerId, "This crate is being used by another player - please wait " + remaining + "s"); } catch (_) {}
       }
