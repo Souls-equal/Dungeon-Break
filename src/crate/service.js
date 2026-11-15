@@ -21,14 +21,26 @@ export function getWeightedRandomItem(rarity, random = Math.random) {
 export function hasKey(api, playerId, rarity) {
   const key = CRATE_KEYS[rarity];
   if (!key) return false;
-  return (api.getPlayerDbValue(playerId, key) || 0) > 0;
+  try {
+    if (typeof api.hasItem === "function") return api.hasItem(playerId, key);
+    if (typeof api.getInventoryItemAmount === "function") return api.getInventoryItemAmount(playerId, key) > 0;
+  } catch (_) {}
+  // fallback to DB (legacy example) if inventory API not available
+  try { return (api.getPlayerDbValue(playerId, key) || 0) > 0; } catch (_) { return false; }
 }
 
 export function consumeKey(api, playerId, rarity) {
   const key = CRATE_KEYS[rarity];
   if (!key) return;
-  const current = api.getPlayerDbValue(playerId, key) || 0;
-  api.setPlayerDbValue(playerId, key, current - 1);
+  try {
+    if (typeof api.removeItemName === "function") { api.removeItemName(playerId, key, 1); return; }
+    if (typeof api.removeItem === "function") { api.removeItem(playerId, key, 1); return; }
+  } catch (_) {}
+  // fallback to DB
+  try {
+    const current = api.getPlayerDbValue(playerId, key) || 0;
+    api.setPlayerDbValue(playerId, key, current - 1);
+  } catch (_) {}
 }
 
 export function generateChest(api, playerId, chestPos, rarity, random = Math.random) {
