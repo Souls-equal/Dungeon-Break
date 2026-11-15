@@ -759,7 +759,7 @@ tick = () => {
 
 onPlayerJoin = (playerId) => {
   api.setClientOptions(playerId, {
-    autoRespawn:True,
+    autoRespawn:true,
     secsToRespawn:3,
     
   })
