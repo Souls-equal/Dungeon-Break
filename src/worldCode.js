@@ -856,10 +856,26 @@ onPlayerToggledShopMenu = (playerId, isOpen) => {
 
 onPlayerLeave = (playerId) => {
   stopLobbyCountdown(playerId);
+  try {
+    api.setClientOption(playerId, "middleTextUpper", "");
+  } catch (_) {}
+  try {
+    closeShop(playerId);
+  } catch (_) {}
   service().leave(playerId);
   // The account is memory, so a leave is where it is dropped: a session that ends holds
   // nothing, which is the other half of "nothing survives a reconnection".
   benedictions().forget(accountKeyOf(playerId));
+  // Clear per-player shop overrides so no tiles linger for a disconnected player.
+  for (const key of CHOICE_KEYS) {
+    try {
+      removePlayerTile(playerId, key);
+    } catch (_) {}
+  }
+  // HUD: back to 0 even while offline — next join starts from a clean slate.
+  try {
+    showPoints(playerId, 0);
+  } catch (_) {}
 };
 
 /**
