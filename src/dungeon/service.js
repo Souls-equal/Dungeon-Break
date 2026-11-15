@@ -397,10 +397,9 @@ export function createDungeonService(options) {
     const level = loader.levelState(dungeon.difficulty, playerId);
     if (!loader.discoverRoom(level, chunkX, chunkZ)) return 0;
     const aura = roomAuraFor(dungeon.difficulty);
-    const applied = api.applyAuraChange(playerId, aura);
-    const gain = typeof applied === "number" ? applied : aura;
+    api.applyAuraChange(playerId, aura);
     try {
-      api.sendFlyingMiddleMessage(playerId, [{ str: "+" + gain }, { icon: "Aura XP Orb" }], 50, 500);
+      api.sendFlyingMiddleMessage(playerId, [{ str: "+" + aura }, { icon: "Aura XP Orb" }, { str: " XP" }], 50, 500);
     } catch (_) {}
     return aura;
   }
