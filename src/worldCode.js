@@ -34,6 +34,13 @@ import {
   oddsOfTable,
   rollMessage,
 } from "./benediction/presentation.js";
+import { CRATE_KEYS, AIR_CHANCE, LOOT_TABLE } from "./crate/config.js";
+import {
+  getWeightedRandomItem as crateGetWeightedRandomItem,
+  hasKey as crateHasKey,
+  consumeKey as crateConsumeKey,
+  generateChest as crateGenerateChest,
+} from "./crate/service.js";
 
 const LOBBY_CONFIG = {
   countdownSeconds: 10,
@@ -971,6 +978,27 @@ onRespawnRequest = (playerId) => {
   api.sendMessage(playerId, "You died. Back to spawn — your dungeon stopped.");
   return LOBBY_POSITION;
 };
+
+// ----------------------------------------------------------- crate — global arrow API for code blocks --
+// Exposed as arrow functions so a Bloxd code block can call them: `a=()=>{}` pattern required.
+// `generateChest` is the entry point a code block calls: `generateChest(playerId, chestPos, rarity)`
+//
+var CRATE_KEYS_GLOBAL = CRATE_KEYS;
+var AIR_CHANCE_GLOBAL = AIR_CHANCE;
+var LOOT_TABLE_GLOBAL = LOOT_TABLE;
+
+// keep raw data also on globalThis for inspection / code-block access if needed
+globalThis.CRATE_KEYS = CRATE_KEYS;
+globalThis.AIR_CHANCE = AIR_CHANCE;
+globalThis.LOOT_TABLE = LOOT_TABLE;
+
+getWeightedRandomItem = (rarity) => crateGetWeightedRandomItem(rarity);
+hasKey = (playerId, rarity) => crateHasKey(api, playerId, rarity);
+consumeKey = (playerId, rarity) => crateConsumeKey(api, playerId, rarity);
+// main entry: must be arrow for code-block reachability
+generateChest = (playerId, chestPos, rarity) => crateGenerateChest(api, playerId, chestPos, rarity);
+// alias often used in examples
+openCrate = generateChest;
 
 // Kept for the reports: the level table is a public part of the world code.
 // The ladder, for the game side to read. No layer: a dungeon's height is drawn per
