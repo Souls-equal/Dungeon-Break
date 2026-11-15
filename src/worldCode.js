@@ -724,7 +724,8 @@ const SHOP_ITEMS = [
     item: {
       image: "spawnicon.png",
       customTitle: [{ translationKey: "classicGame:teleportToLobbySpawn" }],
-      description: [],
+      description: "Return to the lobby, at spawn. Stops the dungeon you are in.",
+      cost: 0,
       canBuy: true,
       sortPriority: 0,
     },
@@ -751,6 +752,17 @@ function registerShopItems() {
         // Nothing left to do.
       }
     }
+  }
+  // Category display name — not just the id — via customTitle with translationKey.
+  // Supports translationKeys as CustomTextStyling, like the button above.
+  try {
+    if (typeof api.configureShopCategory === "function") {
+      api.configureShopCategory(SHOP_CATEGORY, {
+        customTitle: [{ translationKey: "classicGame.utilities" }],
+      });
+    }
+  } catch (_) {
+    // The title is a nicety; the tile is the feature.
   }
 }
 
