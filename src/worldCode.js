@@ -367,7 +367,7 @@ playerCommand = (playerId, command) => {
 // moves the player and forgets the dungeon in the same call, so nothing is ever
 // generated for a player who is at spawn.
 
-const SHOP_CATEGORY = "Utilities";
+const SHOP_CATEGORY = "utilities";
 const SPAWN_ITEM = "Teleport to spawn";
 
 // ----------------------------------------------------------- benedictions --
