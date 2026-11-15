@@ -724,7 +724,7 @@ const SHOP_ITEMS = [
     item: {
       image: "spawnicon.png",
       customTitle: [{ translationKey: "classicGame:teleportToLobbySpawn" }],
-      //cost: 0,
+      description: [],
       canBuy: true,
       sortPriority: 0,
     },
