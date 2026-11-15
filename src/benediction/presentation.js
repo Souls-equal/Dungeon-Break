@@ -17,7 +17,7 @@
  * string is a message the game drops, and a card that fails is not worth a broken roll.
  */
 
-import { categoryOf, formatPercent, rgbOf, rarityOdds } from "./config.js";
+import { CHOICE_COUNT, categoryOf, formatPercent, rgbOf, rarityOdds } from "./config.js";
 
 /** The rarity name, in its own colour: what every surface shares. */
 export function rarityText(rarity) {
@@ -84,6 +84,59 @@ export function cardFor(benediction, rarity) {
       textAndIconColor: "white",
     },
   };
+}
+
+/**
+ * The picture of a family.
+ *
+ * The shop takes a **block name** as an image, so this is a table of blocks the player
+ * already knows, one per family: a shield for the body, armour for the gear, a bottle for
+ * the brews. Nothing is placed in the world — the game only draws the picture.
+ */
+const FAMILY_IMAGES = {
+  physical: "Block of Iron",
+  equipment: "Block of Diamond",
+  potion: "Potion Table",
+};
+
+/** The image of a family, and `Beacon` for a family nobody has a picture for. */
+export function imageOf(categoryId) {
+  return FAMILY_IMAGES[categoryId] || "Beacon";
+}
+
+/**
+ * The tile of one offered benediction: the shop's three choices, each a shop item.
+ *
+ * A shop tile is the only "card" a player can click, so an offer is three tiles whose
+ * titles are the benediction's name, whose descriptions carry the rarity, the family and
+ * what it does, and whose button is `Choose` — the shape of the request: roll, get three,
+ * pick one, the shop goes back to normal.
+ *
+ * The rarity is **named** rather than colour-coded: a tile's description is a single
+ * colour, and inventing a colour for it would be a second source of truth next to the
+ * table. `colour` rides along for the card drawn once a choice is made.
+ */
+export function choiceTile(draw, position) {
+  const { benediction, rarity } = draw;
+  const category = categoryOf(benediction.category);
+  return {
+    // A block name is an image the game already has, like the spawn item's. The family
+    // picks it, so three choices are never three identical tiles.
+    image: imageOf(benediction.category),
+    customTitle: benediction.name,
+    description: `${rarity.label} · ${category ? category.label : "Unknown"}\n${benediction.description}\nChoose it, or pick another of the ${CHOICE_COUNT}.`,
+    buyButtonText: "Choose",
+    cost: 0,
+    canBuy: true,
+    sortPriority: 100 - position,
+    onBoughtMessage: `${benediction.name} chosen.`,
+  };
+}
+
+/** `1. Iron Hide — Common · Physical`, for a line that has to list the offer. */
+export function offerLine(draw, position) {
+  const category = categoryOf(draw.benediction.category);
+  return `${position + 1}. ${draw.benediction.name} — ${draw.rarity.label} · ${category ? category.label : "Unknown"}`;
 }
 
 /** The one line the middle of the screen shows, kept short enough to read at a glance. */

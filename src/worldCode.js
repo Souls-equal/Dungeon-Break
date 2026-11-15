@@ -29,6 +29,8 @@ import { createBenedictionService } from "./benediction/service.js";
 import {
   announcementOf,
   cardFor,
+  choiceTile,
+  offerLine,
   oddsOfTable,
   rollDescription,
   rollMessage,
@@ -382,6 +384,10 @@ const BENEDICTION_CATEGORY = "Benedictions";
 const ROLL_ITEM = "Roll a Benediction";
 const LAST_ROLL_ITEM = "Last roll";
 const BENEDICTIONS_DB_KEY = "dungeonBreak.benedictions";
+/** The keys of the three choice tiles. Fixed, so the category can be emptied of them. */
+const CHOICE_KEYS = ["Choice 1", "Choice 2", "Choice 3"];
+/** Every tile this code ever puts in the category: what a refresh may delete. */
+const BENEDICTION_ITEMS = [ROLL_ITEM, LAST_ROLL_ITEM, ...CHOICE_KEYS];
 
 /** The bookkeeping, created once for the world. */
 let benedictionService = null;
@@ -427,19 +433,65 @@ function benedictionSummary(playerId, level) {
 }
 
 /**
- * Refreshes this player's benediction tiles.
+ * Empties the category of this player's tiles.
  *
- * Called on a join and after every roll. The tiles are per-player, so this is the only
- * place that writes them, and the only place that has to know a count changed.
+ * **A category cannot hold both a roll button and three choices**, and the request says so:
+ * rolling *replaces* the shop's buttons with the three choices. So every refresh starts by
+ * deleting what this code put there, then creates whatever the player should see now.
+ * Deleting an item that is not there throws, and is the normal case for a player's first
+ * join, so each delete is guarded on its own: one missing tile must not stop the rest of the
+ * category from being rebuilt.
+ */
+function clearBenedictionTiles(playerId) {
+  for (const itemKey of BENEDICTION_ITEMS) {
+    try {
+      api.deleteShopItemForPlayer(playerId, BENEDICTION_CATEGORY, itemKey);
+    } catch (_) {
+      // Not there: nothing to delete, which is not a failure.
+    }
+  }
+}
+
+/**
+ * Draws this player's benediction tiles: **either** the roll button **or** the three choices.
+ *
+ * An offer is what the category shows while it waits for a pick. A player who rolls, closes
+ * the shop and comes back sees the same three benedictions — the offer lives in the account,
+ * not in the shop, so closing the shop is not a free reroll.
+ *
+ * Called on a join, when the shop is opened, after a roll and after a choice. The tiles are
+ * per player: a count of points cannot be a shared tile.
  */
 function refreshBenedictionTiles(playerId) {
   const key = accountKeyOf(playerId);
   const level = auraLevelOf(playerId);
   const points = benedictions().pointsFor(key, level);
   const account = benedictions().accountOf(key);
+  clearBenedictionTiles(playerId);
 
-  // One tile, always present: it is the whole interface, and a player without points must
-  // still see what they are saving for.
+  if (account.offer.length > 0) {
+    // **The offer.** One tile per benediction, in the order it was drawn: the button says
+    // `Choose`, and picking one is the only thing that spends a point.
+    account.offer.forEach((draw, position) => {
+      try {
+        api.createShopItemForPlayer(playerId, BENEDICTION_CATEGORY, CHOICE_KEYS[position], choiceTile(draw, position));
+      } catch (error) {
+        logShopFailure(CHOICE_KEYS[position], error);
+      }
+    });
+    try {
+      api.configureShopCategoryForPlayer(playerId, BENEDICTION_CATEGORY, {
+        customTitle: "Choose one",
+        redDot: true,
+      });
+    } catch (_) {
+      // The title is a nicety; the tiles are the feature.
+    }
+    return points;
+  }
+
+  // **The roll.** One tile, always present: it is the whole interface, and a player without
+  // points must still see what they are saving for.
   try {
     api.createShopItemForPlayer(playerId, BENEDICTION_CATEGORY, ROLL_ITEM, {
       image: "Beacon",
@@ -456,8 +508,8 @@ function refreshBenedictionTiles(playerId) {
     logShopFailure(ROLL_ITEM, error);
   }
 
-  // The last roll, as its own tile: the name, in nothing but text, because a shop tile has
-  // one description colour. The rarity is spelled out, which is the part that matters.
+  // The last roll, as its own tile: the name in plain text, because a shop tile has one
+  // description colour. The rarity is spelled out, which is the part that matters.
   const last = account.history[0];
   if (last) {
     const rarity = RARITIES.find((entry) => entry.id === last.rarity);
@@ -473,6 +525,14 @@ function refreshBenedictionTiles(playerId) {
       logShopFailure(LAST_ROLL_ITEM, error);
     }
   }
+  try {
+    api.configureShopCategoryForPlayer(playerId, BENEDICTION_CATEGORY, {
+      customTitle: "Benedictions",
+      redDot: points > 0,
+    });
+  } catch (_) {
+    // Same: the title is a nicety.
+  }
   return points;
 }
 
@@ -485,46 +545,96 @@ function logShopFailure(itemKey, error) {
   }
 }
 
-/**
- * Pays for one roll and shows it.
- *
- * The point is spent by the service, which refuses when there is none — so a stale shop
- * tile (a sale the game let through one tick late) cannot buy a free roll. The card is
- * drawn after the chat line, because the card is the part that can fail: the player keeps
- * the message either way.
- */
-function rollBenediction(playerId) {
-  const key = accountKeyOf(playerId);
-  const level = auraLevelOf(playerId);
-  const result = benedictions().roll(key, level);
-  if (!result) {
-    api.sendMessage(playerId, "No Benediction point to spend. Discover a new room: every aura level gives one.");
-    refreshBenedictionTiles(playerId);
-    return false;
-  }
-
-  const { benediction, rarity } = result;
+/** Shows the chosen benediction the way a result is always shown: chat, banner, card. */
+function announceBenediction(playerId, benediction, rarity, pointsLeft) {
   api.sendMessage(playerId, rollMessage(benediction, rarity));
   api.sendMessage(
     playerId,
     `Benediction: ${benediction.name} — ${rarity.label} · ${categoryOf(benediction.category).label}`
-      + ` · ${result.pointsLeft} point${result.pointsLeft === 1 ? "" : "s"} left`,
+      + ` · ${pointsLeft} point${pointsLeft === 1 ? "" : "s"} left`,
   );
   // The middle of the screen, big: the rarity is what a player reads first.
   try {
     api.queueMiddleTextUpper(playerId, [{ str: announcementOf(benediction, rarity), style: { color: rarity.textColour } }], 2500);
   } catch (_) {
-    // The message and the card carry the news; a missing banner is not a lost roll.
+    // The message and the card carry the news; a missing banner is not a lost choice.
   }
   try {
     const card = cardFor(benediction, rarity);
     api.sendTopRightHelper(playerId, card.icon, card.text, card.opts);
   } catch (_) {
-    // Same: the roll happened.
+    // Same: the choice happened.
   }
+}
+
+/**
+ * Rolls: lays three benedictions out and spends **nothing**.
+ *
+ * The point is spent by the choice. A roll with no point is refused with a message, and a
+ * roll while an offer is open re-shows that offer instead of redrawing it — otherwise a
+ * player could roll, look, and roll again until the three were good.
+ */
+function rollBenediction(playerId) {
+  const key = accountKeyOf(playerId);
+  const level = auraLevelOf(playerId);
+  const offer = benedictions().roll(key, level);
+  if (!offer) {
+    api.sendMessage(playerId, "No Benediction point to spend. Discover a new room: every aura level gives one.");
+    refreshBenedictionTiles(playerId);
+    return false;
+  }
+  api.sendMessage(playerId, `Three Benedictions are offered. Pick one — it costs a point:`);
+  offer.forEach((draw, position) => api.sendMessage(playerId, offerLine(draw, position)));
+  // The offer goes into the database with the account: closing the game mid-choice must not
+  // give the roll a second life.
   persistBenedictions(playerId, key);
   refreshBenedictionTiles(playerId);
   return true;
+}
+
+/**
+ * Chooses one of the three: **this is the point being spent**.
+ *
+ * The service refuses anything that is not one of the offered benedictions — a stale tile,
+ * a card clicked after the offer was consumed — so the shop can never be charged for a
+ * choice that was not on screen. Then the shop goes **back to its normal state** and is
+ * **closed**, which is the visible half of the request: the pick is final, and the tile that
+ * brought the player here is gone.
+ */
+function chooseBenediction(playerId, position) {
+  const key = accountKeyOf(playerId);
+  const level = auraLevelOf(playerId);
+  const result = benedictions().choose(key, level, position);
+  if (!result) {
+    api.sendMessage(playerId, "That choice is no longer offered. Open the shop again.");
+    refreshBenedictionTiles(playerId);
+    return false;
+  }
+  announceBenediction(playerId, result.benediction, result.rarity, result.pointsLeft);
+  persistBenedictions(playerId, key);
+  refreshBenedictionTiles(playerId);
+  closeShop(playerId);
+  return true;
+}
+
+/**
+ * Closes the shop, if the game can.
+ *
+ * `openShop(playerId, toggle)` is the documented door, and `toggle: true` on an open shop is
+ * the only way to shut it. It is wrapped because a shop that stays open is a cosmetic
+ * problem, while an exception thrown from a callback is not: the choice has already been
+ * recorded by the time this runs.
+ */
+function closeShop(playerId) {
+  try {
+    api.openShop(playerId, true);
+  } catch (error) {
+    try {
+      api.log(`[Dungeon] the shop could not be closed for ${playerId}: ${error && error.message ? error.message : error}`);
+    } catch (_) {
+      // Nothing left to do.
+    }
+  }
 }
 
 /** Writes the account. The database is per player, and a failure is logged, never thrown. */
@@ -602,12 +712,17 @@ onPlayerBoughtShopItem = (playerId, categoryKey, itemKey) => {
   // A benediction roll: the point is checked in the service, so a tile the game let
   // through one tick after the last roll cannot buy a second one for free.
   if (categoryKey === BENEDICTION_CATEGORY) {
-    if (itemKey !== ROLL_ITEM) return;
     try {
-      rollBenediction(playerId);
+      if (itemKey === ROLL_ITEM) rollBenediction(playerId);
+      // A choice tile is one of three, and its key names its position in the offer: the
+      // offer itself is what decides what the pick was worth, not the key.
+      else {
+        const position = CHOICE_KEYS.indexOf(itemKey);
+        if (position >= 0) chooseBenediction(playerId, position);
+      }
     } catch (error) {
       try {
-        api.log(`[Dungeon] benediction roll failed: ${error && error.message ? error.message : error}`);
+        api.log(`[Dungeon] benediction failed: ${error && error.message ? error.message : error}`);
       } catch (_) {
         // Nothing left to do.
       }
