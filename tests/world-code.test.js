@@ -85,6 +85,7 @@ function createWorld(onlinePlayerIds, options = {}) {
   /** The cards drawn in the top-right corner, and the banners queued mid-screen. */
   const helperCards = [];
   const middleTexts = [];
+  const flyingMiddles = [];
   /** Which players have the shop open, the category configuration, and every open/close. */
   const shopOpen = new Set();
   const shopCategories = [];
@@ -228,6 +229,9 @@ function createWorld(onlinePlayerIds, options = {}) {
       queueMiddleTextUpper: (playerId, text, duration) => {
         middleTexts.push({ playerId, text, duration });
       },
+      sendFlyingMiddleMessage: (playerId, text, a, b) => {
+        flyingMiddles.push({ playerId, text, a, b });
+      },
       // Nothing may be written into a chunk, loaded or not: a write is a failure on
       // its own, and the fake keeps the world as the copies made it.
       setBlock: (x, y, z, blockName) => {
@@ -360,6 +364,7 @@ function createWorld(onlinePlayerIds, options = {}) {
     playerShop,
     helperCards,
     middleTexts,
+    flyingMiddles,
     clientOptions,
     positions,
     copies,
@@ -881,7 +886,7 @@ test("entering a dungeon puts mobs in the rooms around, and writes the entrance 
   assert.deepEqual(world.violations, [], "the mob code wrote a block into a room");
 });
 
-test("killing the last mob of a room says CLEAR and records the room", () => {
+test("killing the last mob of a room records the room", () => {
   const world = createWorld(["p1"]);
   startDungeon(world, "p1");
   world.tick(80);
@@ -890,13 +895,13 @@ test("killing the last mob of a room says CLEAR and records the room", () => {
   assert.ok(roomIds.length > 0, "there was nothing to kill");
   // Kill them one by one, as the game calls back.
   const before = world.blockDataWrites.length;
+  const chatBefore = said(world, "p1").length;
   for (const mobId of roomIds) {
     world.context.onPlayerKilledMob("p1", mobId);
     world.mobs.delete(mobId);
   }
   assert.ok(world.blockDataWrites.length > before, "the rooms cleared by the last kill were not recorded");
-  assert.ok(said(world, "p1").some((message) => message.includes("CLEAR")),
-    "the player was never told the room is clear");
+  assert.equal(said(world, "p1").length, chatBefore, "clearing a room should not send a chat message");
 });
 
 test("going back to spawn despawns the mobs of the dungeon", () => {
@@ -1038,8 +1043,14 @@ test("landing in the entrance pays for the room, once", () => {
   const paid = world.auraGiven.filter((entry) => entry.playerId === "p1");
   assert.equal(paid.length, 1, "the entrance was paid for more than once");
   assert.ok(paid[0].amount > 0, "the entrance paid no aura");
-  assert.ok(said(world, "p1").some((message) => message.includes("New room discovered")),
-    "the player was not told they discovered a room");
+  // Aura is now shown as a flying message, not a chat line.
+  const fly = world.flyingMiddles.filter((e) => e.playerId === "p1");
+  assert.ok(fly.length > 0, "the player was not shown the aura gain");
+  const last = fly.at(-1).text;
+  assert.ok(Array.isArray(last) && last[0].str && String(last[0].str).includes("+" + paid[0].amount),
+    "the flying message did not contain the aura amount");
+  assert.ok(said(world, "p1").every((message) => !message.includes("New room discovered")),
+    "the aura should not be announced in chat");
 });
 
 test("a room pays the first time it is walked into, and only the first time", () => {

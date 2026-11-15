@@ -398,7 +398,10 @@ export function createDungeonService(options) {
     if (!loader.discoverRoom(level, chunkX, chunkZ)) return 0;
     const aura = roomAuraFor(dungeon.difficulty);
     const applied = api.applyAuraChange(playerId, aura);
-    api.sendMessage(playerId, `New room discovered: +${typeof applied === "number" ? applied : aura} aura`);
+    const gain = typeof applied === "number" ? applied : aura;
+    try {
+      api.sendFlyingMiddleMessage(playerId, [{ str: "+" + gain }, { icon: "Aura XP Orb" }], 50, 500);
+    } catch (_) {}
     return aura;
   }
 
@@ -448,7 +451,6 @@ export function createDungeonService(options) {
     const level = loader.levelState(dungeon.difficulty, playerId);
     const cleared = loader.mobKilled(level, mobId);
     if (!cleared) return null;
-    api.sendMessage(playerId, "CLEAR — nothing left in this room.");
     return cleared;
   }
 
