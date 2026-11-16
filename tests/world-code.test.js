@@ -1200,8 +1200,8 @@ test("a roll offers three blessings and reserves the point; the choice spends it
   for (const { tile, name } of offerTiles(world)) {
     assert.equal(tile.canBuy, true, "an offered blessing cannot be picked");
     assert.equal(tile.buyButtonText, "Choose");
-    assert.equal(tile.currency, "Blessing Point");
-    assert.equal(tile.cost, 1);
+    assert.equal(tile.cost, 0, "choice must not auto-spend currency — spent via service only");
+    assert.ok(!tile.currency, "choice must not carry currency to avoid double spend on roll+choose");
     // customTitle is now just the name (per user snippet)
     assert.equal(tile.customTitle, name);
     assert.ok(!/\((PERM|RUN|TIMED)\)$/.test(tile.customTitle), "old scope suffix should be gone");
@@ -1651,8 +1651,8 @@ test("the blessing tile names the rarity and type with cool hexa colors", () => 
     // image per category/rarity
     if (b.category === "equipment") assert.ok(tile.image.includes("Chestplate"));
     if (b.category === "physical") assert.ok(tile.image.includes("Block of"));
-    assert.equal(tile.cost, 1);
-    assert.equal(tile.currency, "Blessing Point");
+    assert.equal(tile.cost, 0, "choice must not auto-spend currency");
+    assert.ok(!tile.currency, "choice must not carry currency");
   }
 });
 
