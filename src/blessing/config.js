@@ -92,7 +92,7 @@ export const BLESSINGS = [
     scope: "permanent",
     icon: "Max Health",
     cardIcon: "fa-solid fa-heart-pulse",
-    description: "+5 max health, permanently. It stacks — ten of these is another player.",
+    description: "+5 max health, permanently.",
     effect: { kind: "client", option: "maxHealth", mode: "add", amount: 5 },
   },
   {
@@ -103,7 +103,7 @@ export const BLESSINGS = [
     scope: "permanent",
     icon: "Damage Reduction",
     cardIcon: "fa-solid fa-shield-halved",
-    description: "-1 % damage taken, permanently. Capped at -40 %: nothing makes you immune.",
+    description: "-1 % damage taken, permanently. \nCapped at -40 %.",
     effect: { kind: "client", option: "receivingDamageMultiplier", mode: "add", amount: -0.01, floor: 0.6 },
   },
   {
@@ -193,7 +193,7 @@ export const BLESSINGS = [
     scope: "run",
     icon: "Thorns",
     cardIcon: "fa-solid fa-seedling",
-    description: "Thorns: whatever hits you takes damage back. Lasts this run.",
+    description: "Thorns: whatever hits you takes damage back.",
     effect: { kind: "potion", effectName: "Thorns", level: 1, durationMs: null },
   },
   {
@@ -226,7 +226,7 @@ export const BLESSINGS = [
     scope: "run",
     icon: "Wall Climbing",
     cardIcon: "fa-solid fa-spider",
-    description: "Climb walls for this run. Floors are optional.",
+    description: "Climb walls for this run.",
     effect: { kind: "client", option: "canClimbWalls", mode: "set", value: true },
   },
 
@@ -310,7 +310,7 @@ export const BLESSINGS = [
     scope: "run",
     icon: "Speed",
     cardIcon: "fa-solid fa-person-running",
-    description: "+20% speed but -10% damage for this run. Travel light, hit light.",
+    description: "+20% speed but -10% damage for this run.",
     effect: { kind: "client", option: "speedMultiplier", mode: "add", amount: 0.20, second: { option: "dealingDamageMultiplier", amount: -0.10 } },
   },
   {
@@ -321,7 +321,7 @@ export const BLESSINGS = [
     scope: "run",
     icon: "Speed",
     cardIcon: "fa-solid fa-feather-pointed",
-    description: "+15% speed but -10 max health for this run. Hollow bones soar, but shatter.",
+    description: "+15% speed but -10 max health for this run.",
     effect: { kind: "client", option: "speedMultiplier", mode: "add", amount: 0.15, second: { option: "maxHealth", amount: -10 } },
   },
   {
@@ -332,7 +332,7 @@ export const BLESSINGS = [
     scope: "run",
     icon: "Bounciness",
     cardIcon: "fa-solid fa-basketball",
-    description: "+15% speed but +8% damage taken for this run. Bouncy, but clumsy.",
+    description: "+15% speed but +8% damage taken for this run.",
     effect: { kind: "client", option: "speedMultiplier", mode: "add", amount: 0.15, second: { option: "receivingDamageMultiplier", amount: 0.08 } },
   },
   {
@@ -343,7 +343,7 @@ export const BLESSINGS = [
     scope: "run",
     icon: "Max Health",
     cardIcon: "fa-solid fa-compass",
-    description: "+12 max health but -8% damage for this run. Endurance over power.",
+    description: "+12 max health but -8% damage for this run.",
     effect: { kind: "client", option: "maxHealth", mode: "add", amount: 12, second: { option: "dealingDamageMultiplier", amount: -0.08 } },
   },
   // Uncommon run tradeoffs
@@ -355,7 +355,7 @@ export const BLESSINGS = [
     scope: "run",
     icon: "Damage",
     cardIcon: "fa-solid fa-fire",
-    description: "+25% damage but +12% damage taken for this run. Rage (Hades Ares).",
+    description: "+25% damage but +12% damage taken for this run.",
     effect: { kind: "client", option: "dealingDamageMultiplier", mode: "add", amount: 0.25, second: { option: "receivingDamageMultiplier", amount: 0.12 } },
   },
   {
@@ -366,7 +366,7 @@ export const BLESSINGS = [
     scope: "run",
     icon: "Speed",
     cardIcon: "fa-solid fa-wind",
-    description: "+30% speed but -12 max health for this run. Light as feather (Celeste).",
+    description: "+30% speed but -12 max health for this run.",
     effect: { kind: "client", option: "speedMultiplier", mode: "add", amount: 0.30, second: { option: "maxHealth", amount: -12 } },
   },
   {
@@ -377,7 +377,7 @@ export const BLESSINGS = [
     scope: "run",
     icon: "Frozen",
     cardIcon: "fa-solid fa-snowflake",
-    description: "-18% damage taken but -18% speed for this run. Ice armor, frozen feet.",
+    description: "-18% damage taken but -18% speed for this run.",
     effect: { kind: "client", option: "receivingDamageMultiplier", mode: "add", amount: -0.18, second: { option: "speedMultiplier", amount: -0.18 } },
   },
   {
@@ -388,7 +388,7 @@ export const BLESSINGS = [
     scope: "run",
     icon: "Protection Enchantment",
     cardIcon: "fa-solid fa-shield",
-    description: "-15% damage taken but -15% speed for this run. Walking fortress.",
+    description: "-15% damage taken but -15% speed for this run.",
     effect: { kind: "client", option: "receivingDamageMultiplier", mode: "add", amount: -0.15, second: { option: "speedMultiplier", amount: -0.15 } },
   },
   {
@@ -399,7 +399,7 @@ export const BLESSINGS = [
     scope: "run",
     icon: "Speed",
     cardIcon: "fa-solid fa-eye",
-    description: "+15 max health but -10% speed for this run. See far, body frail.",
+    description: "+15 max health but -10% speed for this run.",
     effect: { kind: "client", option: "maxHealth", mode: "add", amount: 15, second: { option: "speedMultiplier", amount: -0.10 } },
   },
   // Rare run tradeoffs
@@ -411,7 +411,7 @@ export const BLESSINGS = [
     scope: "run",
     icon: "Speed",
     cardIcon: "fa-solid fa-wind",
-    description: "+35% speed but +15% damage taken for this run. Storm in legs, paper skin.",
+    description: "+35% speed but +15% damage taken for this run.",
     effect: { kind: "client", option: "speedMultiplier", mode: "add", amount: 0.35, second: { option: "receivingDamageMultiplier", amount: 0.15 } },
   },
   {
@@ -422,7 +422,7 @@ export const BLESSINGS = [
     scope: "run",
     icon: "Max Health",
     cardIcon: "fa-solid fa-heart-pulse",
-    description: "+45 max health but -20% speed for this run. Giant's heart, giant's weight (Risk of Rain).",
+    description: "+45 max health but -20% speed for this run.",
     effect: { kind: "client", option: "maxHealth", mode: "add", amount: 45, second: { option: "speedMultiplier", amount: -0.20 } },
   },
   {
@@ -433,7 +433,7 @@ export const BLESSINGS = [
     scope: "run",
     icon: "Damage Enchantment",
     cardIcon: "fa-solid fa-gun",
-    description: "+40% damage but -20 max health for this run. One shot, one chance.",
+    description: "+40% damage but -20 max health for this run.",
     effect: { kind: "client", option: "dealingDamageMultiplier", mode: "add", amount: 0.40, second: { option: "maxHealth", amount: -20 } },
   },
   {
@@ -444,7 +444,7 @@ export const BLESSINGS = [
     scope: "run",
     icon: "Invisibility",
     cardIcon: "fa-solid fa-ghost",
-    description: "Can climb walls but -15 max health for this run. Ghost walk (Hades).",
+    description: "Can climb walls but -15 max health for this run.",
     effect: { kind: "client", option: "canClimbWalls", mode: "set", value: true, second: { option: "maxHealth", amount: -15 } },
   },
   {
@@ -455,7 +455,7 @@ export const BLESSINGS = [
     scope: "run",
     icon: "Damage",
     cardIcon: "fa-solid fa-fire-flame-curved",
-    description: "+25% damage but -10 max health for this run. Burning core.",
+    description: "+25% damage but -10 max health for this run.",
     effect: { kind: "client", option: "dealingDamageMultiplier", mode: "add", amount: 0.25, second: { option: "maxHealth", amount: -10 } },
   },
   {
@@ -466,7 +466,7 @@ export const BLESSINGS = [
     scope: "run",
     icon: "Poisoned",
     cardIcon: "fa-solid fa-skull-crossbones",
-    description: "+22% damage but +8% damage taken for this run. Venomous steel.",
+    description: "+22% damage but +8% damage taken for this run.",
     effect: { kind: "client", option: "dealingDamageMultiplier", mode: "add", amount: 0.22, second: { option: "receivingDamageMultiplier", amount: 0.08 } },
   },
   // Epic run tradeoffs
@@ -478,7 +478,7 @@ export const BLESSINGS = [
     scope: "run",
     icon: "Damage Reduction",
     cardIcon: "fa-solid fa-shield-halved",
-    description: "-30% damage taken but -25% speed for this run. Immovable object.",
+    description: "-30% damage taken but -25% speed for this run.",
     effect: { kind: "client", option: "receivingDamageMultiplier", mode: "add", amount: -0.30, second: { option: "speedMultiplier", amount: -0.25 } },
   },
   {
@@ -489,7 +489,7 @@ export const BLESSINGS = [
     scope: "run",
     icon: "Jump Boost",
     cardIcon: "fa-solid fa-person-jumping",
-    description: "+35 max health but +15% damage taken for this run. Giant's leap, giant's fall.",
+    description: "+35 max health but +15% damage taken for this run.",
     effect: { kind: "client", option: "maxHealth", mode: "add", amount: 35, second: { option: "receivingDamageMultiplier", amount: 0.15 } },
   },
   {
@@ -500,7 +500,7 @@ export const BLESSINGS = [
     scope: "run",
     icon: "Damage",
     cardIcon: "fa-solid fa-hammer",
-    description: "+30% damage but -15 max health for this run. Break world, break self.",
+    description: "+30% damage but -15 max health for this run.",
     effect: { kind: "client", option: "dealingDamageMultiplier", mode: "add", amount: 0.30, second: { option: "maxHealth", amount: -15 } },
   },
   {
@@ -511,7 +511,7 @@ export const BLESSINGS = [
     scope: "run",
     icon: "Thorns",
     cardIcon: "fa-solid fa-leaf",
-    description: "-18% damage taken but -12% speed for this run. Thorns protect, thorns snag.",
+    description: "-18% damage taken but -12% speed for this run.",
     effect: { kind: "client", option: "receivingDamageMultiplier", mode: "add", amount: -0.18, second: { option: "speedMultiplier", amount: -0.12 } },
   },
   {
@@ -522,7 +522,7 @@ export const BLESSINGS = [
     scope: "run",
     icon: "Haste",
     cardIcon: "fa-solid fa-stopwatch",
-    description: "+30% speed but +12% damage taken for this run. Time hurries you.",
+    description: "+30% speed but +12% damage taken for this run.",
     effect: { kind: "client", option: "speedMultiplier", mode: "add", amount: 0.30, second: { option: "receivingDamageMultiplier", amount: 0.12 } },
   },
   // Legendary run tradeoffs
@@ -534,7 +534,7 @@ export const BLESSINGS = [
     scope: "run",
     icon: "Invisibility",
     cardIcon: "fa-solid fa-moon",
-    description: "+35% speed but -20 max health for this run. Hunter in dark.",
+    description: "+35% speed but -20 max health for this run.",
     effect: { kind: "client", option: "speedMultiplier", mode: "add", amount: 0.35, second: { option: "maxHealth", amount: -20 } },
   },
   {
@@ -545,7 +545,7 @@ export const BLESSINGS = [
     scope: "run",
     icon: "Max Health",
     cardIcon: "fa-solid fa-shoe-prints",
-    description: "+40 max health but -18% speed for this run. Every step quakes.",
+    description: "+40 max health but -18% speed for this run.",
     effect: { kind: "client", option: "maxHealth", mode: "add", amount: 40, second: { option: "speedMultiplier", amount: -0.18 } },
   },
   {
@@ -556,7 +556,7 @@ export const BLESSINGS = [
     scope: "run",
     icon: "VoidJump",
     cardIcon: "fa-solid fa-atom",
-    description: "+35% damage but +20% damage taken for this run. Core of void.",
+    description: "+35% damage but +20% damage taken for this run.",
     effect: { kind: "client", option: "dealingDamageMultiplier", mode: "add", amount: 0.35, second: { option: "receivingDamageMultiplier", amount: 0.20 } },
   },
   {
@@ -567,7 +567,7 @@ export const BLESSINGS = [
     scope: "run",
     icon: "Protection Enchantment",
     cardIcon: "fa-solid fa-shield-heart",
-    description: "+50 max health but -12% damage for this run. Divine tank (Hades Athena).",
+    description: "+50 max health but -12% damage for this run.",
     effect: { kind: "client", option: "maxHealth", mode: "add", amount: 50, second: { option: "dealingDamageMultiplier", amount: -0.12 } },
   },
   {
@@ -578,7 +578,7 @@ export const BLESSINGS = [
     scope: "run",
     icon: "Brain Rot",
     cardIcon: "fa-solid fa-skull",
-    description: "+30% damage but +18% damage taken for this run. Void gives, void takes.",
+    description: "+30% damage but +18% damage taken for this run.",
     effect: { kind: "client", option: "dealingDamageMultiplier", mode: "add", amount: 0.30, second: { option: "receivingDamageMultiplier", amount: 0.18 } },
   },
   {
@@ -589,7 +589,7 @@ export const BLESSINGS = [
     scope: "run",
     icon: "Health",
     cardIcon: "fa-solid fa-vest-patches",
-    description: "+40 max health but -10% damage for this run. Greed is armor.",
+    description: "+40 max health but -10% damage for this run.",
     effect: { kind: "client", option: "maxHealth", mode: "add", amount: 40, second: { option: "dealingDamageMultiplier", amount: -0.10 } },
   },
   // Permanent tradeoffs (stacking forever — Isaac-like)
@@ -601,7 +601,7 @@ export const BLESSINGS = [
     scope: "permanent",
     icon: "Max Health",
     cardIcon: "fa-solid fa-heart",
-    description: "+8 max health but -7% speed, permanently. Heavy core.",
+    description: "+8 max health but -7% speed, permanently.",
     effect: { kind: "client", option: "maxHealth", mode: "add", amount: 8, second: { option: "speedMultiplier", amount: -0.07 } },
   },
   {
@@ -612,7 +612,7 @@ export const BLESSINGS = [
     scope: "permanent",
     icon: "Damage Enchantment",
     cardIcon: "fa-solid fa-swords",
-    description: "+3% damage but -2 max health, permanently. Razor's price.",
+    description: "+3% damage but -2 max health, permanently.",
     effect: { kind: "client", option: "dealingDamageMultiplier", mode: "add", amount: 0.03, second: { option: "maxHealth", amount: -2 } },
   },
   {
@@ -623,7 +623,7 @@ export const BLESSINGS = [
     scope: "permanent",
     icon: "Health",
     cardIcon: "fa-solid fa-droplet",
-    description: "+12 max health but +6% damage taken, permanently. Cursed blood (Isaac).",
+    description: "+12 max health but +6% damage taken, permanently.",
     effect: { kind: "client", option: "maxHealth", mode: "add", amount: 12, second: { option: "receivingDamageMultiplier", amount: 0.06 } },
   },
   {
@@ -634,7 +634,7 @@ export const BLESSINGS = [
     scope: "permanent",
     icon: "Speed",
     cardIcon: "fa-solid fa-wind",
-    description: "+6% speed but -3 max health, permanently. Fleet, frail.",
+    description: "+6% speed but -3 max health, permanently.",
     effect: { kind: "client", option: "speedMultiplier", mode: "add", amount: 0.06, second: { option: "maxHealth", amount: -3 } },
   },
   {
@@ -645,7 +645,7 @@ export const BLESSINGS = [
     scope: "permanent",
     icon: "Damage Reduction",
     cardIcon: "fa-solid fa-mountain",
-    description: "+15 max health but -10% speed, permanently. Adamant weight.",
+    description: "+15 max health but -10% speed, permanently.",
     effect: { kind: "client", option: "maxHealth", mode: "add", amount: 15, second: { option: "speedMultiplier", amount: -0.10 } },
   },
   {
@@ -656,7 +656,7 @@ export const BLESSINGS = [
     scope: "permanent",
     icon: "Damage",
     cardIcon: "fa-solid fa-gun",
-    description: "+4% damage but -5 max health, permanently. Glass stacks sharp.",
+    description: "+4% damage but -5 max health, permanently.",
     effect: { kind: "client", option: "dealingDamageMultiplier", mode: "add", amount: 0.04, second: { option: "maxHealth", amount: -5 } },
   },
   // Extra timed for variety (pure, since timed only potion)
@@ -679,7 +679,7 @@ export const BLESSINGS = [
     scope: "timed",
     icon: "Invisibility",
     cardIcon: "fa-solid fa-ghost",
-    description: "Invisibility for 30 seconds. Vanish.",
+    description: "Invisibility for 30 seconds.",
     effect: { kind: "potion", effectName: "Invisibility", level: 1, durationMs: 30000 },
   },
   {
@@ -690,7 +690,7 @@ export const BLESSINGS = [
     scope: "timed",
     icon: "Damage",
     cardIcon: "fa-solid fa-bolt",
-    description: "Damage II for 40 seconds. Frenzy!",
+    description: "Damage II for 40 seconds.",
     effect: { kind: "potion", effectName: "Damage", level: 2, durationMs: 40000 },
   },
 
@@ -703,7 +703,7 @@ export const BLESSINGS = [
     scope: "permanent",
     icon: "Lifesteal",
     cardIcon: "fa-solid fa-gem",
-    description: "+25 max health and -5 % damage taken, permanently. It stacks.",
+    description: "+25 max health and -5 % damage taken, permanently.",
     effect: {
       kind: "client",
       option: "maxHealth",
