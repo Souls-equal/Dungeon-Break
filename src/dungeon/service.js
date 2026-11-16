@@ -461,7 +461,7 @@ export function createDungeonService(options) {
       api.sendFlyingMiddleMessage(playerId, [{ str: "+" + aura }, { icon: "Aura XP Orb" }, { str: " XP" }], 50, 500);
     } catch (_) {}
     if (onRoomDiscovered) {
-      try { onRoomDiscovered(playerId); } catch(_){}
+      try { onRoomDiscovered(playerId, chunkX, chunkZ, dungeon.difficulty); } catch(_){}
     }
     return aura;
   }
