@@ -34,19 +34,19 @@
  * renderers, no guessing about what a colour string means on the way in.
  */
 export const RARITIES = [
-  { id: "common", label: "Common", colour: "#9e9e9e", textColour: "gray", weight: 1000 },
-  { id: "uncommon", label: "Uncommon", colour: "#55ff55", textColour: "lime", weight: 420 },
-  { id: "rare", label: "Rare", colour: "#55aaff", textColour: "dodgerblue", weight: 160 },
-  { id: "epic", label: "Epic", colour: "#c04bff", textColour: "mediumorchid", weight: 60 },
-  { id: "legendary", label: "Legendary", colour: "#ff9d00", textColour: "orange", weight: 18 },
-  { id: "mythic", label: "Mythic", colour: "#ff2d2d", textColour: "red", weight: 4 },
+  { id: "common", label: "Common", colour: "#95A5A6", textColour: "#95A5A6", weight: 1000 },
+  { id: "uncommon", label: "Uncommon", colour: "#2ECC71", textColour: "#2ECC71", weight: 420 },
+  { id: "rare", label: "Rare", colour: "#3498DB", textColour: "#3498DB", weight: 160 },
+  { id: "epic", label: "Epic", colour: "#9B59B6", textColour: "#9B59B6", weight: 60 },
+  { id: "legendary", label: "Legendary", colour: "#F1C40F", textColour: "#F1C40F", weight: 18 },
+  { id: "mythic", label: "Mythic", colour: "#E74C3C", textColour: "#E74C3C", weight: 4 },
 ];
 
 /** The three families the owner asked for. A blessing belongs to exactly one. */
 export const CATEGORIES = [
-  { id: "physical", label: "Physical" },
-  { id: "equipment", label: "Equipment" },
-  { id: "potion", label: "Potion effect" },
+  { id: "physical", label: "Physical", colour: "#1ABC9C", textColour: "#1ABC9C" },
+  { id: "equipment", label: "Equipment", colour: "#E67E22", textColour: "#E67E22" },
+  { id: "potion", label: "Potion effect", colour: "#8E44AD", textColour: "#8E44AD" },
 ];
 
 /**

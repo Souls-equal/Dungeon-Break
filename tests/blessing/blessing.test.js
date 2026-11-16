@@ -59,9 +59,9 @@ test("the six rarities are the owner's, in his order and his colours", () => {
   assert.deepEqual(RARITIES.map((entry) => entry.label), [
     "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic",
   ]);
-  // Grey, green, blue, purple, orange, red — the owner's list, one for one.
+  // Cool hexa palette per user request — updated from owner's old palette
   assert.deepEqual(RARITIES.map((entry) => entry.colour), [
-    "#9e9e9e", "#55ff55", "#55aaff", "#c04bff", "#ff9d00", "#ff2d2d",
+    "#95A5A6", "#2ECC71", "#3498DB", "#9B59B6", "#F1C40F", "#E74C3C",
   ]);
   for (const rarity of RARITIES) {
     assert.ok(rarity.textColour, `${rarity.label} has no colour for styled text`);
