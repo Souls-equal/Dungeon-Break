@@ -41,7 +41,8 @@ import {
   hasKey as crateHasKey,
   consumeKey as crateConsumeKey,
   generateChest as crateGenerateChest,
-  isChestLocked as crateIsChestLocked,
+  isChestOwnedByOther as crateIsOwnedByOther,
+  tickCrateLocks as crateTick,
 } from "./crate/service.js";
 
 const LOBBY_CONFIG = {
@@ -1272,21 +1273,19 @@ onRespawnRequest = (playerId) => {
   return LOBBY_POSITION;
 };
 
-// ----------------------------------------------------------- crate lock — prevent stealing --
+// ----------------------------------------------------------- crate lock — prevent stealing (only roller can open, no exceptions) --
 onPlayerAttemptOpenChest = (playerId, x, y, z, isMoonstoneChest, isIronChest) => {
   if (isMoonstoneChest) return;
   try {
-    if (crateIsChestLocked(api, [x, y, z], playerId)) {
+    if (crateIsOwnedByOther(api, [x, y, z], playerId)) {
       let data = null;
       try { data = api.getBlockData(x, y, z); } catch (_) {}
-      const now = (typeof api.now === "function" ? api.now() : Date.now());
-      const remaining = data && data.crateLockUntil ? Math.ceil((data.crateLockUntil - now) / 1000) : 8;
       let ownerDisplay = data && (data.crateOwnerName || data.crateOwnerId) ? (data.crateOwnerName || data.crateOwnerId) : "another player";
       try { const n = api.getEntityName ? api.getEntityName(data.crateOwnerId) : null; if (n) ownerDisplay = n; } catch (_) {}
       try {
-        api.sendMessage(playerId, "This crate is being used by " + ownerDisplay + " - please wait " + remaining + "s", { color: "red" });
+        api.sendMessage(playerId, "This crate belongs to " + ownerDisplay + " — only they can open it.", { color: "red" });
       } catch (_) {
-        try { api.sendMessage(playerId, "This crate is being used by another player - please wait " + remaining + "s"); } catch (_) {}
+        try { api.sendMessage(playerId, "This crate belongs to another player."); } catch (_) {}
       }
       return "preventOpen";
     }
@@ -1318,6 +1317,11 @@ openCrate = generateChest;
 // The ladder, for the game side to read. No layer: a dungeon's height is drawn per
 // entry, so the only place that knows it is the dungeon itself.
 globalThis.DUNGEON_LEVELS = DIFFICULTIES.map((entry) => ({ id: entry.id, label: entry.label }));
+
+// Crate 16s protection: test every second if owner is >6 blocks away, then clear
+scheduleInterval(() => {
+  try { crateTick(api); } catch (_) {}
+}, 20);
 
 // The shop is registered once at load; `onPlayerJoin` repeats it for the first player.
 registerShopItems();

@@ -3,7 +3,10 @@
  * Mirrors the example given by the user exactly.
  */
 
-import { CRATE_KEYS, AIR_CHANCE, LOOT_TABLE, CRATE_LOCK_MS } from "./config.js";
+import { CRATE_KEYS, AIR_CHANCE, LOOT_TABLE, CRATE_LOCK_MS, CRATE_CLEAR_DISTANCE } from "./config.js";
+
+// Registry for 16s roll protection — tested every second per spec
+const activeCrates = new Map(); // key "x|y|z" -> { x, y, z, ownerId, lockUntil }
 
 export function getWeightedRandomItem(rarity, random = Math.random) {
   const list = LOOT_TABLE[rarity];
@@ -112,6 +115,63 @@ export function setChestOwner(api, chestPos, playerId, rarity) {
     crateLockUntil: now + CRATE_LOCK_MS,
   };
   try { api.setBlockData(p.x, p.y, p.z, merged); } catch (_) {}
+  // track for 16s roll protection + distance clear
+  const key = `${p.x}|${p.y}|${p.z}`;
+  activeCrates.set(key, { x: p.x, y: p.y, z: p.z, ownerId: playerId, lockUntil: now + CRATE_LOCK_MS });
+}
+
+export function clearCrateLock(api, chestPos) {
+  const p = normalizeChestPos(chestPos);
+  if (!p) return;
+  const key = `${p.x}|${p.y}|${p.z}`;
+  activeCrates.delete(key);
+  let data = null;
+  try { data = api.getBlockData(p.x, p.y, p.z); } catch (_) { data = null; }
+  if (!data || typeof data !== "object") return;
+  if (!data.crateOwnerId && !data.crateLockUntil) return;
+  const { crateOwnerId, crateOwnerName, crateRarity, crateOpenedAt, crateLockUntil, ...rest } = data;
+  try { api.setBlockData(p.x, p.y, p.z, rest); } catch (_) {}
+  // if no other data, clear to empty
+  try {
+    if (Object.keys(rest).length === 0) api.setBlockData(p.x, p.y, p.z, {});
+  } catch (_) {}
+}
+
+export function tickCrateLocks(api) {
+  if (activeCrates.size === 0) return;
+  const now = nowMs(api);
+  for (const [key, crate] of [...activeCrates.entries()]) {
+    if (now >= crate.lockUntil) {
+      clearCrateLock(api, [crate.x, crate.y, crate.z]);
+      continue;
+    }
+    let pos = null;
+    try {
+      pos = api.getPosition(crate.ownerId);
+    } catch (_) { pos = null; }
+    if (!pos || !Array.isArray(pos) || pos.length < 3) {
+      // owner offline or no position — keep lock until timeout (don't auto-clear on leave)
+      continue;
+    }
+    const dx = pos[0] - (crate.x + 0.5);
+    const dy = pos[1] - (crate.y + 0.5);
+    const dz = pos[2] - (crate.z + 0.5);
+    const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (dist > CRATE_CLEAR_DISTANCE) {
+      clearCrateLock(api, [crate.x, crate.y, crate.z]);
+    }
+  }
+}
+
+// Only roller can open — no exceptions (new barrier)
+export function isChestOwnedByOther(api, chestPos, playerId) {
+  const p = normalizeChestPos(chestPos);
+  if (!p) return false;
+  let data = null;
+  try { data = api.getBlockData(p.x, p.y, p.z); } catch (_) { data = null; }
+  if (!data || typeof data !== "object") return false;
+  if (!data.crateOwnerId) return false;
+  return data.crateOwnerId !== playerId;
 }
 
 export function isChestLocked(api, chestPos, playerId) {
@@ -121,7 +181,7 @@ export function isChestLocked(api, chestPos, playerId) {
   try { data = api.getBlockData(p.x, p.y, p.z); } catch (_) { data = null; }
   if (!data || typeof data !== "object") return false;
   if (!data.crateOwnerId || !data.crateLockUntil) return false;
-  if (data.crateOwnerId === playerId) return false; // même joueur a la priorité
+  if (data.crateOwnerId === playerId) return false; // owner can re-roll
   const now = nowMs(api);
   return now < data.crateLockUntil;
 }
