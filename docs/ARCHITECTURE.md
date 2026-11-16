@@ -1,6 +1,6 @@
 # Architecture — génération par copies de chunks
 
-**Statut : livré.** 8 modules, 148 tests verts, bundle de 42 k caractères sur les 512 k autorisés.
+**Statut : livré.** 9 modules, 163 tests verts, bundle de 42 k caractères sur les 512 k autorisés.
 
 Ce document remplace l'architecture par ouvertures des Phases 0 à 4, supprimée avec son moteur. Il décrit ce qui existe, pas ce qui est prévu : toute divergence entre ce texte et le code est un défaut du texte.
 
@@ -40,9 +40,10 @@ src/dungeon/config.js      toutes les constantes, la table des difficultés
 src/dungeon/templates.js   où sont les modèles (coordonnées à remplir), le tirage
 src/dungeon/loader.js      la file et la copie
 src/dungeon/service.js     entrée dans un niveau, atterrissage, pad, rapports
-src/benediction/config.js  raretés, familles, catalogue, chances, tirage
-src/benediction/service.js points, dépenses, historique
-src/benediction/presentation.js  carte, ligne de chat, tuile de boutique
+src/blessing/config.js  raretés, familles, portées, catalogue, chances, tirage
+src/blessing/service.js points, dépenses, historique, ce que le joueur détient
+src/blessing/effects.js addition des effets, options client, sauvegarde des permanents
+src/blessing/presentation.js  carte, ligne de chat, tuile de boutique
 src/worldCode.js           lobby, pads, boutique, commandes /dbg
 ```
 
@@ -320,77 +321,85 @@ Trois détails, et chacun est une décision :
 
 L'aura déjà gagnée reste acquise : elle appartient au joueur, pas au run.
 
-## 6septies. Bénédictions : une devise, trois choix, rien de sauvegardé
+## 6septies. Blessings : une devise, trois choix, trois durées de vie
 
 L'aura ne sert plus seulement à monter : **chaque niveau d'aura donne un point**, et un point
-s'échange contre **une bénédiction choisie parmi trois**. Trois modules, trois responsabilités,
-et aucune ne déborde sur les autres :
+s'échange contre **une Blessing choisie parmi trois**. Quatre modules, quatre responsabilités,
+et aucun ne déborde sur les autres :
 
 | Module | Ce qu'il possède | Ce qu'il ignore |
 | --- | --- | --- |
-| `benediction/config.js` | raretés, familles, catalogue, poids, tirages, points, échelle et plafond d'aura | le jeu, le joueur, la boutique |
-| `benediction/service.js` | réserve, dépenses, offre, historique — **en mémoire** | `api`, le rendu, le shop, la base de données |
-| `benediction/presentation.js` | carte, ligne de chat, bannière, tuile | où et quand c'est montré |
+| `blessing/config.js` | raretés, familles, **portées**, catalogue, poids, tirages, points, échelle et plafond d'aura | le jeu, le joueur, la boutique |
+| `blessing/service.js` | réserve, dépenses, offre, historique, **ce que le joueur détient** — en mémoire | `api`, le rendu, le shop, la base de données |
+| `blessing/effects.js` | **comment les effets s'additionnent**, les options client qui en sortent, la (dé)sérialisation de la sauvegarde | `api`, le rendu, les tuiles |
+| `blessing/presentation.js` | carte, ligne de chat, bannière, tuile | où et quand c'est montré |
 
 `src/worldCode.js` ne fait que les appels : c'est la même frontière que pour `src/dungeon/`, et
 c'est ce qui permet de tester la mécanique sans faux serveur.
 
-**Le point est une devise, pas un compteur.** `setCurrency(playerId, "Benediction Point",
-{ amount, icon, iconColour, persistent: false })` le définit et l'affiche sur le HUD ;
-`setCurrencyAmount` le déplace quand un point est dépensé. `persistent: false` est la règle du
-propriétaire écrite là où elle est appliquée : **rien ne survit à une reconnexion**, pas même le
-solde. Le compte de points est donc **en mémoire**, tenu par `service.js`, et il n'y a **aucune
-lecture ni écriture de base de données** dans tout ce module — ni `getPlayerDbValue`, ni
-`setPlayerDbValue`, ni identifiant permanent. Un test vérifie même que le service **n'expose
-aucune** fonction de sauvegarde.
+**Le point est une devise, pas un compteur.** `setCurrency(playerId, "Blessing Point", { amount,
+icon, iconColour, persistent: false })` le définit et l'affiche sur le HUD ; `setCurrencyAmount`
+le déplace quand un point est dépensé. `persistent: false` est la règle du propriétaire écrite là
+où elle est appliquée : **le solde ne survit pas à une reconnexion**. Le compte de points est donc
+**en mémoire**, tenu par `service.js`, et les points sont **dérivés** du niveau, jamais comptés.
 
-**L'échelle d'aura appartient au monde.** Deux options client, posées à chaque connexion :
+### Les trois portées, et ce que chacune coûte
 
-| Option | Valeur | Effet |
+| Portée | Durée | Mécanisme |
 | --- | --- | --- |
-| `auraPerLevel` | `50` | une salle (10 à 20 d'aura) achète un point tous les trois à cinq salles |
-| `maxAuraLevel` | `40` | plafond **abaissé** : 39 points dans une partie, et l'aura d'un run ne se perd pas dans des niveaux vides |
-| `autoRespawn` / `secsToRespawn` | `true` / `3` | la règle de respawn du propriétaire, envoyée dans le **même** appel |
+| `permanent` | pour toujours, **cumulatif** | une `playerDbValue` par joueur, clé `dungeonBreak.blessings.v1`, écrite **au moment du choix**, relue et appliquée à chaque connexion |
+| `run` | jusqu'à la fin du run | une liste en mémoire ; `endRun` est le seul endroit qui la retire |
+| `timed` | 30 s à 2 min | `applyEffect` du moteur, qui sait déjà les arrêter |
 
-Un seul `setClientOptions` par connexion porte les quatre options : l'échelle d'aura et le respawn
-ne peuvent pas se perdre l'un l'autre.
+**Une seule sauvegarde, un compte de copies.** Le format est `{"toughened_hide":3}` : la valeur
+`3` est le nombre de copies, et l'effet en découle (`optionsFrom` somme les copies). Trois
+propriétés en découlent, chacune tenue par un test :
 
-**Une connexion repart de zéro.** `setTotalAura(playerId, 0)` (après `setClientOptions`), oubli du compte en mémoire,
-devise à 0, tuiles redessinées : c'est `resetPlayerProgress`, appelé par `onPlayerJoin`. Une
-déconnexion réussie n'a donc rien à conserver, et une reconnexion ne peut pas rapporter un
-niveau, un point ni une offre.
+- une Blessing retirée du catalogue **disparaît de la sauvegarde** au lieu de planter une
+  connexion (`readPermanentSave` ignore les identifiants inconnus, le JSON cassé et le `null`) ;
+- une Blessing `run` ou `timed` **ne peut pas** entrer dans la sauvegarde, même si une version
+  antérieure l'y avait mise ;
+- la clé de la sauvegarde est l'identifiant **permanent** du joueur (`getPlayerDbId`), pas son
+  identifiant de session — sans quoi la valeur d'une session serait perdue à la suivante.
 
-**Le tirage réserve, le choix dépense.** `roll` tire trois bénédictions, les pose dans l'offre
-et **réserve** un point ; `choose` convertit la réserve en dépense. C'est ce qui interdit de
-tirer plusieurs offres avec les points d'un seul niveau (trois cartes sur la table sont trois
-points promis), et une promesse abandonnée (`clearOffer`) **rend son point** au lieu de le
-brûler. `pointsLeft` prend donc `spent + reserved`.
+**Un seul accumulateur, et tout est renvoyé.** `effects.optionsFrom(permanent, run, base)`
+additionne les deux portées dans **un** objet d'options client : un `+40` de run s'ajoute à un
+`+5` permanent (45, pas 40), et la fin du run recalcule l'ensemble, ce qui laisse exactement le
+permanent. **Toutes les options gérées sont toujours envoyées**, y compris celles que rien ne
+modifie : une option client est un état que le jeu garde, donc ne pas la mentionner laisse
+l'ancienne valeur en place — c'est précisément ainsi qu'un bonus de run pourrait ne jamais finir.
+Un test le vérifie sur l'ensemble (`every managed option is re-sent`).
 
-Trois conséquences, toutes défendues par un test : trois tirages **indépendants et tous
-différents** ; une offre en attente est **réutilisée** (fermer le shop n'est pas un re-roll) ;
-et `choose` refuse tout index qui n'est pas dans l'offre vivante, sans rien coûter.
+**Le plafond de dégâts subis est -40 %.** `DAMAGE_TAKEN_FLOOR = 0.6` est appliqué dans
+`optionsFor`, pas dans un commentaire : cent copies de `Scarred Skin` valent -40 %, jamais
+l'immunité.
 
-**Retirer une tuile se fait avec `resetShopItemForPlayer`, et rien d'autre.** Le propriétaire a
-vu deux choses : d'autres boutons disparaissaient, puis les trois choix **restaient** malgré
-`hidden: true`. La réponse tient en trois faits de l'API :
+**Les trois fins de run existent, et sont les mêmes.** `endRun(playerId, reason)` est appelé par
+la **mort** (`onRespawnRequest`, dans un donjon seulement), le **`leave`** (`onPlayerLeave`) et la
+**téléportation au spawn** (l'objet de boutique `Utilities`). Il retire d'abord les effets
+(`dropSessionEffects` : Thorns du run, effets minutés), puis oublie le run et réapplique les
+options. `resetPlayerProgress` fait la même chose pour une **connexion** : les effets d'une
+session oubliée ne suivent jamais un joueur dans la suivante.
 
-- `createShopItemForPlayer` **remplace** l'override du joueur pour la même clé, et **crée la
-  catégorie** si elle n'existe pas ;
-- `hidden: true` existe dans le type `ShopItem`, mais n'a pas retiré les tuiles en jeu ;
-- il n'y a **pas** de `deleteShopItemForPlayer` dans l'API (elle n'est documentée nulle part) ;
-  ce que la doc donne, c'est **`resetShopItemForPlayer(playerId, categoryKey, itemKey)`**, qui
-  supprime l'override du joueur et **ne fait rien** s'il n'y en a pas.
+**Le tirage réserve, le choix dépense.** `roll` tire trois Blessings, les pose dans l'offre et
+**réserve** un point ; `choose` convertit la réserve en dépense. C'est ce qui interdit de tirer
+plusieurs offres avec les points d'un seul niveau, et une promesse abandonnée (`clearOffer`) **rend
+son point** au lieu de le brûler. `pointsLeft` prend donc `spent + reserved`.
 
-Le code appelle donc `resetShopItemForPlayer` sur `Choice 1..3` à chaque rafraîchissement qui
-n'a pas d'offre à cet emplacement — l'appel est idempotent, c'est pour ça qu'il peut être
-aveugle. La tuile `Roll a Benediction` n'est **jamais** retirée : elle est ce qui garde la
-catégorie non vide, et c'est elle qui crée la catégorie avant les suppressions.
+**Retirer une tuile se fait avec `resetShopItemForPlayer`, et rien d'autre.** `hidden: true`
+existe dans le type `ShopItem` mais n'a pas retiré les tuiles en jeu, et il n'y a **pas** de
+`deleteShopItemForPlayer` dans l'API. Ce que la doc donne, c'est
+`resetShopItemForPlayer(playerId, categoryKey, itemKey)`, qui supprime l'override du joueur et ne
+fait rien s'il n'y en a pas — d'où un appel idempotent à chaque rafraîchissement. La tuile
+`Roll a Blessing` n'est **jamais** retirée : elle crée la catégorie et la garde non vide.
 
-**Deux tuiles en tout, quand il n'y a pas d'offre.** La tuile `Last roll` a été **supprimée**
-(le propriétaire la trouvait superflue : le choix est déjà annoncé en chat, en bannière et sur
-la carte), et la description de la tuile `Roll` a perdu les probabilités, qui la rendaient
-illisible : il ne reste que `Aura level N · M points`. Les chances ne sont pas perdues — elles
-restent dans `/dbg benedictions`, et la table elle-même n'a pas bougé.
+**Deux tuiles en tout, quand il n'y a pas d'offre.** `Last roll` a été supprimée, et la
+description de `Roll` ne porte que `Aura level N · M points`. Les chances restent dans
+`/dbg blessings`.
+
+**Les trois raretés vivantes du catalogue.** Les six raretés ont chacune au moins une Blessing :
+sans cela, la tranche de probabilité d'une rareté vide serait redistribuée sans que personne ne
+l'ait demandé. C'est un test, pas une intention.
 
 **Trois surfaces, trois contraintes d'API.** Le **chat** prend `CustomTextStyling`, donc la
 couleur y est un **nom CSS** ; la **carte** est `sendTopRightHelper`, qui prend une icône **Font
@@ -479,15 +488,15 @@ C'est la réponse à un vrai rapport de bug : « The room could not be built » 
 
 ## 11. Tests
 
-`npm test` — 148 tests.
+`npm test` — 163 tests.
 
 - `tests/dungeon/config.test.js` — une difficulté est un ordre et ne porte **aucune** hauteur ; la plage verticale tirée commence au-dessus de `y = 0` et couvre bien 1 000 à 100 000 blocs ; un pad = une difficulté ; Hell est le dernier ; le tirage de salle est stable et étalé ; les huit niveaux tirent dans la même liste ; les salles d'un niveau passent avant les communes ; une salle malformée est ignorée sans casser le niveau ; **la conversion chunk → bloc, y compris sur les coordonnées négatives** ; les 15 salles livrées occupent 15 chunks distincts ; une salle ne porte aucune propriété.
 - `tests/dungeon/loader.test.js` — un état par entrée : chaque entrée tire sa propre place dans le carré configuré, deux entrées vivantes restent à `spawnSeparation` l'une de l'autre, une place n'est tirée qu'une fois, `newOrigin` en donne une autre, un départ la rend et ne laisse rien en mémoire, deux joueurs de la même difficulté ne partagent ni place ni plan ; et un faux serveur où **`copyChunk` depuis un chunk non chargé ne fait rien**, où une copie dans un chunk non envoyé est ignorée, et où **un `getBlock` de chunk non envoyé déclenche l'envoi, deux ticks plus tard** : une salle est une seule copie, la sonde distingue « pas envoyé » / « vide » / « salle déjà là », **et seul le Bedrock compte** : du terrain ordinaire à la même profondeur ne passe pas pour une salle, une salle du redémarrage précédent n'est pas recopiée, une copie est confirmée au tick suivant et jamais dans le sien, la file est bornée, une salle illisible est désactivée puis retirée de la file, **aucun bloc n'est écrit nulle part**, la hauteur de sol est lue et non configurée, un niveau vide ne coûte rien.
 - **mobs** (dans `loader.test.js`) — l'entrée dans une salle peuple les quatre salles autour et jamais celle du joueur ; les mobs sont au Y du joueur, jamais dans un bloc solide, jamais sur les plaques ; une case de plante reste utilisable (`getBlockSolidity`, pas « Air ») ; entrer dans une salle garde ses mobs et tue ceux des autres salles ; le dernier mob écrit le record du coin et le joueur reçoit `CLEAR` ; une salle clear n'est plus jamais peuplée ; un type refusé par le jeu ne casse pas le reste ; la difficulté multiplie les statistiques (Hell : 5 mobs à ×5 PV) ; un mob retiré par le jeu ne rend pas la salle clear ; une salle vidée puis regagnée ne se remplit pas. Et dans `world-code.test.js` : un coffre du donjon donne **une** des cinq clés, déposée au milieu du bloc, devient de l'`Air`, et ce clic ne paie plus ensuite ; un clic sur autre chose (bloc, entité) ne donne ni clé ni écriture ; un coffre du lobby n'est pas touché ; un drop impossible est signalé ; les mobs apparaissent autour de l'entrée, la salle d'entrée est écrite clear, `onPlayerKilledMob` dit `CLEAR` et écrit le record, revenir au spawn tue les mobs, **mourir garde le donjon (même origine, aucune copie) et le repeuple** — le tout sans écrire un bloc.
 - **coffres** (`tests/dungeon/loot.test.js`) — les poids penchent vers le rare à chaque niveau et chaque clé reste possible partout ; le tirage suit la loi (20 000 tirages sur une suite fixe, ±2 points) ; un tirage à 0 et à 1 rendent quand même une clé ; un clic sur un `Chest` est un coffre, un clic ailleurs non ; la position est arrondie vers le bas ; un clic hors donjon ne paie pas ; ouvrir laisse de l'`Air` et dépose la clé à `x + 0.5, y, z + 0.5` ; le bloc est vidé **avant** le drop ; `Iron Chest` n'est plus un coffre.
 - **bestiaire** (dans `loader.test.js`) — chaque niveau tire parmi les mobs débloqués à son niveau ou en dessous ; les multiplicateurs du type se composent avec ceux du niveau (Hell : PV et dégâts vérifiés mob par mob, et la salle est bien mélangée) ; un type refusé par le jeu ne laisse pas la salle vide ; un refus est enregistré **pour son niveau** ; mourir vide les mobs sans oublier les salles, donc le donjon peut encore se remplir ; quitter l'oublie pour de bon.
-- `tests/benediction/benediction.test.js` — trois choix sont tirés, tous différents, sur 200 offres ; un catalogue de deux est servi à deux, et un générateur bloqué est complété depuis le catalogue ; un tirage **réserve exactement un point** sans le dépenser ni remplir l'historique ; re-tirer montre les mêmes trois et ne réserve rien de plus ; abandonner une offre **rend son point**, et l'abandonner deux fois n'en rend qu'un ; choisir convertit la réserve en dépense et ne peut pas être fait deux fois ; un index hors de l'offre (`-1`, `3`, `99`, `1.5`, `undefined`) ne coûte rien et n'ote pas l'offre ; **oublier une session rend tout** (points, offre, historique), et le service **n'expose aucune fonction de sauvegarde** ; l'échelle et le plafond d'aura sont cohérents (`maxPoints`) ; les six raretés sont celles du propriétaire (ordre, couleurs, poids strictement décroissants), les trois familles aussi, et **chaque bénédiction appartient à une famille, à une rareté, et dit qu'elle ne fait rien** ; toute rareté et toute famille a au moins une bénédiction ; les chances sont normalisées et chaque rareté reste atteignable ; une rareté vidée sort de la table **et renormalise** au lieu d'être relancée ; un tirage répond toujours, même à 0 et à 1, et 2 000 points de la roue atteignent les six raretés ; les pourcentages s'écrivent court sans jamais arrondir à 0 % ; un niveau d'aura paie un point et le niveau 1 n'en paie aucun ; un tirage dépense exactement un point, refuse sans point, et un refus ne coûte rien ; un compte relu retrouve ses dépenses, un compte absent est vide, l'historique est borné à cinq et garde le plus récent ; le rendu met le nom dans la couleur de la rareté sur le chat, en `rgb()` sur la carte, et la carte dit « No effect yet. ».
-- `tests/world-code.test.js` — la boutique `Utilities` (créée, gratuite, avec une image), un clic qui ramène au spawn **et** arrête le donjon — plus aucune salle n'est copiée ensuite et `/dbg` ne voit plus de donjon —, un clic pendant l'entrée qui abandonne l'entrée au lieu de reposer le joueur, et un achat d'autre chose qui ne fait rien ; **les bénédictions dans le vrai bundle** : la tuile de tirage est créée par joueur, fermée au niveau 1 et ouverte dès qu'un niveau paie un point, la description donne le niveau et les points **et rien d'autre** (les probabilités n'y sont plus), **un tirage pose trois tuiles `Choose` et réserve un point**, l'offre est listée en chat, un choix annonce le nom en couleur puis en texte, dessine une carte en `rgb()` avec une icône Font Awesome, met le nom en bannière, **referme la boutique** (`openShop` avec `toggle`), dépense un point et pas deux, **remet la catégorie dans son état normal** — les trois choix sont **supprimés** par `resetShopItemForPlayer`, et la tuile `Last roll` n'existe plus du tout — refuse un clic hors offre, **n'écrit jamais en base**, affiche les points en devise non persistante, pousse `auraPerLevel` et `maxAuraLevel`, et **remet l'aura à 0 à la connexion** (une reconnexion repart de zéro), redessine les tuiles à l'ouverture de la boutique quand un niveau a été gagné entre-temps, ne fait rien pour un autre achat, et `/dbg benedictions` répond **hors donjon** ; le bundle réel, dans un contexte `vm`, sur un faux serveur qui compte chaque `setBlock` comme une violation : compte à rebours, entrée, atterrissage sur le sol, gravité coupée puis rendue, une plaque Concrete construite dans la salle qui mène au niveau suivant, ordre des copies, joueur qui tombe et qui est reposé, aucun bloc écrit par le code, `/dbg level` qui dit pourquoi une entrée a échoué, commandes `/dbg`.
+- `tests/blessing/blessing.test.js` — trois choix sont tirés, tous différents, sur 200 offres ; un catalogue de deux est servi à deux, et un générateur bloqué est complété depuis le catalogue ; un tirage **réserve exactement un point** sans le dépenser ni remplir l'historique ; re-tirer montre les mêmes trois et ne réserve rien de plus ; abandonner une offre **rend son point**, et l'abandonner deux fois n'en rend qu'un ; choisir convertit la réserve en dépense et ne peut pas être fait deux fois ; un index hors de l'offre (`-1`, `3`, `99`, `1.5`, `undefined`) ne coûte rien ; **oublier une session rend tout** (points, offre, historique) et le service n'expose aucune fonction de sauvegarde ; les six raretés sont celles du propriétaire, et chacune a au moins une Blessing ; **chaque Blessing a une portée déclarée**, et les trois portées sont peuplées ; un permanent **s'additionne** avec un run (45, pas 40) ; **cent `Scarred Skin` valent -40 %**, jamais l'immunité ; la vitesse s'additionne entre les portées et les deux options de vitesse suivent le multiplicateur ; une Blessing timed est **un effet de potion entre 30 s et 2 min**, et rien d'autre ; la sauvegarde est un compte stable, ignore les identifiants inconnus, le JSON cassé et les portées non permanentes ; **toutes les options gérées sont renvoyées** (un bonus retiré retourne à sa base) ; l'historique est borné à cinq ; le bundle **ne contient plus le mot « benediction »**.
+- `tests/world-code.test.js` — la boutique `Utilities` (créée, gratuite, avec une image), un clic qui ramène au spawn **et** arrête le donjon — plus aucune salle n'est copiée ensuite et `/dbg` ne voit plus de donjon —, un clic pendant l'entrée qui abandonne l'entrée au lieu de reposer le joueur, et un achat d'autre chose qui ne fait rien ; **les bénédictions dans le vrai bundle** : la tuile de tirage est créée par joueur, fermée au niveau 1 et ouverte dès qu'un niveau paie un point, la description donne le niveau et les points **et rien d'autre** (les probabilités n'y sont plus), **un tirage pose trois tuiles `Choose` et réserve un point**, l'offre est listée en chat, un choix annonce le nom en couleur puis en texte, dessine une carte en `rgb()` avec une icône Font Awesome, met le nom en bannière, **referme la boutique** (`openShop` avec `toggle`), dépense un point et pas deux, **remet la catégorie dans son état normal** — les trois choix sont **supprimés** par `resetShopItemForPlayer`, et la tuile `Last roll` n'existe plus du tout — refuse un clic hors offre, **n'écrit jamais en base**, affiche les points en devise non persistante, pousse `auraPerLevel` et `maxAuraLevel`, et **remet l'aura à 0 à la connexion** (une reconnexion repart de zéro), redessine les tuiles à l'ouverture de la boutique quand un niveau a été gagné entre-temps, ne fait rien pour un autre achat, et `/dbg blessings` répond **hors donjon** ; le bundle réel, dans un contexte `vm`, sur un faux serveur qui compte chaque `setBlock` comme une violation : compte à rebours, entrée, atterrissage sur le sol, gravité coupée puis rendue, une plaque Concrete construite dans la salle qui mène au niveau suivant, ordre des copies, joueur qui tombe et qui est reposé, aucun bloc écrit par le code, `/dbg level` qui dit pourquoi une entrée a échoué, commandes `/dbg`.
 
 **Une instabilité trouvée en route, et corrigée.** Le test « un type qui ne répond jamais dans une salle qui a marché est écarté » échouait environ une fois sur quarante. La cause n'était pas le test : la marque `mobRefusalsAtRoomStart` était avancée **par type, en plein examen**, donc un refus compté après le passage du type était reporté comme « avant » à la salle suivante et n'était plus jamais compté — et un type tiré dans les dernières cases d'une salle n'était jamais examiné du tout. La marque est maintenant avancée **une fois, après l'examen, pour tous les types** : un refus dans une salle qui a marché est toujours vu. Le test, lui, fixe désormais le tirage (`Math.random = () => 0`, restauré dans un `finally`) au lieu de l'espérer — un test de règle ne doit pas dépendre d'un tirage.
 
@@ -535,4 +544,4 @@ Ce qui n'est **pas** testé, faute de pouvoir l'être hors du jeu : le délai ex
 - **Pads dans le donjon.** Aujourd'hui le pad n'est écrit qu'à l'endroit où le joueur atterrit. Le poser aussi dans les salles suivantes revient à écrire 25 blocs par salle visitée — à décider quand le coût d'une copie sera mesuré en jeu.
 - **Mobs : faits.** Ajouter un mob revient à une entrée dans `MOB_ROSTER` avec son niveau d'ouverture et ses multiplicateurs ; les noms non confirmés par la documentation se vérifient en jeu, `/dbg level` nommant tout nom refusé.
 - **Butin, minerais.** Aucune de ces fonctionnalités ne dépend de la génération : la structure est un décor figé.
-- **Bénédictions : les effets.** Le catalogue, les raretés, les chances, l'offre de trois, les points en devise et le rendu existent ; il reste à donner un effet aux neuf entrées (multiplicateurs du joueur, enchantements d'équipement, effets de potion). Rien dans les tables n'aura à changer : un effet est une propriété de plus sur une entrée, appliqué au moment du `choose`.
+- **Blessings : d'autres entrées.** Le catalogue, les portées, la sauvegarde, les effets et le rendu existent ; ajouter une Blessing est une entrée de plus dans `config.js`, avec son `effect` (`potion`, `run` ou `client`). Aucune table, aucune probabilité et aucune sauvegarde n'a à changer.

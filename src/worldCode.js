@@ -24,8 +24,9 @@ import {
 import { DIFFICULTIES, DUNGEON_CONFIG, difficultyForPadBlock } from "./dungeon/config.js";
 import { LOBBY_POSITION, createDungeonService } from "./dungeon/service.js";
 import { isChestBlock } from "./dungeon/loot.js";
-import { AURA_PER_LEVEL, MAX_AURA_LEVEL, categoryOf } from "./benediction/config.js";
-import { createBenedictionService } from "./benediction/service.js";
+import { AURA_PER_LEVEL, MAX_AURA_LEVEL, categoryOf } from "./blessing/config.js";
+import { createBlessingService } from "./blessing/service.js";
+import * as effects from "./blessing/effects.js";
 import {
   announcementOf,
   cardFor,
@@ -33,7 +34,7 @@ import {
   offerLine,
   oddsOfTable,
   rollMessage,
-} from "./benediction/presentation.js";
+} from "./blessing/presentation.js";
 import { CRATE_KEYS, AIR_CHANCE, LOOT_TABLE } from "./crate/config.js";
 import {
   getWeightedRandomItem as crateGetWeightedRandomItem,
@@ -222,7 +223,7 @@ const DEBUG_COMMANDS = {
   seed: ["seed", "seedonly"],
   level: ["level", "dungeon", "dgn"],
   chests: ["chests", "chest", "loot", "keys"],
-  benedictions: ["benedictions", "benediction", "blessings", "rolls"],
+  blessings: ["blessings", "blessing", "rolls"],
 };
 
 function debugSay(playerId, message) {
@@ -276,17 +277,22 @@ function runDebugCommand(playerId, verb) {
     }
     return;
   }
-  if (verb === "benedictions") {
-    // The whole mechanic in four lines: the level the game reports, the points it pays,
-    // what was spent, and the six rarities with their odds. It works outside a dungeon on
-    // purpose — a level is gained anywhere.
+  if (verb === "blessings") {
+    // The whole mechanic, in the order a player lives it: the level, the points, then the
+    // three lifetimes — what is permanent (and saved), what this run holds, what is still
+    // counting down. It works outside a dungeon on purpose: a level is gained anywhere.
     const level = auraLevelOf(playerId);
     const key = accountKeyOf(playerId);
-    const account = benedictions().accountOf(key);
-    const points = benedictions().pointsFor(key, level);
+    const account = blessings().accountOf(key);
+    const points = blessings().pointsFor(key, level);
     const offer = account.offer.length > 0 ? ` · ${account.offer.length} on offer` : "";
+    const permanent = blessings().permanentOf(key);
+    const run = blessings().runOf(key);
+    const timed = blessings().timedOf(key);
     debugSay(playerId, `[dbg] aura level ${level}/${MAX_AURA_LEVEL} · ${points} point(s) · ${account.spent} spent${offer}`);
-    debugSay(playerId, `[dbg] scale ${AURA_PER_LEVEL} aura a level · nothing is saved between sessions`);
+    debugSay(playerId, `[dbg] permanent (saved): ${effects.debugPermanent(permanent) || "none"} · ${effects.permanentSummary(permanent)}`);
+    debugSay(playerId, `[dbg] this run: ${run.length > 0 ? run.map((entry) => entry.id).join(", ") : "none"}`
+      + ` · timed: ${timed.length > 0 ? timed.map((entry) => `${entry.blessing.id} (${entry.endsAtTick - tickNow()} ticks)`).join(", ") : "none"}`);
     debugSay(playerId, `[dbg] session ${key} · last ${account.history.length} picked:`
       + (account.history.length > 0 ? ` ${account.history.map((entry) => `${entry.name} (${entry.rarity})`).join(", ")}` : " none"));
     debugSay(playerId, `[dbg] odds ${oddsOfTable()}`);
@@ -376,19 +382,29 @@ playerCommand = (playerId, command) => {
 const SHOP_CATEGORY = "Utilities";
 const SPAWN_ITEM = "Teleport to spawn";
 
-// ----------------------------------------------------------- benedictions --
+// -------------------------------------------------------------- blessings --
 //
-// A benediction is bought with a **point**, and a point is what an aura level gives. The
-// shop is the whole interface: one tile to roll, one tile that says what the odds are, and
-// one tile that shows the last thing this player rolled. Nothing is drawn in the world and
-// nothing is written into a chunk — a benediction is a record on a player, not a block.
+// A blessing is bought with a **point**, and a point is what an aura level gives. The shop is
+// the whole interface: one tile to roll, and up to three tiles to choose from. Nothing is
+// drawn in the world and nothing is written into a chunk — a blessing is a record on a
+// player, not a block.
+//
+// Three lifetimes, and the owner's words for them:
+//
+//   - **permanent** — saved in a player database value (`BLESSING_DB_KEY`), read back and
+//     applied on every reconnection. The stack is a map of counts, so ten copies really are
+//     ten copies; the client options it produces are absolute, computed from the counts.
+//   - **run** — lasts until the run ends: **death, leave, or teleport to spawn**. The world
+//     keeps the list, and `endRun` is the only thing that drops it.
+//   - **timed** — a potion effect, 30 s to 2 min, and nothing else. The engine ends it on
+//     time; the world only reads its own clock to say what is still running.
 //
 // The tile is **per player** (`createShopItemForPlayer`): a tile that says "you have 3
-// points" cannot be shared, and the game's own shop would otherwise show one player's
-// count to everybody.
+// points" cannot be shared, and the game's own shop would otherwise show one player's count
+// to everybody.
 
-const BENEDICTION_CATEGORY = "Benedictions";
-const ROLL_ITEM = "Roll a Benediction";
+const BLESSING_CATEGORY = "Blessings";
+const ROLL_ITEM = "Roll a Blessing";
 /**
  * The keys of the three choice tiles, and **the only tiles that ever come and go**.
  *
@@ -404,30 +420,58 @@ const CHOICE_KEYS = ["Choice 1", "Choice 2", "Choice 3"];
 /**
  * The **custom currency** the points are shown in.
  *
- * The owner asked for the points to *be* a currency rather than a number in a tile's text:
  * `setCurrency` defines it for a player and puts it on the HUD, so a point is visible
- * without opening the shop. It is explicitly **not persistent** — the owner asked for
- * nothing to survive a reconnection, and the aura it is derived from is reset on join.
+ * without opening the shop. It is explicitly **not persistent** — the points are a session
+ * thing, while the blessings themselves are what is saved.
  */
-const POINTS_CURRENCY = "Benediction Point";
+const POINTS_CURRENCY = "Blessing Point";
+/**
+ * **Where the permanent blessings live**: one player database value, written since the
+ * owner asked for the stack to survive a reconnection.
+ *
+ * It is a database value (per player, keyed by `getPlayerDbId` in the game's own storage) and
+ * not a world variable, because a world variable is shared by everybody and would hand one
+ * player's stack to the next one who joined.
+ *
+ * The value is written **only when it changes** — a choice of a permanent blessing, or a
+ * choice that spends a point. Reading it happens once, on a join.
+ */
+const BLESSING_DB_KEY = "dungeonBreak.blessings.v1";
 
 /** The bookkeeping, created once for the world. In memory only, by the owner's rule. */
-let benedictionService = null;
+let blessingService = null;
 
-function benedictions() {
-  if (!benedictionService) benedictionService = createBenedictionService({});
-  return benedictionService;
+function blessings() {
+  if (!blessingService) blessingService = createBlessingService({});
+  return blessingService;
 }
 
 /**
  * The key an account is held under **for this session**.
  *
- * It is the player id, because that is what a session is: there is no database read and no
- * database write, so the permanent id would buy nothing. What it does buy is the promise
- * that a reconnection starts from nothing — which is exactly the behaviour asked for.
+ * The **permanent** stack is the exception: it is saved under the game's permanent player id
+ * (`permanentKeyOf`), which is the only thing that survives a reconnection. Points, offers
+ * and the run's blessings are keyed by the session, because they must not survive one.
  */
 function accountKeyOf(playerId) {
   return String(playerId);
+}
+
+/**
+ * The permanent key: the game's own id for this player, stable across sessions.
+ *
+ * `getPlayerDbId` is documented as "their permanent identifier that doesn't change when
+ * leaving and re-entering". When the game cannot answer, the session id is used instead: the
+ * save is then lost rather than shared, which is the safe way to fail.
+ */
+function permanentKeyOf(playerId) {
+  try {
+    const id = api.getPlayerDbId(playerId);
+    if (id !== undefined && id !== null && String(id).length > 0) return `db:${id}`;
+  } catch (_) {
+    // Nothing to do: a save that cannot be named is a save that is not written.
+  }
+  return `session:${playerId}`;
 }
 
 /** The aura level of a player, from the game. `1` when the game cannot say. */
@@ -441,14 +485,24 @@ function auraLevelOf(playerId) {
   return 1;
 }
 
+/** The game's clock, in ticks, for the timed blessings. */
+function tickNow() {
+  try {
+    if (typeof api.now === "function") return Math.floor(api.now() / 50);
+  } catch (_) {
+    // Fall through to the scheduler's own count.
+  }
+  return 0;
+}
+
 /**
  * What a player has, as one short line: the level and the points.
  *
  * The odds **used to be here** and are gone: the owner called the tile overloaded, and a
- * player who wants them has `/dbg benedictions`. Two numbers, one line, that is the tile.
+ * player who wants them has `/dbg blessings`. Two numbers, one line, that is the tile.
  */
-function benedictionSummary(playerId, level) {
-  const points = benedictions().pointsFor(accountKeyOf(playerId), level);
+function blessingSummary(playerId, level) {
+  const points = blessings().pointsFor(accountKeyOf(playerId), level);
   return `Aura level ${level} · ${points} point${points === 1 ? "" : "s"}`;
 }
 
@@ -475,7 +529,7 @@ function showPoints(playerId, points) {
     }
   }
   try {
-    api.setCurrencyAmount(playerId, POINTS_CURRENCY, points, "Benediction");
+    api.setCurrencyAmount(playerId, POINTS_CURRENCY, points, "Blessing");
   } catch (_) {
     // `setCurrency` above already carried the amount; this only keeps the subtext honest.
   }
@@ -486,17 +540,15 @@ function showPoints(playerId, points) {
  *
  * `resetShopItemForPlayer` deletes the per-player item and does **nothing** if this player
  * has none — the documented behaviour, and the reason it can be called blind on every
- * refresh. The old code called a `deleteShopItemForPlayer` that the API does not have: the
- * call threw, the cleanup silently did nothing, and the three choice tiles stayed on screen
- * — which is exactly what the owner saw.
+ * refresh.
  */
 function removePlayerTile(playerId, itemKey) {
   try {
-    api.resetShopItemForPlayer(playerId, BENEDICTION_CATEGORY, itemKey);
+    api.resetShopItemForPlayer(playerId, BLESSING_CATEGORY, itemKey);
     return true;
   } catch (error) {
     try {
-      api.log(`[Dungeon] benediction tile "${itemKey}" could not be removed: ${error && error.message ? error.message : error}`);
+      api.log(`[Dungeon] blessing tile "${itemKey}" could not be removed: ${error && error.message ? error.message : error}`);
     } catch (_) {
       // Nothing left to do.
     }
@@ -505,39 +557,40 @@ function removePlayerTile(playerId, itemKey) {
 }
 
 /**
- * Draws this player's benediction tiles: the roll, and the offer when there is one.
+ * Draws this player's blessing tiles: the roll, and the offer when there is one.
  *
  * **The roll is the one tile that always exists**, so the category is never empty — the
  * shop bug the owner reported was a category being emptied. While an offer is live, three
- * `Choose` tiles join it; when the offer ends (`choose` consumed it, or it was dropped) they
- * are **deleted** with `resetShopItemForPlayer`, not hidden. Nothing else is ever touched:
- * `Last roll` is not drawn at all any more — the owner found it noise — and the roll tile's
- * description is a single line, level and points, because the odds made it unreadable.
- *
- * Called on a join, when the shop is opened, after a roll and after a choice.
+ * `Choose` tiles join it; when the offer ends they are **deleted** with
+ * `resetShopItemForPlayer`, not hidden.
  */
-function refreshBenedictionTiles(playerId) {
+function refreshBlessingTiles(playerId) {
   const key = accountKeyOf(playerId);
+  // The engine ends a timed effect on time; this drops the **bookkeeping** of it, so the
+  // report and the tiles never claim a bonus that has already run out.
+  blessings().pruneTimed(key, tickNow());
   const level = auraLevelOf(playerId);
-  const points = benedictions().pointsFor(key, level);
-  const account = benedictions().accountOf(key);
+  const points = blessings().pointsFor(key, level);
+  const account = blessings().accountOf(key);
   const offer = account.offer;
   showPoints(playerId, points);
 
   try {
-    api.createShopItemForPlayer(playerId, BENEDICTION_CATEGORY, ROLL_ITEM, offer.length > 0
+    // One tile, two states, **one line of text**: the level and the points. While an offer
+    // is live the same tile says so and cannot be bought - a roll would cost a second point.
+    api.createShopItemForPlayer(playerId, BLESSING_CATEGORY, ROLL_ITEM, offer.length > 0
       ? {
         image: "Beacon",
-        customTitle: "Select one",
-        description: "",
+        customTitle: "Select one of the three",
+        description: `${blessingSummary(playerId, level)} · the point is on the table`,
         canBuy: false,
         redDot: false,
-        sortPriority: 110,
+        sortPriority: 10,
       }
       : {
         image: "Beacon",
-        customTitle: "Roll a Benediction",
-        description: benedictionSummary(playerId, level),
+        customTitle: "Roll a Blessing",
+        description: blessingSummary(playerId, level),
         buyButtonText: "Roll",
         cost: 0,
         canBuy: points > 0,
@@ -559,15 +612,15 @@ function refreshBenedictionTiles(playerId) {
       return;
     }
     try {
-      api.createShopItemForPlayer(playerId, BENEDICTION_CATEGORY, itemKey, choiceTile(draw, position));
+      api.createShopItemForPlayer(playerId, BLESSING_CATEGORY, itemKey, choiceTile(draw, position));
     } catch (error) {
       logShopFailure(itemKey, error);
     }
   });
 
   try {
-    api.configureShopCategoryForPlayer(playerId, BENEDICTION_CATEGORY, {
-      customTitle: offer.length > 0 ? "Select one" : "Benedictions",
+    api.configureShopCategoryForPlayer(playerId, BLESSING_CATEGORY, {
+      customTitle: offer.length > 0 ? "Select one" : "Blessings",
       redDot: offer.length > 0 || points > 0,
     });
   } catch (_) {
@@ -579,28 +632,233 @@ function refreshBenedictionTiles(playerId) {
 /** One log line per refused tile. A shop is a convenience; it is never a crash. */
 function logShopFailure(itemKey, error) {
   try {
-    api.log(`[Dungeon] benediction item "${itemKey}" could not be created: ${error && error.message ? error.message : error}`);
+    api.log(`[Dungeon] blessing item "${itemKey}" could not be created: ${error && error.message ? error.message : error}`);
   } catch (_) {
     // Nothing left to do.
   }
 }
 
-/** Shows the chosen benediction the way a result is always shown: chat, banner, card. */
-function announceBenediction(playerId, benediction, rarity, pointsLeft) {
-  api.sendMessage(playerId, rollMessage(benediction, rarity));
+// ------------------------------------------------------- client options --
+//
+// Every number a blessing changes is a **client option**: the owner asked for the effects to
+// be client options, and the ones that are not (a potion effect) are the timed scope. They
+// are recomputed from scratch on every change, permanent stack **plus** the run's bonuses,
+// so a run ending can never leave a +0.3 speed behind.
+
+/**
+ * Applies the client options the current blessings produce.
+ *
+ * `base` is what this player would have with no blessing at all: the world's own options
+ * (respawn, aura scale) and the engine's defaults for health, speed, damage. Each layer is
+ * computed by `effects.js`, which is pure, so the sum is testable without a game.
+ */
+function applyBlessingOptions(playerId, base = {}) {
+  const key = accountKeyOf(playerId);
+  // Permanent (saved) and run (in memory) go into **one** accumulator: `optionsFrom` is what
+  // guarantees a run's `+40 health` is added to a permanent `+5`, not written over it.
+  const options = effects.optionsFrom(blessings().permanentOf(key), blessings().runOf(key), base);
+  try {
+    api.setClientOptions(playerId, options);
+    return options;
+  } catch (error) {
+    try {
+      api.log(`[Dungeon] blessing options could not be applied for ${playerId}: ${error && error.message ? error.message : error}`);
+    } catch (_) {
+      // Nothing left to do: the next refresh tries again.
+    }
+    return options;
+  }
+}
+
+/**
+ * The world's own client options, the ones a join always sends.
+ *
+ * `autoRespawn` is deliberately absent: the owner removed it because of a game bug, and only
+ * the delay is set now. The aura scale is here for the same reason as the respawn delay —
+ * both are per player and neither survives a reconnection.
+ */
+function baseClientOptions() {
+  return {
+    secsToRespawn: 0,
+    auraPerLevel: AURA_PER_LEVEL,
+    maxAuraLevel: MAX_AURA_LEVEL,
+  };
+}
+
+/** Puts a timed blessing on the player, through the engine's own effect timer. */
+function applyTimedEffect(playerId, blessing) {
+  const effect = effects.timedEffectOf(blessing);
+  if (!effect) return false;
+  try {
+    api.applyEffect(playerId, effect.effectName, effect.durationMs, { inbuiltLevel: effect.level });
+  } catch (error) {
+    try {
+      api.log(`[Dungeon] the ${effect.effectName} effect could not be applied: ${error && error.message ? error.message : error}`);
+    } catch (_) {
+      // The blessing is still recorded; the engine may not know this effect name.
+    }
+    return false;
+  }
+  return true;
+}
+
+/** Puts a run's lasting potion effect on the player (Thorns). */
+function applyRunEffect(playerId, effect) {
+  try {
+    api.applyEffect(playerId, effect.effectName, null, { inbuiltLevel: effect.level });
+    return true;
+  } catch (error) {
+    try {
+      api.log(`[Dungeon] the ${effect.effectName} effect could not be applied: ${error && error.message ? error.message : error}`);
+    } catch (_) {
+      // Nothing left to do.
+    }
+    return false;
+  }
+}
+
+// ----------------------------------------------------------- the save --
+//
+// One database value per player, holding `{"blessing_id": count}`. Read once on a join,
+// written only when the stack changes. A save that cannot be read is an **empty** stack, not
+// a crash: a corrupted value must cost a player their permanents, never their session.
+
+/** Reads the permanent stack of a player from the game's database. */
+function loadPermanent(playerId) {
+  let raw = null;
+  try {
+    raw = api.getPlayerDbValue(playerId, BLESSING_DB_KEY);
+  } catch (error) {
+    try {
+      api.log(`[Dungeon] the blessings of ${playerId} could not be read: ${error && error.message ? error.message : error}`);
+    } catch (_) {
+      // Nothing left to do: an empty stack is the safe answer.
+    }
+    return {};
+  }
+  return effects.readPermanentSave(raw);
+}
+
+/** Writes the permanent stack of a player. Called once per change, never per tick. */
+function savePermanent(playerId, counts) {
+  try {
+    api.setPlayerDbValue(playerId, BLESSING_DB_KEY, effects.saveOf(counts));
+    return true;
+  } catch (error) {
+    try {
+      api.log(`[Dungeon] the blessings of ${playerId} could not be saved: ${error && error.message ? error.message : error}`);
+    } catch (_) {
+      // The blessing still applies for this session; only the next one loses it.
+    }
+    return false;
+  }
+}
+
+// ------------------------------------------------------------- the run --
+
+/**
+ * **A run ends here**: every `run` blessing and every `timed` one is dropped, and every
+ * client option is recomputed so only the permanent stack is left.
+ *
+ * Death, leave and teleport to spawn all end at this function, which is the owner's list. It
+ * is safe to call when there is no run: nothing is applied, nothing is written, and the
+ * permanent stack is re-applied for good measure.
+ */
+/**
+ * Takes off every effect the session was holding, without touching the permanent stack.
+ *
+ * Used when a session is dropped (a join, a leave that already ended the run) and when a run
+ * ends. The engine ignores an effect it does not have, so this can be called blind — and it
+ * must be, or a blessing applied in one session could follow a player into the next one.
+ */
+function dropSessionEffects(playerId) {
+  const key = accountKeyOf(playerId);
+  const run = blessings().runOf(key);
+  for (const effect of effects.runEffects(run)) {
+    try {
+      api.removeEffect(playerId, effect.effectName);
+    } catch (_) {
+      // Nothing left to do: the effect may never have been applied.
+    }
+  }
+  for (const entry of blessings().timedOf(key)) {
+    const effect = effects.timedEffectOf(entry.blessing);
+    if (!effect) continue;
+    try {
+      api.removeEffect(playerId, effect.effectName);
+    } catch (_) {
+      // Nothing left to do.
+    }
+  }
+}
+
+function endRun(playerId, reason) {
+  const key = accountKeyOf(playerId);
+  // **The effects go first**, while the holdings still say which ones they were.
+  dropSessionEffects(playerId);
+  const dropped = blessings().clearRun(key);
+
+  const hadSomething = dropped.run.length > 0 || dropped.timed.length > 0;
+  applyBlessingOptions(playerId, baseClientOptions());
+  if (hadSomething) {
+    try {
+      api.sendMessage(playerId, reason);
+    } catch (_) {
+      // Nothing left to do: a message is a nicety.
+    }
+  }
+  return dropped;
+}
+
+/**
+ * Applies one blessing to a player, once, when it is chosen.
+ *
+ * The three scopes are three different things to do, and this is the only place that decides
+ * which — the catalogue says what the blessing is, `effects.js` says what it adds up to, and
+ * the world does the calls.
+ */
+function applyBlessing(playerId, blessing, rarity) {
+  const key = accountKeyOf(playerId);
+  const scope = effects.scopeKeyOf(blessing);
+  if (scope === "permanent") {
+    const counts = blessings().addPermanent(key, blessing);
+    // **Saved before it is applied**: a player who leaves one tick after the choice keeps
+    // what they paid for.
+    savePermanent(playerId, counts);
+    applyBlessingOptions(playerId, baseClientOptions());
+    return { scope, counts };
+  }
+  if (scope === "timed") {
+    const effect = effects.timedEffectOf(blessing);
+    blessings().addTimed(key, blessing, tickNow() + Math.ceil((effect ? effect.durationMs : 0) / 50));
+    applyTimedEffect(playerId, blessing);
+    return { scope, effect };
+  }
+  // The run: recorded, then applied as bonuses. A potion effect with no duration is a run
+  // effect (Thorns), so it is applied for the whole run and removed by `endRun`.
+  blessings().addRun(key, blessing);
+  applyBlessingOptions(playerId, baseClientOptions());
+  for (const effect of effects.runEffects([blessing])) applyRunEffect(playerId, effect);
+  return { scope };
+}
+
+/** Shows the chosen blessing the way a result is always shown: chat, banner, card. */
+function announceBlessing(playerId, blessing, rarity, pointsLeft) {
+  api.sendMessage(playerId, rollMessage(blessing, rarity));
   api.sendMessage(
     playerId,
-    `Benediction: ${benediction.name} — ${rarity.label} · ${categoryOf(benediction.category).label}`
+    `Blessing: ${blessing.name} — ${rarity.label} · ${categoryOf(blessing.category).label} · ${effects.scopeKeyOf(blessing)}`
       + ` · ${pointsLeft} point${pointsLeft === 1 ? "" : "s"} left`,
   );
+  api.sendMessage(playerId, `> ${blessing.description}`);
   // The middle of the screen, big: the rarity is what a player reads first.
   try {
-    api.queueMiddleTextUpper(playerId, [{ str: announcementOf(benediction, rarity), style: { color: rarity.textColour } }], 2500);
+    api.queueMiddleTextUpper(playerId, [{ str: announcementOf(blessing, rarity), style: { color: rarity.textColour } }], 2500);
   } catch (_) {
     // The message and the card carry the news; a missing banner is not a lost choice.
   }
   try {
-    const card = cardFor(benediction, rarity);
+    const card = cardFor(blessing, rarity);
     api.sendTopRightHelper(playerId, card.icon, card.text, card.opts);
   } catch (_) {
     // Same: the choice happened.
@@ -608,45 +866,51 @@ function announceBenediction(playerId, benediction, rarity, pointsLeft) {
 }
 
 /**
- * Rolls: lays three benedictions out and **reserves** the point that will pay for the pick.
+ * Rolls: lays three blessings out and **reserves** the point that will pay for the pick.
  *
  * A roll with no point is refused with a message, and a roll while an offer is open re-shows
  * that offer instead of redrawing it — otherwise a player could roll, look, and roll again
  * until the three were good.
  */
-function rollBenediction(playerId) {
+function rollBlessing(playerId) {
   const key = accountKeyOf(playerId);
   const level = auraLevelOf(playerId);
-  const offer = benedictions().roll(key, level);
+  const offer = blessings().roll(key, level);
+  refreshBlessingTiles(playerId);
   if (!offer) {
-    refreshBenedictionTiles(playerId);
+    api.sendMessage(playerId, "No Blessing point to spend. Discover a new room: every aura level gives one.");
     return false;
   }
-  refreshBenedictionTiles(playerId);
+  // The tiles are what the player is looking at: the shop is open, and chat is not shown
+  // while it is. Announcing the offer here would be writing to a screen nobody can see.
+  api.sendMessage(playerId, "Three Blessings are offered. Pick one — it costs a point:");
+  offer.forEach((draw, position) => api.sendMessage(playerId, offerLine(draw, position)));
   return true;
 }
 
 /**
- * Chooses one of the three: **this is the point being spent**.
+ * Chooses one of the three: **this is the point being spent**, and the blessing is applied.
  *
- * The service refuses anything that is not one of the offered benedictions — a stale tile,
- * a card clicked after the offer was consumed — so the shop can never be charged for a
- * choice that was not on screen. Then the tiles go **back to their normal state**, the point
- * on the HUD moves, and the shop is **closed**: the pick is final.
+ * The service refuses anything that is not one of the offered blessings — a stale tile, a
+ * card clicked after the offer was consumed — so the shop can never be charged for a choice
+ * that was not on screen. Then the tiles go **back to their normal state**, the point on the
+ * HUD moves, and the shop is **closed**: the pick is final.
  */
-function chooseBenediction(playerId, position) {
+function chooseBlessing(playerId, position) {
   const key = accountKeyOf(playerId);
   const level = auraLevelOf(playerId);
-  const result = benedictions().choose(key, level, position);
+  const result = blessings().choose(key, level, position);
   if (!result) {
-    refreshBenedictionTiles(playerId);
+    refreshBlessingTiles(playerId);
+    api.sendMessage(playerId, "That choice is no longer offered. Open the shop again.");
     return false;
   }
-  // Shop closes first — chat is invisible while it is open, so the
-  // announcement must come after the close to be seen.
-  refreshBenedictionTiles(playerId);
+  applyBlessing(playerId, result.blessing, result.rarity);
+  // Shop closes first — chat is invisible while it is open, so the announcement must come
+  // after the close to be seen.
+  refreshBlessingTiles(playerId);
   closeShop(playerId);
-  announceBenediction(playerId, result.benediction, result.rarity, result.pointsLeft);
+  announceBlessing(playerId, result.blessing, result.rarity, result.pointsLeft);
   return true;
 }
 
@@ -678,18 +942,15 @@ function closeShop(playerId) {
 }
 
 /**
- * A player's benedictions, **from zero**.
+ * A player's session, **from zero**: aura, points, offer, run.
  *
- * The owner asked for two things that are the same thing: the point is a currency (so it is
- * tied to the session, not to an account), and the aura is reset to 0 on a join. Both happen
- * here: the game's aura is set back to nothing, the in-memory account is dropped, the points
- * currency is shown at 0, and the tiles are drawn for a player who has chosen nothing yet.
- *
- * The side effect is the one wanted: a reconnection is a fresh run, and no database read can
- * hand back a level, a point, or an offer from the session before.
+ * Three things that must not survive a reconnection and all happen here: the game's aura is
+ * set back to nothing, the in-memory account is dropped, the points currency is shown at 0,
+ * and any run the player had is over. Then the **permanent** stack is read back from the
+ * database value and applied — the one thing that *does* survive, because the owner asked for
+ * it to.
  */
 function resetPlayerProgress(playerId) {
-  applyClientOptions(playerId);
   try {
     api.setTotalAura(playerId, 0);
   } catch (error) {
@@ -699,34 +960,16 @@ function resetPlayerProgress(playerId) {
       // Nothing left to do.
     }
   }
-  benedictions().forget(accountKeyOf(playerId));
+  // A session that is forgotten must not leave an effect behind: the run's lasting potions
+  // (Thorns) and any timer belong to the session that is being dropped.
+  dropSessionEffects(playerId);
+  blessings().forget(accountKeyOf(playerId));
+  // **The permanent stack comes back from the save**, before anything is drawn: the tiles
+  // show what the player owns, not what the previous session happened to leave in memory.
+  blessings().setPermanent(accountKeyOf(playerId), loadPermanent(playerId));
+  applyBlessingOptions(playerId, baseClientOptions());
   showPoints(playerId, 0);
-  return refreshBenedictionTiles(playerId);
-}
-
-/**
- * Tells the game what this world's aura is worth: **the scale and the ceiling**.
- *
- * Two client options, both documented: `auraPerLevel` (what a level costs) and `maxAuraLevel`
- * (the highest level, `0` meaning "aura off"). They are set on every join because a client
- * option is per player and does not survive a reconnection either.
- */
-function applyClientOptions(playerId) {
-  // Aura scale + respawn timing; autoRespawn removed due to game bug (now secsToRespawn:0)
-  // Everything here is a client option, so the next join re-sends the same object.
-  try {
-    api.setClientOptions(playerId, {
-      secsToRespawn: 0,
-      auraPerLevel: AURA_PER_LEVEL,
-      maxAuraLevel: MAX_AURA_LEVEL,
-    });
-  } catch (error) {
-    try {
-      api.log(`[Dungeon] the aura scale could not be applied: ${error && error.message ? error.message : error}`);
-    } catch (_) {
-      // The game's own defaults still work; the shop says what it reads.
-    }
-  }
+  return refreshBlessingTiles(playerId);
 }
 
 const SHOP_ITEMS = [
@@ -770,20 +1013,20 @@ function registerShopItems() {
 }
 
 onPlayerBoughtShopItem = (playerId, categoryKey, itemKey) => {
-  // A benediction roll: the point is checked in the service, so a tile the game let
+  // A blessing roll: the point is checked in the service, so a tile the game let
   // through one tick after the last roll cannot buy a second one for free.
-  if (categoryKey === BENEDICTION_CATEGORY) {
+  if (categoryKey === BLESSING_CATEGORY) {
     try {
-      if (itemKey === ROLL_ITEM) rollBenediction(playerId);
+      if (itemKey === ROLL_ITEM) rollBlessing(playerId);
       // A choice tile is one of three, and its key names its position in the offer: the
       // offer itself is what decides what the pick was worth, not the key.
       else {
         const position = CHOICE_KEYS.indexOf(itemKey);
-        if (position >= 0) chooseBenediction(playerId, position);
+        if (position >= 0) chooseBlessing(playerId, position);
       }
     } catch (error) {
       try {
-        api.log(`[Dungeon] benediction failed: ${error && error.message ? error.message : error}`);
+        api.log(`[Dungeon] blessing failed: ${error && error.message ? error.message : error}`);
       } catch (_) {
         // Nothing left to do.
       }
@@ -794,6 +1037,9 @@ onPlayerBoughtShopItem = (playerId, categoryKey, itemKey) => {
   // Teleport and forget are one call, so the tick can never see a player at spawn
   // with a dungeon: `teleportToSpawn` moves first, then drops the record.
   service().teleportToSpawn(playerId);
+  // **Teleporting to spawn ends the run**, one of the owner's three ends. The permanent
+  // stack stays; the run's blessings and the timed ones are dropped.
+  endRun(playerId, "Your run is over: this run's Blessings are gone. Permanent ones stay.");
   stopLobbyCountdown(playerId);
   api.setClientOption(playerId, "middleTextUpper", "");
   closeShop(playerId);
@@ -846,10 +1092,10 @@ onPlayerToggledShopMenu = (playerId, isOpen) => {
   else shopOpen.delete(playerId);
   if (!isOpen) return;
   try {
-    refreshBenedictionTiles(playerId);
+    refreshBlessingTiles(playerId);
   } catch (error) {
     try {
-      api.log(`[Dungeon] benediction tiles could not be refreshed: ${error && error.message ? error.message : error}`);
+      api.log(`[Dungeon] blessing tiles could not be refreshed: ${error && error.message ? error.message : error}`);
     } catch (_) {
       // Nothing left to do.
     }
@@ -866,9 +1112,14 @@ onPlayerLeave = (playerId) => {
     closeShop(playerId);
   } catch (_) {}
   service().leave(playerId);
-  // The account is memory, so a leave is where it is dropped: a session that ends holds
-  // nothing, which is the other half of "nothing survives a reconnection".
-  benedictions().forget(accountKeyOf(playerId));
+  // **Leaving ends the run** — the owner's third end — and the session's account goes with
+  // it. The permanent stack was already saved when it changed, so nothing is lost that was
+  // meant to be kept.
+  endRun(playerId, "");
+  // The **session** goes with the player, and only the session: the permanent stack was saved
+  // when it changed, so a leave cannot lose it, and the next join reads it back.
+  dropSessionEffects(playerId);
+  blessings().forget(accountKeyOf(playerId));
   // Clear per-player shop overrides so no tiles linger for a disconnected player.
   for (const key of CHOICE_KEYS) {
     try {
@@ -969,7 +1220,10 @@ onRespawnRequest = (playerId) => {
   stopLobbyCountdown(playerId);
   service().teleportToSpawn(playerId);
   api.setClientOption(playerId, "middleTextUpper", "");
-  // Reset XP to 0 — same as rejoin — and clear the benediction points.
+  // **Dying ends the run**: this run's Blessings and the timed ones are gone, the permanent
+  // stack stays and is re-applied.
+  endRun(playerId, "You died — this run's Blessings are gone. Permanent ones stay.");
+  // Reset XP to 0 — same as rejoin — and clear the blessing points.
   try {
     api.setTotalAura(playerId, 0);
   } catch (error) {
@@ -977,9 +1231,11 @@ onRespawnRequest = (playerId) => {
       api.log(`[Dungeon] the aura of ${playerId} could not be reset: ${error && error.message ? error.message : error}`);
     } catch (_) {}
   }
-  benedictions().forget(accountKeyOf(playerId));
+  blessings().forget(accountKeyOf(playerId));
+  blessings().setPermanent(accountKeyOf(playerId), loadPermanent(playerId));
+  applyBlessingOptions(playerId, baseClientOptions());
   showPoints(playerId, 0);
-  refreshBenedictionTiles(playerId);
+  refreshBlessingTiles(playerId);
   closeShop(playerId);
   api.sendMessage(playerId, "You died. Back to spawn — your dungeon stopped.");
   return LOBBY_POSITION;
