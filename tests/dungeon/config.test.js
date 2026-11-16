@@ -40,7 +40,7 @@ test("a pad block leads to exactly one difficulty", () => {
   for (const difficulty of DIFFICULTIES) {
     assert.equal(difficultyForPadBlock(difficulty.padBlock), difficulty);
   }
-  assert.equal(difficultyForPadBlock("Grey Concrete"), findDifficulty("ultraInsane"),
+  assert.equal(difficultyForPadBlock("Grey Concrete"), findDifficulty("nightmare"),
     "the British spelling of the grey pad does not resolve");
   assert.equal(difficultyForPadBlock("Dirt"), null);
 });

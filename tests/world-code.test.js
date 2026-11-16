@@ -514,7 +514,7 @@ test("joining puts the player in the lobby and names the pads", () => {
 test("the British spelling of the grey pad is the same difficulty", () => {
   const world = createWorld(["p1"]);
   world.context.onBlockStandStart("p1", 2, 10, 3, "Grey Concrete");
-  assert.ok(said(world, "p1").some((message) => message.includes("Ultra Insane")));
+  assert.ok(said(world, "p1").some((message) => message.includes("Nightmare")));
 });
 
 // ------------------------------------------------------------- the descent --

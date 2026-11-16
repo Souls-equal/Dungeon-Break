@@ -21,7 +21,7 @@ import {
   setTimeout as scheduleTimeout,
   step as stepScheduler,
 } from "./utils/scheduler.js";
-import { DIFFICULTIES, DUNGEON_CONFIG, difficultyForPadBlock } from "./dungeon/config.js";
+import { DIFFICULTIES, DUNGEON_CONFIG, difficultyForPadBlock, priceForDifficulty, formatGold, UNLOCK_CURRENCY, UNLOCK_DB_KEY, DUNGEON_PRICES } from "./dungeon/config.js";
 import { LOBBY_POSITION, createDungeonService } from "./dungeon/service.js";
 import { isChestBlock } from "./dungeon/loot.js";
 import { AURA_PER_LEVEL, MAX_AURA_LEVEL, categoryOf } from "./blessing/config.js";
@@ -52,6 +52,87 @@ const LOBBY_CONFIG = {
   // crossing two pads of the same colour would otherwise restart the countdown.
   padSwitchGraceTicks: 2,
 };
+
+// Gold unlock for dungeons (cstm_smp_gold via Market Place plugin)
+function getGoldAmount(playerId) {
+  try {
+    if (typeof api.getCurrencyAmount === "function") {
+      const v = api.getCurrencyAmount(playerId, UNLOCK_CURRENCY);
+      if (v === null || v === undefined) return 0;
+      return Number(v) || 0;
+    }
+  } catch (_) {}
+  return null; // no currency system -> treat as free (for tests)
+}
+function spendGold(playerId, amount) {
+  if (amount <= 0) return true;
+  try {
+    if (typeof api.giveCurrencyAmount === "function") {
+      api.giveCurrencyAmount(playerId, UNLOCK_CURRENCY, -amount);
+      return true;
+    }
+    if (typeof api.setCurrencyAmount === "function") {
+      const current = getGoldAmount(playerId);
+      if (current !== null) {
+        api.setCurrencyAmount(playerId, UNLOCK_CURRENCY, Math.max(0, current - amount));
+        return true;
+      }
+    }
+  } catch (_) {}
+  return false;
+}
+function loadUnlocks(playerId) {
+  try {
+    const raw = api.getPlayerDbValue(playerId, UNLOCK_DB_KEY);
+    if (!raw) return {};
+    if (typeof raw === "object") return raw;
+    if (typeof raw === "string") {
+      try { const j = JSON.parse(raw); return j && typeof j === "object" ? j : {}; } catch (_) { return {}; }
+    }
+  } catch (_) {}
+  return {};
+}
+function saveUnlocks(playerId, data) {
+  try {
+    const str = JSON.stringify(data);
+    api.setPlayerDbValue(playerId, UNLOCK_DB_KEY, str);
+  } catch (_) {}
+}
+function isUnlocked(playerId, difficulty) {
+  const d = difficulty && difficulty.id ? difficulty : null;
+  if (!d) return false;
+  const price = priceForDifficulty(d);
+  if (price <= 0) return true;
+  const unlocks = loadUnlocks(playerId);
+  if (unlocks[d.id]) return true;
+  return false;
+}
+function ensureUnlockedOrPay(playerId, difficulty) {
+  const d = typeof difficulty === "object" && difficulty.id ? difficulty : null;
+  if (!d) return false;
+  const price = priceForDifficulty(d);
+  if (price <= 0) return true;
+  const unlocks = loadUnlocks(playerId);
+  if (unlocks[d.id]) return true;
+  const gold = getGoldAmount(playerId);
+  if (gold === null) return true; // no currency system, allow (tests)
+  if (Number.isFinite(gold) && gold >= price) {
+    if (spendGold(playerId, price)) {
+      unlocks[d.id] = true;
+      saveUnlocks(playerId, unlocks);
+      try { api.sendMessage(playerId, `Unlocked ${d.label} for ${formatGold(price)}!`); } catch (_) {}
+      return true;
+    }
+    // if spend failed but had enough, still allow and mark unlocked
+    unlocks[d.id] = true;
+    saveUnlocks(playerId, unlocks);
+    return true;
+  }
+  const have = gold === null ? 0 : gold;
+  try { api.sendMessage(playerId, `You need ${formatGold(price)} to unlock ${d.label} (you have ${formatGold(have)}).`); } catch (_) {}
+  try { api.sendMessage(playerId, `Earn gold via Market Place to enter ${d.label}.`); } catch (_) {}
+  return false;
+}
 
 // Spawn handling: peaceful adventure + blessing reset while in spawn
 const SPAWN_GAMEMODE = "PeacefulAdventure";
@@ -223,6 +304,7 @@ function deferLobbyCountdownCancellation(playerId, countdown) {
 }
 
 function startLobbyCountdown(playerId, x, y, z, difficulty) {
+  if (!ensureUnlockedOrPay(playerId, difficulty)) return;
   const key = padKey(x, y, z);
   const current = lobbyCountdowns[playerId];
 

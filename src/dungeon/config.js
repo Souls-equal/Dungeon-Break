@@ -247,7 +247,7 @@ export const DIFFICULTIES = [
   { id: "normal", label: "Normal", padBlock: "Orange Concrete", fromLobby: false },
   { id: "hard", label: "Hard", padBlock: "Red Concrete", fromLobby: false },
   { id: "insane", label: "Insane", padBlock: "Purple Concrete", fromLobby: false },
-  { id: "ultraInsane", label: "Ultra Insane", padBlock: "Gray Concrete", fromLobby: false },
+  { id: "nightmare", label: "Nightmare", padBlock: "Gray Concrete", fromLobby: false },
   { id: "hell", label: "Hell", padBlock: "Black Concrete", fromLobby: false },
 ];
 
@@ -274,7 +274,7 @@ export const MOB_ROSTER = [
   { type: "Armour Collector", from: "hard", health: 2, damage: 1.75, speed: 0.95 },
   { type: "Furnace Knight", from: "insane", health: 2, damage: 2, speed: 0.95 },
   { type: "Lil Knight", from: "insane", health: 1.75, damage: 1.8, speed: 1.25 },
-  { type: "Draugr Knight", from: "ultraInsane", damage: 2, speed: 1.6 },
+  { type: "Draugr Knight", from: "nightmare", damage: 2, speed: 1.6 },
   { type: "Scorpion", from: "hell", health: 1.75, damage: 1.6, speed: 1.15 },
 ];
 
@@ -364,13 +364,35 @@ export const MOB_TUNING = {
   normal: { count: 3, health: 2, damage: 1.5, speed: 1.15 },
   hard: { count: 4, health: 2.5, damage: 1.75, speed: 1.2 },
   insane: { count: 4, health: 3, damage: 2, speed: 1.3 },
-  ultraInsane: { count: 5, health: 4, damage: 2.5, speed: 1.4 },
+  nightmare: { count: 5, health: 4, damage: 2.5, speed: 1.4 },
   hell: { count: 5, health: 5, damage: 3, speed: 1.5 },
 };
 
 /** The mob settings of a difficulty: always defined, so nothing reads `undefined`. */
 export function mobTuningFor(difficulty) {
   return MOB_TUNING[difficulty.id] || MOB_TUNING.veryEasy;
+}
+
+/** Gold cost to unlock each difficulty (Very Easy is free). Uses SMP gold currency cstm_smp_gold. */
+export const UNLOCK_CURRENCY = "cstm_smp_gold";
+export const UNLOCK_DB_KEY = "dungeonBreak.unlocks.v1";
+export const DUNGEON_PRICES = {
+  veryEasy: 0,
+  easy: 100,
+  medium: 500,
+  normal: 5000,
+  hard: 25000,
+  insane: 100000,
+  nightmare: 500000,
+  hell: 1000000,
+};
+export function priceForDifficulty(difficulty) {
+  const d = findDifficulty(difficulty);
+  if (!d) return 0;
+  return DUNGEON_PRICES[d.id] ?? 0;
+}
+export function formatGold(amount) {
+  return `${amount.toLocaleString("en-US")} gold`;
 }
 
 /** Concrete blocks that are pads, spelled the way Bloxd reports them. */

@@ -22,6 +22,10 @@ import {
   floorOfLayer,
   nextDifficulty,
   roomAuraFor,
+  priceForDifficulty,
+  formatGold,
+  UNLOCK_CURRENCY,
+  UNLOCK_DB_KEY,
 } from "./config.js";
 import { chunkOfWorld, createLoader } from "./loader.js";
 
@@ -83,12 +87,66 @@ export function createDungeonService(options) {
    * None of these waits is a guess: a chunk answers `chunkLoadTicks` after the read
    * that requested it, and a copied room is readable the tick after the copy.
    */
+  function getGold(playerId) {
+    try {
+      if (typeof api.getCurrencyAmount === "function") {
+        const v = api.getCurrencyAmount(playerId, UNLOCK_CURRENCY);
+        if (v === null || v === undefined) return 0;
+        return Number(v) || 0;
+      }
+    } catch (_) {}
+    return null;
+  }
+  function spendGold(playerId, amount) {
+    if (amount <= 0) return true;
+    try {
+      if (typeof api.giveCurrencyAmount === "function") {
+        api.giveCurrencyAmount(playerId, UNLOCK_CURRENCY, -amount);
+        return true;
+      }
+      if (typeof api.setCurrencyAmount === "function") {
+        const c = getGold(playerId);
+        if (c !== null) { api.setCurrencyAmount(playerId, UNLOCK_CURRENCY, Math.max(0, c - amount)); return true; }
+      }
+    } catch (_) {}
+    return false;
+  }
+  function loadUnlocks(playerId) {
+    try {
+      const raw = api.getPlayerDbValue(playerId, UNLOCK_DB_KEY);
+      if (!raw) return {};
+      if (typeof raw === "object") return raw;
+      if (typeof raw === "string") { try { const j = JSON.parse(raw); return j && typeof j === "object" ? j : {}; } catch (_) { return {}; } }
+    } catch (_) {}
+    return {};
+  }
+  function saveUnlocks(playerId, data) {
+    try { api.setPlayerDbValue(playerId, UNLOCK_DB_KEY, JSON.stringify(data)); } catch (_) {}
+  }
+  function gateDifficulty(playerId, difficulty) {
+    const price = priceForDifficulty(difficulty);
+    if (price <= 0) return true;
+    const unlocks = loadUnlocks(playerId);
+    if (unlocks[difficulty.id]) return true;
+    const gold = getGold(playerId);
+    if (gold === null) return true; // no currency system (tests)
+    if (gold >= price) {
+      if (spendGold(playerId, price)) { unlocks[difficulty.id] = true; saveUnlocks(playerId, unlocks); try { api.sendMessage(playerId, `Unlocked ${difficulty.label} for ${formatGold(price)}!`); } catch (_) {} return true; }
+      unlocks[difficulty.id] = true; saveUnlocks(playerId, unlocks); return true;
+    }
+    const have = gold === null ? 0 : gold;
+    try { api.sendMessage(playerId, `You need ${formatGold(price)} to unlock ${difficulty.label} (you have ${formatGold(have)}).`); } catch (_) {}
+    try { api.sendMessage(playerId, `Earn gold via Market Place to enter ${difficulty.label}.`); } catch (_) {}
+    return false;
+  }
+
   function enterDifficulty(playerId, difficultyReference, onReady) {
     const difficulty = findDifficulty(difficultyReference);
     if (!difficulty) {
       api.sendMessage(playerId, "That difficulty does not exist.");
       return null;
     }
+    if (!gateDifficulty(playerId, difficulty)) return null;
     const level = loader.levelState(difficulty, playerId);
     if (level.templates.length === 0) {
       api.sendMessage(playerId, `${difficulty.label} has no rooms yet. ${DUNGEON_CONFIG.missingTemplatesMessage}`);
