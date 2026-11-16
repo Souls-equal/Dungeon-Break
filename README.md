@@ -89,7 +89,7 @@ Le clic est capté par `onPlayerBoughtShopItem`, qui fait **deux choses dans cet
 | `/dbg templates` | Tous les modèles des niveaux utilisés, avec lisible / illisible |
 | `/dbg mem` | Un donjon par ligne, avec son origine, puis les compteurs qui doivent rester bornés |
 | `/dbg seed` | Le niveau et sa couche tirée, en une ligne |
-| `/dbg benedictions` | Niveau d'aura sur le plafond, points, dépenses, offre en cours, dernières bénédictions choisies, échelle et chances — hors donjon aussi |
+| `/dbg blessings` | Niveau d'aura sur le plafond, points, **permanents sauvegardés**, Blessings du run, effets en cours, dernières choisies, chances — hors donjon aussi |
 
 Une capture d'écran + `/dbg templates` suffisent à diagnostiquer une salle manquante.
 
@@ -112,37 +112,74 @@ Un niveau **n'a pas de hauteur fixe** : chaque entrée tire son propre cube (voi
 
 Tous les textes visibles par les joueurs sont en anglais.
 
-## Bénédictions : des points en devise, trois choix, un point par choix
+## Blessings : des points en devise, trois choix, trois durées de vie
 
-L'aura payée par les salles découvertes a maintenant un usage : **chaque niveau d'aura donne un point**, et un point s'échange contre **une Bénédiction choisie parmi trois** dans la boutique, catégorie **Benedictions**.
+L'aura payée par les salles découvertes a maintenant un usage : **chaque niveau d'aura donne un point**, et un point s'échange contre **une Blessing choisie parmi trois** dans la boutique, catégorie **Blessings**.
 
 Le geste, tel qu'il se joue :
 
-1. la catégorie affiche `Roll a Benediction` (niveau, points, chances) ;
-2. ce clic **remplace les tuiles de la catégorie** par **trois** bénédictions tirées au hasard selon leurs probabilités ;
-3. cliquer l'une des trois (`Choose`) **dépense le point**, annonce le résultat — chat, bannière, carte —, **referme la boutique**, et les tuiles **reviennent à leur état normal**.
+1. la catégorie affiche `Roll a Blessing` (niveau, points) ;
+2. ce clic **remplace les tuiles de la catégorie** par **trois** Blessings tirées au hasard selon leurs probabilités ;
+3. cliquer l'une des trois (`Choose`) **dépense le point**, applique l'effet, annonce le résultat — chat, bannière, carte —, **referme la boutique**, et les tuiles **reviennent à leur état normal**.
 
-**Les points sont une devise du jeu** (`setCurrency`), affichée sur le HUD avec son icône, et **non persistante** : `persistent: false`. Le compte est en mémoire, le niveau vient du jeu, et **rien ne survit à une reconnexion**.
+**Les points sont une devise du jeu** (`setCurrency`), affichée sur le HUD avec son icône, et **non persistante** : `persistent: false`. Le compte est en mémoire, le niveau vient du jeu, et **rien de la session ne survit à une reconnexion** — sauf ce qui est explicitement permanent.
 
-- **Le tirage réserve un point, le choix le dépense.** Trois cartes sur la table sont une promesse : elle se paie au moment où elle devient un choix, et une promesse non tenue (offre abandonnée) rend son point. C'est ce qui interdit de tirer trois offres avec les points d'un seul niveau.
-- **Trois tirages indépendants, tous différents.** Chaque case a les chances de la table (une Mythique à ~0,2 % dans chacune), un doublon est retiré, et un catalogue de moins de trois est servi tel quel.
-- **Pas de re-roll gratuit.** Une offre en attente est **réutilisée** : re-cliquer, fermer la boutique, revenir — les mêmes trois.
-- **Les points ne sont pas comptés, ils sont calculés** : `niveau d'aura − 1 − dépensés − réservés`. Le niveau est celui du jeu (`getAuraInfo`), relu à chaque rafraîchissement.
-- **Les trois choix sont retirés pour de vrai.** `hidden: true` ne les faisait pas disparaître (constaté en jeu). Le seul moyen documenté de retirer une tuile à un joueur est **`resetShopItemForPlayer`**, qui supprime son override pour la clé : les trois choix sont créés au tirage, puis **supprimés** dès que l'offre est finie. Ne jamais toucher au contraire la tuile `Roll`, qui doit toujours rester : une catégorie vidée de ses tuiles, c'est le bug des boutons qui disparaissent.
-- **La tuile `Roll` tient en une ligne : le niveau et les points.** Les probabilités y étaient, elles l'alourdissaient pour rien — elles restent dans `/dbg benedictions`. Et la tuile `Last roll` est **supprimée** : le dernier choix est déjà annoncé en chat et sur la carte, une tuile de plus ne faisait que surcharger la catégorie.
-- **Tout est par joueur** (`createShopItemForPlayer`, `configureShopCategoryForPlayer`) : un compte de points et une offre ne peuvent pas être des tuiles partagées.
+### Trois durées de vie, et c'est écrit sur la tuile
+
+| Portée | Combien de temps | Où ça vit |
+| --- | --- | --- |
+| **Permanent** (`PERM`) | pour toujours, et **ça se cumule** | une **`playerDbValue`** (`dungeonBreak.blessings.v1`), relue et réappliquée à chaque connexion |
+| **Run** (`RUN`) | jusqu'à la fin du run : **mort, déconnexion, téléportation au spawn** | en mémoire ; `endRun` est le seul endroit qui la retire |
+| **Timed** (`TIMED`) | 30 s à 2 min, **et rien d'autre** : un effet de potion | le moteur (`applyEffect`), qui sait déjà les arrêter |
+
+- **La sauvegarde est un compte de copies** : `{"toughened_hide":3}`. Dix fois la même Blessing permanente valent dix fois son effet, et une Blessing retirée du catalogue disparaît silencieusement d'une sauvegarde au lieu de planter une connexion. Elle est écrite **au moment du choix**, pas à la déconnexion : un joueur qui quitte une seconde après garde ce qu'il a payé.
+- **Un run perdu ne touche pas au permanent.** Les options client sont recalculées **entièrement** à chaque changement — permanent + run, additionnés, jamais l'un à la place de l'autre. C'est ce qui fait qu'un `+40` de run s'ajoute à un `+5` permanent, et qu'une fin de run remet exactement le permanent.
+- **Le plafond de dégâts subis est -40 %**, écrit là où il est appliqué (`DAMAGE_TAKEN_FLOOR`), pas dans un commentaire.
+- **Une option client est un état que le jeu garde** : un bonus retiré doit donc être **renvoyé à sa valeur de base**, sinon il reste pour toujours. Toutes les options gérées sont toujours envoyées, y compris celles que rien ne modifie.
+- **Les Blessings non permanentes sont perdues** à la mort, au `leave` et au bouton de téléportation au spawn — les trois passent par `endRun`.
+
+### Le catalogue
+
+| Blessing | Rareté | Portée | Effet |
+| --- | --- | --- | --- |
+| Toughened Hide | Uncommon | PERM | `maxHealth` +5 |
+| Scarred Skin | Rare | PERM | `receivingDamageMultiplier` -0.01 (plancher 0.6) |
+| Long Stride | Rare | PERM | `speedMultiplier` +0.1 (et `runningSpeed` / `walkingSpeed`) |
+| Grim Focus | Epic | PERM | `dealingDamageMultiplier` +0.02 |
+| Undying Heart | Mythic | PERM | `maxHealth` +25 **et** -5 % de dégâts subis |
+| Battle Rush | Common | RUN | +20 % de dégâts infligés |
+| Worn Shield | Common | RUN | -15 % de dégâts subis |
+| Runner's Legs | Uncommon | RUN | +0.3 de multiplicateur de vitesse |
+| Thick Blood | Uncommon | RUN | `maxHealth` +15 |
+| Venous Surge | Rare | RUN | régénération renforcée |
+| Thorned Coat | Rare | RUN | effet `Thorns` pour tout le run |
+| Iron Ribs | Epic | RUN | `maxHealth` +40 |
+| Butcher Hands | Epic | RUN | +35 % de dégâts infligés |
+| Wall Crawler | Legendary | RUN | `canClimbWalls` pour tout le run |
+| Bloodletting | Common | TIMED | `Damage` 50 s |
+| Hasty Hands | Common | TIMED | `Haste` 30 s |
+| Bark Skin | Uncommon | TIMED | `Damage Reduction` 60 s |
+| Swift Brew | Uncommon | TIMED | `Speed` 45 s |
+| Mending Draught | Rare | TIMED | `Health Regen` 90 s |
+| Long Reach | Epic | TIMED | `Haste` niveau 2, 2 min |
+
+- **Le tirage réserve un point, le choix le dépense.** Trois cartes sur la table sont une promesse : elle se paie au moment où elle devient un choix, et une promesse non tenue (offre abandonnée) rend son point.
+- **Trois tirages indépendants, tous différents.** Chaque case a les chances de la table (une Mythique à ~0,2 % dans chacune), un doublon est retiré.
+- **Pas de re-roll gratuit.** Une offre en attente est **réutilisée**.
+- **Les points ne sont pas comptés, ils sont calculés** : `niveau d'aura − 1 − dépensés − réservés`.
+- **Les trois choix sont retirés pour de vrai.** `hidden: true` ne les faisait pas disparaître (constaté en jeu). Le seul moyen documenté de retirer une tuile à un joueur est **`resetShopItemForPlayer`**. La tuile `Roll` n'est **jamais** retirée : elle garde la catégorie non vide.
+- **La tuile `Roll` tient en une ligne : le niveau et les points**, et la tuile `Last roll` n'existe plus.
+- **Tout est par joueur** (`createShopItemForPlayer`, `configureShopCategoryForPlayer`).
 
 ### L'échelle d'aura, et le plafond
-
-Le monde **impose son échelle** à la connexion, par deux options client documentées :
 
 | Option | Valeur | Pourquoi |
 | --- | --- | --- |
 | `auraPerLevel` | `50` | une salle vaut 10 à 20 d'aura : un point tous les trois à cinq salles |
-| `maxAuraLevel` | `40` | le plafond **abaissé** : 39 points dans toute une partie, et l'aura d'un run ne se perd plus dans des niveaux vides |
-| `autoRespawn` / `secsToRespawn` | `true` / `3` | la règle de respawn, envoyée dans le même `setClientOptions` |
+| `maxAuraLevel` | `40` | le plafond **abaissé** : 39 points dans toute une partie |
+| `secsToRespawn` | `0` | l'attente de respawn du propriétaire |
 
-**Une connexion remet l'aura à 0** (`setTotalAura`), oublie le compte en mémoire, remet la devise à 0 et redessine les tuiles d'un joueur qui n'a rien choisi. Se déconnecter puis revenir, c'est repartir de zéro : c'est la règle demandée, et elle est écrite dans `resetPlayerProgress`.
+**Une connexion remet l'aura à 0** (`setTotalAura`), oublie la session, remet la devise à 0, retire les effets de la session précédente, puis **relit la sauvegarde permanente** et l'applique. `resetPlayerProgress` fait tout cela dans cet ordre.
 
 ### Les six raretés
 
@@ -159,23 +196,23 @@ Les poids sont relatifs et normalisés au tirage : une rareté **sans aucune bé
 
 ### Les trois familles
 
-**Bénédictions physiques**, **Bénédictions d'équipement**, **Effets de potions** — chaque bénédiction appartient à une seule famille, indiquée sur sa carte, et **c'est la famille qui choisit l'image** de la tuile : `Block of Iron` (physique), `Block of Diamond` (équipement), `Potion Table` (potions). Rien n'est posé dans le monde, le jeu ne fait que dessiner l'image.
+**Physical**, **Equipment**, **Potion effect** — chaque Blessing appartient à une seule famille, indiquée sur sa carte, et **c'est la famille qui choisit l'image** de la tuile : `Block of Iron` (physique), `Block of Diamond` (équipement), `Potion Table` (potions). Rien n'est posé dans le monde, le jeu ne fait que dessiner l'image.
 
 ### Le rendu
 
 | Surface | Ce qu'elle montre | Contrainte d'API |
 | --- | --- | --- |
-| Chat | `Benediction: <nom en couleur> — <famille> · <rareté>`, plus une ligne en texte simple | `CustomTextStyling` : la couleur est un **nom CSS** (`gold`, `lime`…) |
+| Chat | `Blessing: <nom en couleur> — <famille> · <rareté>`, la durée de vie, puis l'effet | `CustomTextStyling` : la couleur est un **nom CSS** (`gold`, `lime`…) |
 | Bannière | `<nom> — <rareté>` au milieu de l'écran, 2,5 s | `queueMiddleTextUpper`, texte stylé |
-| Carte | Nom, rareté, famille et description, en haut à droite, 6 s | `sendTopRightHelper` : icône **Font Awesome**, fond en **`rgb()`** (le hex est refusé par la doc), texte **non stylé** |
+| Carte | Nom, rareté, **portée**, famille et description, en haut à droite, 6 s | `sendTopRightHelper` : icône **Font Awesome**, fond en **`rgb()`** (le hex est refusé par la doc), texte **non stylé** |
 
 Deux couleurs par rareté pour cette raison : un hexadécimal pour le fond de la carte (`rgbOf` le convertit), un nom CSS pour le texte. Les icônes sont des icônes **du jeu** (`IngameIconName`) dans le chat, et Font Awesome sur la carte — c'est le seul format que `sendTopRightHelper` accepte.
 
-### Les neuf bénédictions (qui ne font rien encore)
+### Vingt Blessings, toutes avec un effet
 
-`Iron Hide`, `Field Rations`, `Quick Feet`, `Sturdy Straps`, `Honed Edge`, `Bitter Draught`, `Second Wind`, `Ghost Step`, `Heart of the Dungeon` — au moins une par famille et une par rareté jusqu'à Mythic. **Chacune dit « (No effect yet.) »** : la mécanique, les raretés et le rendu sont là, les effets viendront.
+Au moins une par famille et une par rareté, jusqu'à Mythic. **Chacune fait ce qu'elle dit** : la portée est sur la tuile (`PERM`, `RUN`, `TIMED`), l'effet est dans `config.js`, et un test vérifie qu'aucune entrée n'est sans effet.
 
-`/dbg benedictions` affiche le niveau sur le plafond, les points, les dépenses, l'offre en cours, les dernières bénédictions choisies, l'échelle d'aura et les chances — **hors donjon aussi**, puisque le niveau s'y gagne.
+`/dbg blessings` affiche le niveau, les points, les permanents sauvegardés (et leur total), les Blessings du run, les effets encore en cours, les dernières choisies et les chances — **hors donjon aussi**, puisque le niveau s'y gagne.
 
 ## Génération
 
@@ -259,9 +296,9 @@ src/dungeon/templates.js   coordonnées des modèles, tirage déterministe
 src/dungeon/loader.js      file, copie
 src/dungeon/service.js     entrée, atterrissage, pad, rapports
 src/dungeon/loot.js        coffres, clés, tirage par difficulté
-src/benediction/config.js  raretés, familles, catalogue, chances, tirage
-src/benediction/service.js points, réserve, offre, historique (mémoire seule)
-src/benediction/presentation.js  carte, ligne de chat, tuile de boutique
+src/blessing/config.js  raretés, familles, catalogue, chances, tirage
+src/blessing/service.js points, réserve, offre, historique (mémoire seule)
+src/blessing/presentation.js  carte, ligne de chat, tuile de boutique
 src/dungeon/reward.js      noms d’items vérifiés par le build
 src/utils/scheduler.js     scheduler piloté par le callback tick
 src/worldCode.js           lobby, pads, /dbg

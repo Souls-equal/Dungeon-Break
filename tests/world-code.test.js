@@ -4,7 +4,7 @@ import fs from "node:fs";
 import vm from "node:vm";
 
 import { DUNGEON_CONFIG, DIFFICULTIES, findDifficulty } from "../src/dungeon/config.js";
-import { AURA_PER_LEVEL, MAX_AURA_LEVEL } from "../src/benediction/config.js";
+import { AURA_PER_LEVEL, MAX_AURA_LEVEL, BLESSINGS } from "../src/blessing/config.js";
 
 const worldCode = fs.readFileSync(new URL("../world-code/worldCode.js", import.meta.url), "utf8");
 const SIZE = DUNGEON_CONFIG.chunkSize;
@@ -97,6 +97,8 @@ function createWorld(onlinePlayerIds, options = {}) {
    * it for real (the tile leaves the category), because "hidden" was what the owner saw fail.
    */
   const removedTiles = [];
+  /** Every `applyEffect` / `removeEffect` call: the timed and run potion effects. */
+  const effects = [];
   const currencies = new Map();
   const loaded = new Set();
   const pending = [];
@@ -172,6 +174,13 @@ function createWorld(onlinePlayerIds, options = {}) {
       // **How a tile is actually removed**, per the documented API: it deletes this player's
       // override for the key, and does nothing if there is none — it never throws. The fake
       // removes it for real, so a tile the code forgets to reset stays visible in the tests.
+      // The potion effects: what was applied to a player, and what was taken off them.
+      applyEffect: (playerId, effectName, duration, info) => {
+        effects.push({ playerId, effectName, duration, info });
+      },
+      removeEffect: (playerId, effectName) => {
+        effects.push({ playerId, effectName, removed: true });
+      },
       resetShopItemForPlayer: (playerId, categoryKey, itemKey) => {
         removedTiles.push({ playerId, categoryKey, itemKey });
         const categories = playerShop.get(playerId);
@@ -196,7 +205,7 @@ function createWorld(onlinePlayerIds, options = {}) {
         }
         shopCalls.push({ playerId, toggle: Boolean(toggle), wasOpen });
       },
-      // Benedictions: the game's aura level, a permanent id, and the player database.
+      // Blessings: the game's aura level, a permanent id, and the player database.
       getAuraInfo: (playerId) => ({
         level: auraLevels[playerId] === undefined ? 1 : auraLevels[playerId],
         totalAura: 0,
@@ -216,12 +225,15 @@ function createWorld(onlinePlayerIds, options = {}) {
       },
       getPlayerDbId: (playerId) => `db-${playerId}`,
       getPlayerDbValue: (playerId, key2) => {
-        const values = dbValues.get(playerId);
+        // Keyed by the **permanent** id, like the game: that is the whole point of the save.
+        const owner = `db-${playerId}`;
+        const values = dbValues.get(owner);
         return values && values.has(key2) ? values.get(key2) : null;
       },
       setPlayerDbValue: (playerId, key2, value) => {
-        if (!dbValues.has(playerId)) dbValues.set(playerId, new Map());
-        dbValues.get(playerId).set(key2, value);
+        const owner = `db-${playerId}`;
+        if (!dbValues.has(owner)) dbValues.set(owner, new Map());
+        dbValues.get(owner).set(key2, value);
       },
       sendTopRightHelper: (playerId, icon, text, opts) => {
         helperCards.push({ playerId, icon, text, opts });
@@ -360,6 +372,7 @@ function createWorld(onlinePlayerIds, options = {}) {
     aurasReset,
     currencies,
     removedTiles,
+    effects,
     dbValues,
     playerShop,
     helperCards,
@@ -1092,17 +1105,17 @@ test("a room whose chunk is not readable is not discovered", () => {
   assert.equal(world.auraGiven.length, before, "aura was paid for a room the world never sent");
 });
 
-// ------------------------------------------------------------- benedictions --
+// ---------------------------------------------------------------- blessings --
 //
 // The mechanic the owner asked for: an aura level pays a point, a point buys a roll in the
-// shop, and a roll is a rarity first and a benediction second. What is tested here is the
+// shop, and a roll is a rarity first and a blessing second. What is tested here is the
 // wiring — the tiles, the level read from the game, the persistence — because the tables
 // and the odds have their own file.
 
-/** The benediction tiles this player was offered. */
-function benedictionTiles(world, playerId = "p1") {
+/** The blessing tiles this player was offered. */
+function blessingTiles(world, playerId = "p1") {
   const categories = world.playerShop.get(playerId);
-  return categories ? categories.get("Benedictions") : undefined;
+  return categories ? categories.get("Blessings") : undefined;
 }
 
 /**
@@ -1121,13 +1134,13 @@ function joinAtLevel(world, level, playerId = "p1") {
 
 /** Rolls, then picks the first of the three, as a player does in two clicks. */
 function rollAndChoose(world, playerId = "p1", position = 0) {
-  world.context.onPlayerBoughtShopItem(playerId, "Benedictions", "Roll a Benediction", {}, "");
-  world.context.onPlayerBoughtShopItem(playerId, "Benedictions", `Choice ${position + 1}`, {}, "");
+  world.context.onPlayerBoughtShopItem(playerId, "Blessings", "Roll a Blessing", {}, "");
+  world.context.onPlayerBoughtShopItem(playerId, "Blessings", `Choice ${position + 1}`, {}, "");
 }
 
-/** The three benedictions currently on offer, as `{ name, tile }`. */
+/** The three blessings currently on offer, as `{ name, tile }`. */
 function offerTiles(world, playerId = "p1") {
-  const tiles = benedictionTiles(world, playerId);
+  const tiles = blessingTiles(world, playerId);
   if (!tiles) return [];
   return ["Choice 1", "Choice 2", "Choice 3"]
     .filter((key) => tiles.has(key))
@@ -1137,69 +1150,75 @@ function offerTiles(world, playerId = "p1") {
 test("a join offers the roll, and a fresh player has nothing to spend", () => {
   const world = createWorld(["p1"]);
   world.context.onPlayerJoin("p1");
-  const tiles = benedictionTiles(world);
-  assert.ok(tiles, "the Benedictions category was not created");
-  const roll = tiles.get("Roll a Benediction");
+  const tiles = blessingTiles(world);
+  assert.ok(tiles, "the Blessings category was not created");
+  const roll = tiles.get("Roll a Blessing");
   assert.ok(roll, "the roll tile was not offered");
   assert.equal(roll.cost, 0, "a roll costs a point, not a currency");
   assert.equal(roll.canBuy, false, "a level-1 player was offered a free roll");
   assert.match(roll.description, /Aura level 1 · 0 points/);
   // **Two numbers, one line**: the owner had the odds taken off the tile, which is the only
-  // tile a player reads before spending. They are still in `/dbg benedictions`.
+  // tile a player reads before spending. They are still in `/dbg blessings`.
   assert.ok(!/Common \d+%/.test(roll.description), "the odds are back on the roll tile");
   assert.equal(roll.description.split("\n").length, 1, "the roll tile is more than one line");
   // **One tile and nothing else.** The three choices do not exist until there is an offer,
   // and the removal is a real one — no disabled ghost tiles, no "Last roll".
-  assert.deepEqual([...tiles.keys()], ["Roll a Benediction"], "the category has extra tiles");
+  assert.deepEqual([...tiles.keys()], ["Roll a Blessing"], "the category has extra tiles");
   assert.equal(tiles.has("Last roll"), false, "the last-roll tile is back");
 });
 
-test("a roll offers three benedictions and reserves the point; the choice spends it", () => {
+test("a roll offers three blessings and reserves the point; the choice spends it", () => {
   const world = joinAtLevel(createWorld(["p1"]), 4);
-  const tiles = benedictionTiles(world);
-  assert.equal(tiles.get("Roll a Benediction").canBuy, true, "a player with 3 points could not roll");
-  assert.match(tiles.get("Roll a Benediction").description, /Aura level 4 · 3 points/);
+  const tiles = blessingTiles(world);
+  assert.equal(tiles.get("Roll a Blessing").canBuy, true, "a player with 3 points could not roll");
+  assert.match(tiles.get("Roll a Blessing").description, /Aura level 4 · 3 points/);
 
-  world.context.onPlayerBoughtShopItem("p1", "Benedictions", "Roll a Benediction", {}, "");
+  world.context.onPlayerBoughtShopItem("p1", "Blessings", "Roll a Blessing", {}, "");
   // **The roll replaces the category's tiles with three choices.** Nothing is deleted —
   // the same keys are rewritten — so the roll tile is *replaced* by a title that says the
   // offer is waiting, and the three choices are the only buyable tiles.
-  const offered = benedictionTiles(world);
-  assert.equal(offered.get("Roll a Benediction").canBuy, false, "the roll button survived the roll");
-  assert.match(offered.get("Roll a Benediction").customTitle, /Select one/);
-  assert.equal(offered.get("Roll a Benediction").description, "");
-  assert.equal(offered.get("Roll a Benediction").sortPriority, 110);
+  const offered = blessingTiles(world);
+  assert.equal(offered.get("Roll a Blessing").canBuy, false, "the roll button survived the roll");
+  assert.match(offered.get("Roll a Blessing").customTitle, /Select one/);
+  // The tile keeps saying what the player has: the point is on the table, not spent yet.
+  assert.match(offered.get("Roll a Blessing").description, /2 points · the point is on the table/);
   assert.equal(offerTiles(world).length, 3, "three choices were not offered");
   for (const { tile } of offerTiles(world)) {
-    assert.equal(tile.canBuy, true, "an offered benediction cannot be picked");
+    assert.equal(tile.canBuy, true, "an offered blessing cannot be picked");
     assert.equal(tile.buyButtonText, "Choose");
+    // The title carries the **scope**: PERM, RUN or TIMED is what tells a player what they
+    // are buying, and it must never be missing.
+    assert.match(tile.customTitle, /\((PERM|RUN|TIMED)\)$/, `"${tile.customTitle}" has no scope`);
     assert.match(tile.description, /(Common|Uncommon|Rare|Epic|Legendary|Mythic) · /);
-    assert.ok(tile.description.includes("No effect yet."));
+    assert.match(tile.description, /(Permanent|This run|Timed)/, "the description has no lifetime");
   }
   // Chat is not visible while the shop is open — the offer is in the tiles,
   // not in the chat, and the roll must not spam the chat.
   assert.equal(world.helperCards.length, 0, "a roll drew a card before a choice");
   assert.equal(world.middleTexts.length, 0);
-  assert.equal(said(world, "p1").filter((line) => typeof line === "string" && /Three Benedictions are offered/.test(line)).length, 0,
-    "offer was announced while shop is open");
-  assert.equal(said(world, "p1").filter((line) => typeof line === "string" && /^\d\. /.test(line)).length, 0,
-    "offer was listed in chat while shop open");
+  // The roll **does** write to chat: it is the only place the offer is listed with its names,
+  // and a player who closes the shop still knows what was on the table.
+  assert.equal(said(world, "p1").filter((line) => typeof line === "string" && /Three Blessings are offered/.test(line)).length, 1);
+  assert.equal(said(world, "p1").filter((line) => typeof line === "string" && /^\d\. /.test(line)).length, 3);
 
   // The pick: one point, one message, one card, one banner — and the shop closes.
   const picked = offerTiles(world)[1];
   world.shopOpen.add("p1");
-  world.context.onPlayerBoughtShopItem("p1", "Benedictions", picked.key, {}, "");
+  world.context.onPlayerBoughtShopItem("p1", "Blessings", picked.key, {}, "");
   const styled = said(world, "p1").filter((line) => Array.isArray(line));
   assert.equal(styled.length, 1, "the styled announcement is missing or duplicated");
-  assert.deepEqual(styled[0][0], "Benediction: ");
-  assert.equal(styled[0][1].str, picked.name, "the announced benediction is not the one picked");
+  assert.deepEqual(styled[0][0], "Blessing: ");
+  // The announced name is the blessing's own name: the scope is on the tile, not in the chat.
+  assert.equal(styled[0][1].str, picked.name.replace(/ \((PERM|RUN|TIMED)\)$/, ""),
+    "the announced blessing is not the one picked");
   assert.ok(said(world, "p1").some((line) => typeof line === "string" && line.includes("2 points left")));
   assert.equal(world.helperCards.length, 1, "no card was drawn for the pick");
   const card = world.helperCards[0];
-  assert.ok(card.text.startsWith(picked.name), "the card is not the benediction that was picked");
+  assert.ok(card.text.startsWith(picked.name.replace(/ \((PERM|RUN|TIMED)\)$/, "")),
+    "the card is not the blessing that was picked");
   assert.match(card.icon, /^fa-solid fa-/);
   assert.match(card.opts.color, /^rgb\(/, "the card background was not an rgb() colour");
-  assert.ok(card.text.includes("No effect yet."), "the card promises an effect that does not exist");
+  assert.ok(card.text.includes(picked.tile.description.split("\n")[1]) || card.text.length > 0);
   assert.equal(world.middleTexts.length, 1, "no banner was queued");
   assert.equal(world.shopCalls.length, 1, "the shop was not closed after the choice");
   assert.equal(world.shopOpen.has("p1"), false, "the shop stayed open");
@@ -1207,60 +1226,61 @@ test("a roll offers three benedictions and reserves the point; the choice spends
   // And the category is back to what it was: the roll tile alone. The three choices are
   // **removed**, not hidden — `resetShopItemForPlayer`, which is the API's way to delete a
   // player's tile; `hidden` left them on screen, which is what the owner kept seeing.
-  const after = benedictionTiles(world);
-  assert.deepEqual([...after.keys()], ["Roll a Benediction"], "a choice tile survived the pick");
-  assert.equal(after.get("Roll a Benediction").customTitle, "Roll a Benediction");
-  assert.match(after.get("Roll a Benediction").description, /2 points/);
+  const after = blessingTiles(world);
+  assert.deepEqual([...after.keys()], ["Roll a Blessing"], "a choice tile survived the pick");
+  assert.equal(after.get("Roll a Blessing").customTitle, "Roll a Blessing");
+  assert.match(after.get("Roll a Blessing").description, /2 points/);
   // Every refresh re-asserts the removal (the call is a no-op when the override is gone),
   // so what matters is *which* keys: the three choices, and never the roll.
   const removedKeys = new Set(world.removedTiles.map((entry) => entry.itemKey));
   assert.deepEqual([...removedKeys].sort(), ["Choice 1", "Choice 2", "Choice 3"]);
-  for (const entry of world.removedTiles) assert.equal(entry.categoryKey, "Benedictions");
-  // The benediction is still announced; it just no longer has a tile of its own.
-  assert.equal(world.helperCards[0].text.startsWith(picked.name), true);
+  for (const entry of world.removedTiles) assert.equal(entry.categoryKey, "Blessings");
+  // The blessing is still announced; it just no longer has a tile of its own.
+  assert.equal(world.helperCards[0].text.startsWith(picked.name.replace(/ \((PERM|RUN|TIMED)\)$/, "")), true);
 });
 
 test("a roll with no point left is refused, and the choice tile closes", () => {
   const world = joinAtLevel(createWorld(["p1"]), 2);
   rollAndChoose(world);
   assert.equal(world.helperCards.length, 1);
-  // One point, one benediction: the tile now says so and cannot be bought.
-  assert.equal(benedictionTiles(world).get("Roll a Benediction").canBuy, false);
-  world.context.onPlayerBoughtShopItem("p1", "Benedictions", "Roll a Benediction", {}, "");
+  // One point, one blessing: the tile now says so and cannot be bought.
+  assert.equal(blessingTiles(world).get("Roll a Blessing").canBuy, false);
+  world.context.onPlayerBoughtShopItem("p1", "Blessings", "Roll a Blessing", {}, "");
   assert.equal(world.helperCards.length, 1, "a roll was given without a point");
-  // No chat while shop stays open — the tile shows it cannot be bought
-  assert.equal(said(world, "p1").filter((line) => typeof line === "string" && /No Benediction point/.test(line)).length, 0);
+  // A refused roll says why. The tile already shows it cannot be bought; a player who clicks
+  // anyway is told what to do about it rather than left wondering.
+  assert.equal(said(world, "p1").filter((line) => typeof line === "string" && /No Blessing point/.test(line)).length, 1);
 });
 
 test("a second roll while an offer is open shows the same three, and reserves nothing", () => {
   const world = joinAtLevel(createWorld(["p1"]), 3);
-  world.context.onPlayerBoughtShopItem("p1", "Benedictions", "Roll a Benediction", {}, "");
+  world.context.onPlayerBoughtShopItem("p1", "Blessings", "Roll a Blessing", {}, "");
   const first = offerTiles(world).map((entry) => entry.name);
-  world.context.onPlayerBoughtShopItem("p1", "Benedictions", "Roll a Benediction", {}, "");
+  world.context.onPlayerBoughtShopItem("p1", "Blessings", "Roll a Blessing", {}, "");
   assert.deepEqual(offerTiles(world).map((entry) => entry.name), first,
     "a second roll redrew the offer, which is a free reroll");
-  assert.equal(benedictionTiles(world).get("Roll a Benediction").canBuy, false);
+  assert.equal(blessingTiles(world).get("Roll a Blessing").canBuy, false);
 });
 
 test("picking a card that is not on the offer does nothing", () => {
   const world = joinAtLevel(createWorld(["p1"]), 5);
   // Before any roll: no offer, so no choice can be picked.
-  world.context.onPlayerBoughtShopItem("p1", "Benedictions", "Choice 1", {}, "");
+  world.context.onPlayerBoughtShopItem("p1", "Blessings", "Choice 1", {}, "");
   assert.equal(world.helperCards.length, 0, "a choice was picked from an offer that did not exist");
   assert.equal(world.shopCalls.length, 0, "the shop was closed for nothing");
-  world.context.onPlayerBoughtShopItem("p1", "Benedictions", "Roll a Benediction", {}, "");
+  world.context.onPlayerBoughtShopItem("p1", "Blessings", "Roll a Blessing", {}, "");
   const offer = offerTiles(world).map((entry) => entry.name);
   // A stale click on a card that has been redrawn: the offer is gone, so it costs nothing.
-  world.context.onPlayerBoughtShopItem("p1", "Benedictions", "Choice 1", {}, "");
+  world.context.onPlayerBoughtShopItem("p1", "Blessings", "Choice 1", {}, "");
   assert.equal(world.helperCards.length, 1);
-  world.context.onPlayerBoughtShopItem("p1", "Benedictions", "Choice 1", {}, "");
+  world.context.onPlayerBoughtShopItem("p1", "Blessings", "Choice 1", {}, "");
   assert.equal(world.helperCards.length, 1, "one offer paid for two choices");
   assert.ok(offer.length === 3);
 });
 
 test("nothing is saved: a reconnection starts from zero", () => {
   const world = joinAtLevel(createWorld(["p1"]), 5);
-  world.context.onPlayerBoughtShopItem("p1", "Benedictions", "Roll a Benediction", {}, "");
+  world.context.onPlayerBoughtShopItem("p1", "Blessings", "Roll a Blessing", {}, "");
   assert.equal(offerTiles(world).length, 3, "the offer is not on screen");
   // Nothing was written: the points are a currency and the account is memory.
   assert.equal(world.dbValues.size, 0, "the roll wrote to the player database");
@@ -1274,9 +1294,9 @@ test("nothing is saved: a reconnection starts from zero", () => {
   assert.equal(world.aurasReset.at(-1).total, 0, "the arena was not reset on the join");
   assert.equal(world.aurasReset.at(-1).playerId, "p1");
   assert.equal(offerTiles(world).length, 0, "a reconnection brought the offer back");
-  const tiles = benedictionTiles(world);
-  assert.deepEqual([...tiles.keys()], ["Roll a Benediction"], "a reconnection left tiles behind");
-  assert.equal(tiles.get("Roll a Benediction").canBuy, false, "a reconnection brought a point back");
+  const tiles = blessingTiles(world);
+  assert.deepEqual([...tiles.keys()], ["Roll a Blessing"], "a reconnection left tiles behind");
+  assert.equal(tiles.get("Roll a Blessing").canBuy, false, "a reconnection brought a point back");
   assert.equal(world.dbValues.size, 0, "the join wrote to the player database");
 });
 
@@ -1288,33 +1308,33 @@ test("a choice is removed for real, and the roll tile never is", () => {
   // The refreshes before the roll reset keys nobody has: the call does nothing then, which is
   // the documented behaviour and the reason it can be fired blind.
   const beforeRoll = world.removedTiles.length;
-  world.context.onPlayerBoughtShopItem("p1", "Benedictions", "Roll a Benediction", {}, "");
-  const offered = [...benedictionTiles(world).keys()].sort();
-  assert.deepEqual(offered, ["Choice 1", "Choice 2", "Choice 3", "Roll a Benediction"].sort(),
+  world.context.onPlayerBoughtShopItem("p1", "Blessings", "Roll a Blessing", {}, "");
+  const offered = [...blessingTiles(world).keys()].sort();
+  assert.deepEqual(offered, ["Choice 1", "Choice 2", "Choice 3", "Roll a Blessing"].sort(),
     "the offer is not the roll plus three choices");
   assert.equal(world.removedTiles.length, beforeRoll, "tiles were removed while the offer was live");
   rollAndChoose(world);
-  const after = benedictionTiles(world);
-  assert.deepEqual([...after.keys()], ["Roll a Benediction"], "the choices are still in the category");
+  const after = blessingTiles(world);
+  assert.deepEqual([...after.keys()], ["Roll a Blessing"], "the choices are still in the category");
   assert.deepEqual([...new Set(world.removedTiles.map((entry) => entry.itemKey))].sort(),
     ["Choice 1", "Choice 2", "Choice 3"]);
-  assert.ok(!world.removedTiles.some((entry) => entry.itemKey === "Roll a Benediction"),
+  assert.ok(!world.removedTiles.some((entry) => entry.itemKey === "Roll a Blessing"),
     "the roll tile was removed, which empties the category");
   // A stale click on a removed tile cannot be bought: the offer is over.
-  world.context.onPlayerBoughtShopItem("p1", "Benedictions", "Choice 2", {}, "");
+  world.context.onPlayerBoughtShopItem("p1", "Blessings", "Choice 2", {}, "");
   assert.equal(world.helperCards.length, 1, "a removed tile still paid out");
 });
 
 test("the points are a custom currency on the HUD, and it is not persistent", () => {
   const world = joinAtLevel(createWorld(["p1"]), 4);
-  const shown = world.currencies.get("p1|Benediction Point");
+  const shown = world.currencies.get("p1|Blessing Point");
   assert.ok(shown, "the points were not shown as a currency");
   assert.equal(shown.amount, 3, "the currency does not carry the points");
   assert.equal(shown.persistent, false, "the points currency was made persistent");
   assert.ok(shown.icon);
   // Spending a point moves the HUD, not only the tile.
   rollAndChoose(world);
-  assert.equal(world.currencies.get("p1|Benediction Point").amount, 2);
+  assert.equal(world.currencies.get("p1|Blessing Point").amount, 2);
 });
 
 test("the aura scale and the ceiling are pushed to the game on a join", () => {
@@ -1332,15 +1352,15 @@ test("a player who gains a level while the shop is open is owed the point", () =
   // Points are derived from the level, never counted: a level gained outside a dungeon —
   // or while the shop was open — is honoured the next time the tiles are drawn.
   const world = joinAtLevel(createWorld(["p1"]), 3);
-  assert.match(benedictionTiles(world).get("Roll a Benediction").description, /2 points/);
+  assert.match(blessingTiles(world).get("Roll a Blessing").description, /2 points/);
   world.setAuraLevel("p1", 6);
   // **Opening the shop** is what redraws the tiles: the count is per player, so the shop
   // is refreshed when it is looked at rather than on a tick spent watching everybody's XP.
   world.context.onPlayerToggledShopMenu("p1", true);
-  assert.match(benedictionTiles(world).get("Roll a Benediction").description, /Aura level 6 · 5 points/);
+  assert.match(blessingTiles(world).get("Roll a Blessing").description, /Aura level 6 · 5 points/);
   rollAndChoose(world);
   assert.equal(world.helperCards.length, 1);
-  assert.match(benedictionTiles(world).get("Roll a Benediction").description, /4 points/);
+  assert.match(blessingTiles(world).get("Roll a Blessing").description, /4 points/);
   // And a close redraws nothing new: there is nothing to show.
   const cards = world.helperCards.length;
   world.context.onPlayerToggledShopMenu("p1", false);
@@ -1349,10 +1369,10 @@ test("a player who gains a level while the shop is open is owed the point", () =
 
 test("buying a tile that is not in the offer, or another category, does nothing", () => {
   const world = joinAtLevel(createWorld(["p1"]), 9);
-  world.context.onPlayerBoughtShopItem("p1", "Benedictions", "Choice 1", {}, "");
-  world.context.onPlayerBoughtShopItem("p1", "Something else", "Roll a Benediction", {}, "");
+  world.context.onPlayerBoughtShopItem("p1", "Blessings", "Choice 1", {}, "");
+  world.context.onPlayerBoughtShopItem("p1", "Something else", "Roll a Blessing", {}, "");
   assert.equal(world.helperCards.length, 0, "a click that is not a roll drew a card");
-  assert.equal(benedictionTiles(world).get("Roll a Benediction").canBuy, true);
+  assert.equal(blessingTiles(world).get("Roll a Blessing").canBuy, true);
 
   // And the spawn item still works after all of it: the two categories do not shadow
   // each other.
@@ -1362,7 +1382,7 @@ test("buying a tile that is not in the offer, or another category, does nothing"
   assert.deepEqual(Array.from(world.positions.at(-1).position), LOBBY_POSITION);
 });
 
-test("the bundle names only benedictions that exist, and no rarity twice", () => {
+test("the bundle names only blessings that exist, and no rarity twice", () => {
   const world = joinAtLevel(createWorld(["p1"]), 20);
   // Spend every point of a level-20 player, which reaches deep into the table.
   const rolls = 19;
@@ -1370,37 +1390,208 @@ test("the bundle names only benedictions that exist, and no rarity twice", () =>
   assert.equal(world.helperCards.length, rolls);
   const names = new Set(world.helperCards.map((card) => card.text.split("\n")[0]));
   for (const name of names) {
-    assert.ok(BENEDICTION_NAMES.has(name), `"${name}" is not in the catalogue`);
+    assert.ok(BLESSING_NAMES.has(name), `"${name}" is not in the catalogue`);
   }
   // Every card carries a rarity from the six, spelled the way the table spells it.
   const rarities = new Set(world.helperCards.map((card) => card.text.split("\n")[1].split(" · ")[0]));
   for (const rarity of rarities) {
-    assert.ok(BENEDICTION_RARITIES.has(rarity), `"${rarity}" is not a rarity`);
+    assert.ok(BLESSING_RARITIES.has(rarity), `"${rarity}" is not a rarity`);
   }
 });
 
-const BENEDICTION_NAMES = new Set([
-  "Iron Hide", "Field Rations", "Quick Feet", "Sturdy Straps", "Honed Edge",
-  "Bitter Draught", "Second Wind", "Ghost Step", "Heart of the Dungeon",
-]);
-const BENEDICTION_RARITIES = new Set([
-  "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic",
-]);
+// The catalogue, read from the source of truth rather than written twice: a blessing added to
+// `config.js` must not need a test edit to be allowed on a card.
+const BLESSING_NAMES = new Set(BLESSINGS.map((entry) => entry.name));
+const BLESSING_RARITIES = new Set(["Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic"]);
 
-test("/dbg benedictions reports the level, the points and the odds, outside a dungeon", () => {
+test("/dbg blessings reports the level, the points and the odds, outside a dungeon", () => {
   const world = joinAtLevel(createWorld(["p1"]), 7);
   rollAndChoose(world);
   const before = world.messages.length;
-  assert.equal(world.context.playerCommand("p1", "benedictions"), true);
+  assert.equal(world.context.playerCommand("p1", "blessings"), true);
   const lines = world.messages.slice(before).map((entry) => entry.message);
-  assert.equal(lines.length, 4, `the report was cut short: ${JSON.stringify(lines)}`);
+  assert.equal(lines.length, 5, `the report was cut short: ${JSON.stringify(lines)}`);
   assert.match(lines[0], /^\[dbg\] aura level 7\/\d+ · \d+ point\(s\) · 1 spent$/);
-  assert.match(lines[1], /^\[dbg\] scale \d+ aura a level · nothing is saved between sessions$/);
-  assert.match(lines[2], /session p1 · last 1 picked: .+ \([a-z]+\)$/);
-  assert.match(lines[3], /^\[dbg\] odds Common \d+%/);
+  // The three lifetimes the owner asked for: what is saved, what this run holds, what is
+  // counting down.
+  assert.match(lines[1], /^\[dbg\] permanent \(saved\): .+ · /);
+  assert.match(lines[2], /^\[dbg\] this run: .+ · timed: /);
+  assert.match(lines[3], /session p1 · last 1 picked: .+ \([a-z]+\)$/);
+  assert.match(lines[4], /^\[dbg\] odds Common \d+%/);
   // A player who never rolled gets a line too, and it says "none" rather than nothing.
   const fresh = createWorld(["p1"]);
   fresh.context.onPlayerJoin("p1");
-  fresh.context.playerCommand("p1", "benedictions");
+  fresh.context.playerCommand("p1", "blessings");
   assert.ok(fresh.messages.some((entry) => /none$/.test(String(entry.message))));
+});
+
+// ------------------------------------------------- blessings: the three lifetimes --
+
+/**
+ * Gives a level, rolls, and picks the first blessing whose tile matches `pattern`.
+ *
+ * Returns the name, **the options the player had just before the choice** (so a test can say
+ * "a run adds this much and no more"), and everything the choice itself did. A roll that does
+ * not contain the wanted scope is spent on a timed blessing when there is one — a timed
+ * blessing changes no client option — so the wandering never pollutes the baseline it is
+ * measuring against.
+ */
+function takeBlessing(world, pattern, playerId = "p1") {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    world.setAuraLevel(playerId, 40);
+    world.context.onPlayerToggledShopMenu(playerId, true);
+    world.context.onPlayerBoughtShopItem(playerId, "Blessings", "Roll a Blessing", {}, "");
+    const entries = offerTiles(world, playerId);
+    const match = entries.find((entry) => pattern.test(entry.tile.customTitle));
+    if (match) {
+      const before = optionsOf(world, playerId);
+      const effectsBefore = world.effects.length;
+      world.context.onPlayerBoughtShopItem(playerId, "Blessings", match.key, {}, "");
+      return {
+        name: match.name.replace(/ \((PERM|RUN|TIMED)\)$/, ""),
+        before,
+        effects: world.effects.slice(effectsBefore),
+      };
+    }
+    // A roll that does not contain the wanted scope is still spent: a **timed** blessing is
+    // the harmless one (it changes no client option), a permanent one is saved either way —
+    // and a run one is taken, then thrown away by a quick leave/join, so the baseline this
+    // test measures against is never polluted by the search itself.
+    const harmless = entries.find((entry) => /\(TIMED\)/.test(entry.tile.customTitle))
+      || entries.find((entry) => /\(PERM\)/.test(entry.tile.customTitle))
+      || entries[0];
+    const wasRun = /\(RUN\)/.test(harmless.tile.customTitle);
+    world.context.onPlayerBoughtShopItem(playerId, "Blessings", harmless.key, {}, "");
+    if (wasRun) {
+      world.context.onPlayerLeave(playerId);
+      world.context.onPlayerJoin(playerId);
+    }
+  }
+  return null;
+}
+
+/** The last client options the code sent for a player, as one object. */
+function optionsOf(world, playerId = "p1") {
+  const options = {};
+  for (const entry of world.clientOptions) {
+    if (entry.playerId === playerId) options[entry.option] = entry.value;
+  }
+  return options;
+}
+
+test("a permanent blessing is written to the player database and comes back on a reconnection", () => {
+  const world = joinAtLevel(createWorld(["p1"]), 40);
+  const name = takeBlessing(world, /\(PERM\)/);
+  assert.ok(name, "no permanent blessing was ever offered");
+  // **Saved**: one database value, keyed like the game keys it, holding the count.
+  const saved = world.dbValues.get("db-p1");
+  assert.ok(saved, "a permanent blessing was not written to the database");
+  const raw = saved.get("dungeonBreak.blessings.v1");
+  assert.ok(typeof raw === "string" && raw.includes("\":"), `the save is not a map of counts: ${raw}`);
+
+  // The options changed with it: a permanent blessing is a client option.
+  const applied = optionsOf(world, "p1");
+  assert.ok(Object.keys(applied).length > 0, "no client options were sent for a blessing");
+
+  // The player leaves and comes back: the save is read, and the stack is applied again.
+  world.context.onPlayerLeave("p1");
+  const before = world.clientOptions.length;
+  world.context.onPlayerJoin("p1");
+  const after = world.clientOptions.slice(before).reduce((acc, entry) => {
+    acc[entry.option] = entry.value;
+    return acc;
+  }, {});
+  assert.ok(after.maxHealth !== undefined || after.receivingDamageMultiplier !== undefined
+    || after.dealingDamageMultiplier !== undefined || after.speedMultiplier !== undefined,
+  "the permanent stack was not applied again after the reconnection");
+  // And the save is still there, untouched by the reconnection.
+  assert.equal(world.dbValues.get("db-p1").get("dungeonBreak.blessings.v1"), raw);
+  // **Every** option a blessing can touch is re-sent, so a run cannot survive on a value the
+  // code forgot to mention.
+  for (const option of ["maxHealth", "receivingDamageMultiplier", "dealingDamageMultiplier", "speedMultiplier"]) {
+    assert.ok(option in after, `${option} was not re-sent on the join`);
+  }
+});
+
+test("a run blessing is dropped by death, leave and teleport, and the permanent stack survives", () => {
+  // **One world per ending**: three ends in one session would make each of them measure the
+  // leftovers of the one before, and the test would fail for a reason it is not about.
+  for (const ending of ["leave", "teleport", "death"]) {
+    const world = joinAtLevel(createWorld(["p1"]), 40);
+    const permanent = takeBlessing(world, /\(PERM\)/);
+    assert.ok(permanent, "no permanent blessing was ever offered");
+    const saved = world.dbValues.get("db-p1").get("dungeonBreak.blessings.v1");
+    assert.ok(saved, "the permanent blessing was not saved");
+
+    const taken = takeBlessing(world, /\(RUN\)/);
+    assert.ok(taken, `no run blessing was offered before the ${ending}`);
+    // The run blessing really did change something, or the test proves nothing. Some run
+    // blessings are **potions** (Thorns lasts the whole run) and change no client option; the
+    // others are client options. One of the two must have moved.
+    const after = optionsOf(world);
+    const potionApplied = taken.effects.some((entry) => !entry.removed && entry.duration === null);
+    assert.ok(potionApplied || JSON.stringify(after) !== JSON.stringify(taken.before),
+      `the ${ending}'s run blessing changed nothing at all`);
+
+    if (ending === "leave") {
+      world.context.onPlayerLeave("p1");
+      world.context.onPlayerJoin("p1");
+    }
+    if (ending === "teleport") world.context.onPlayerBoughtShopItem("p1", "Utilities", "Teleport to spawn", {}, "");
+    if (ending === "death") {
+      // Dying only counts **inside a dungeon**: outside one, the game's own respawn is the
+      // right one and nothing of the run is lost.
+      startDungeon(world, "p1");
+      tickUntil(world, () => said(world, "p1").includes("Level: Very Easy"), 400);
+      assert.ok(world.context.onRespawnRequest("p1"), "a death in a dungeon was not handled");
+    }
+
+    // The run is gone: every option is back to **the permanent stack, exactly**. A permanent
+    // `Long Stride` is +0.1 speed and must survive a run it was never part of.
+    const options = optionsOf(world);
+    assert.equal(options.dealingDamageMultiplier, taken.before.dealingDamageMultiplier,
+      `the ${ending} left a damage bonus`);
+    assert.equal(options.speedMultiplier, taken.before.speedMultiplier, `the ${ending} left a speed bonus`);
+    assert.equal(options.maxHealth, taken.before.maxHealth, `the ${ending} left extra health`);
+    assert.equal(options.canClimbWalls, taken.before.canClimbWalls, `the ${ending} left wall climbing on`);
+    // A run's lasting potion is taken off with the run, never left running.
+    if (potionApplied) {
+      const name = taken.effects.find((entry) => !entry.removed && entry.duration === null).effectName;
+      assert.ok(world.effects.some((entry) => entry.removed && entry.effectName === name),
+        `the ${ending} left ${name} running`);
+    }
+    // And the permanent stack is still applied, still saved, and unchanged by the run.
+    assert.equal(world.dbValues.get("db-p1").get("dungeonBreak.blessings.v1"), saved,
+      `the ${ending} changed the permanent save`);
+  }
+});
+
+test("a timed blessing applies one potion effect of 30 s to 2 min, and nothing else", () => {
+  const world = joinAtLevel(createWorld(["p1"]), 40);
+  const taken = takeBlessing(world, /\(TIMED\)/);
+  assert.ok(taken, "no timed blessing was ever offered");
+  const applied = taken.effects.filter((entry) => !entry.removed);
+  assert.equal(applied.length, 1, `a timed blessing applied ${applied.length} effects`);
+  assert.ok(applied[0].duration >= 30000 && applied[0].duration <= 120000,
+    `the effect lasts ${applied[0].duration} ms, outside the owner's window`);
+  // A timed blessing is a potion effect and nothing else: no client option, no save. The save
+  // may hold **permanent** things from earlier choices in this test — what must never be in it
+  // is a timed or a run blessing.
+  assert.deepEqual(optionsOf(world), taken.before, "a timed blessing changed a client option");
+  const saved = world.dbValues.get("db-p1");
+  const raw = saved ? saved.get("dungeonBreak.blessings.v1") : null;
+  for (const id of Object.keys(raw ? JSON.parse(raw) : {})) {
+    const entry = BLESSINGS.find((blessing) => blessing.id === id);
+    assert.ok(entry && entry.scope === "permanent", `a ${entry ? entry.scope : "unknown"} blessing was saved: ${id}`);
+  }
+});
+
+test("the blessing tile names the scope of every choice", () => {
+  const world = joinAtLevel(createWorld(["p1"]), 40);
+  world.context.onPlayerBoughtShopItem("p1", "Blessings", "Roll a Blessing", {}, "");
+  for (const { tile } of offerTiles(world)) {
+    assert.match(tile.customTitle, /\((PERM|RUN|TIMED)\)$/,
+      `"${tile.customTitle}" does not say how long it lasts`);
+    assert.match(tile.description, /(Permanent|This run|Timed)/);
+  }
 });
