@@ -21,7 +21,9 @@ export const AIR_CHANCE = {
   Legendary: 30,
 };
 
-export const CRATE_LOCK_MS = 8000;
+export const CRATE_LOCK_MS = 16000;
+export const CRATE_CLEAR_DISTANCE = 6;
+export const CRATE_TICK_MS = 1000;
 
 export const LOOT_TABLE = {
   Common: [
