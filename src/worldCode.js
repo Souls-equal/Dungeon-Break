@@ -1225,9 +1225,9 @@ onMobDespawned = (mobId) => {
   }
 };
 
-// Empêche tout PvP — demandé explicitement
+// Empêche tout PvP dans tout le jeu — demandé explicitement
 onPlayerDamagingOtherPlayer = (attackingPlayer, damagedPlayer, damageDealt, withItem, bodyPartHit, damagerDbId, damageInfo) => {
-  return "prevent";
+  return "preventDamage";
 };
 
 /**
