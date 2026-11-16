@@ -53,6 +53,91 @@ const LOBBY_CONFIG = {
   padSwitchGraceTicks: 2,
 };
 
+// Spawn handling: peaceful adventure + blessing reset while in spawn
+const SPAWN_GAMEMODE = "PeacefulAdventure";
+const DUNGEON_GAMEMODE = "SurvivalAdventure";
+const SPAWN_CENTER = LOBBY_POSITION;
+const SPAWN_RADIUS = 80;
+const spawnMode = new Map(); // playerId -> boolean true=spawn
+
+function isInSpawnPosition(playerId) {
+  try {
+    const pos = api.getPosition(playerId);
+    if (!pos || !Array.isArray(pos) || pos.length < 3) return false;
+    const dx = pos[0] - SPAWN_CENTER[0];
+    const dy = pos[1] - SPAWN_CENTER[1];
+    const dz = pos[2] - SPAWN_CENTER[2];
+    return Math.sqrt(dx*dx+dy*dy+dz*dz) <= SPAWN_RADIUS;
+  } catch (_) { return false; }
+}
+function shouldBeInSpawn(playerId) {
+  // In spawn if not in dungeon OR near lobby (fallback for edge)
+  try { if (!service().inDungeon(playerId)) return true; } catch (_) {}
+  return isInSpawnPosition(playerId);
+}
+function syncPlayerSpawnState(playerId) {
+  const shouldSpawn = shouldBeInSpawn(playerId);
+  const wasSpawn = spawnMode.get(String(playerId));
+  if (wasSpawn === shouldSpawn) return;
+  spawnMode.set(String(playerId), shouldSpawn);
+  if (shouldSpawn) {
+    try { if (typeof api.setPlayerGamemode === "function") api.setPlayerGamemode(playerId, SPAWN_GAMEMODE); } catch (_) {}
+    // Spawn: only permanent blessings (run/timed disabled) for clean navigation
+    try { applyBlessingOptions(playerId, baseClientOptions()); } catch (_) {}
+    // Remove run/timed potion effects (keep permanent none)
+    try {
+      const k = accountKeyOf(playerId);
+      for (const e of effects.runEffects(blessings().runOf(k))) try { api.removeEffect(playerId, e.effectName); } catch (_) {}
+      for (const ent of blessings().timedOf(k)) {
+        const ef = effects.timedEffectOf(ent.blessing);
+        if (ef) try { api.removeEffect(playerId, ef.effectName); } catch (_) {}
+      }
+      const tracked = sessionPotionEffects.get(String(playerId));
+      if (tracked) {
+        // Keep tracking but remove effects already handled above; don't delete set
+      }
+    } catch (_) {}
+  } else {
+    try { if (typeof api.setPlayerGamemode === "function") api.setPlayerGamemode(playerId, DUNGEON_GAMEMODE); } catch (_) {}
+    applyBlessingOptions(playerId, baseClientOptions());
+    const k = accountKeyOf(playerId);
+    for (const ef of effects.runEffects(blessings().runOf(k))) applyRunEffect(playerId, ef);
+    for (const ent of blessings().timedOf(k)) {
+      const ef = effects.timedEffectOf(ent.blessing);
+      if (!ef) continue;
+      const remainingTicks = ent.endsAtTick - tickNow();
+      if (remainingTicks <= 0) continue;
+      const remainingMs = remainingTicks * 50;
+      try {
+        const shouldTrack = !hadEffectBefore(playerId, ef.effectName);
+        api.applyEffect(playerId, ef.effectName, remainingMs, { inbuiltLevel: ef.level });
+        if (shouldTrack) rememberSessionEffect(playerId, ef.effectName);
+      } catch (_) {}
+    }
+  }
+}
+function tickSpawnCheck() {
+  const ids = [...spawnMode.keys()];
+  for (const pid of ids) {
+    try { syncPlayerSpawnState(pid); } catch (_) {}
+  }
+  // Periodic enforcement for spawn: keep permanent-only options and peacefulAdventure
+  for (const pid of ids) {
+    if (spawnMode.get(String(pid)) === true) {
+      try {
+        if (typeof api.getPlayerGamemode === "function") {
+          const gm = api.getPlayerGamemode(pid);
+          if (gm !== SPAWN_GAMEMODE && gm !== "PeacefulAdventure" && gm !== 4 && gm !== "pa") {
+            api.setPlayerGamemode(pid, SPAWN_GAMEMODE);
+          }
+        }
+      } catch (_) {}
+      // Re-apply permanent-only to reset any manual speed changes in spawn
+      try { applyBlessingOptions(pid, baseClientOptions()); } catch (_) {}
+    }
+  }
+}
+
 // One service for the whole world: two players in the same level see the same
 // rooms, because there is one level, not one per player.
 let dungeonService = null;
@@ -109,7 +194,17 @@ function completeLobbyCountdown(playerId, countdown) {
   if (lobbyCountdowns[playerId] !== countdown) return;
   countdown.completed = true;
   stopLobbyCountdown(playerId);
-  service().enterDifficulty(playerId, countdown.difficulty);
+  const entered = service().enterDifficulty(playerId, countdown.difficulty);
+  if (entered) {
+    try { spawnMode.set(String(playerId), false); } catch (_) {}
+    try { if (typeof api.setPlayerGamemode === "function") api.setPlayerGamemode(playerId, DUNGEON_GAMEMODE); } catch (_) {}
+    try { applyBlessingOptions(playerId, baseClientOptions()); } catch (_) {}
+    // re-apply run potion effects for dungeon
+    try {
+      const k = accountKeyOf(playerId);
+      for (const ef of effects.runEffects(blessings().runOf(k))) applyRunEffect(playerId, ef);
+    } catch (_) {}
+  }
 }
 
 function deferLobbyCountdownCancellation(playerId, countdown) {
@@ -184,7 +279,12 @@ function startLobbyCountdown(playerId, x, y, z, difficulty) {
 function onPadStart(playerId, x, y, z, difficulty) {
   if (!difficulty) return;
   if (service().inDungeon(playerId)) {
-    service().usePad(playerId);
+    const progressed = service().usePad(playerId);
+    if (progressed) {
+      try { spawnMode.set(String(playerId), false); } catch (_) {}
+      try { if (typeof api.setPlayerGamemode === "function") api.setPlayerGamemode(playerId, DUNGEON_GAMEMODE); } catch (_) {}
+      try { applyBlessingOptions(playerId, baseClientOptions()); } catch (_) {}
+    }
     return;
   }
   startLobbyCountdown(playerId, x, y, z, difficulty);
@@ -678,8 +778,12 @@ function logShopFailure(itemKey, error) {
  */
 function applyBlessingOptions(playerId, base = {}) {
   const key = accountKeyOf(playerId);
-  // Permanent (saved) and run (in memory) go into **one** accumulator: `optionsFrom` is what
-  // guarantees a run's `+40 health` is added to a permanent `+5`, not written over it.
+  // In spawn, only permanent stack applies (run/timed disabled for navigation, no slowdown)
+  if (spawnMode.get(String(playerId)) === true) {
+    const spawnOpts = effects.optionsFrom(blessings().permanentOf(key), [], base);
+    try { api.setClientOptions(playerId, spawnOpts); } catch (_) {}
+    return spawnOpts;
+  }
   const options = effects.optionsFrom(blessings().permanentOf(key), blessings().runOf(key), base);
   try {
     api.setClientOptions(playerId, options);
@@ -687,9 +791,7 @@ function applyBlessingOptions(playerId, base = {}) {
   } catch (error) {
     try {
       api.log(`[Dungeon] blessing options could not be applied for ${playerId}: ${error && error.message ? error.message : error}`);
-    } catch (_) {
-      // Nothing left to do: the next refresh tries again.
-    }
+    } catch (_) {}
     return options;
   }
 }
@@ -711,6 +813,9 @@ function baseClientOptions() {
 
 /** Puts a timed blessing on the player, through the engine's own effect timer. Uses api.applyEffect — visible icon + timer, as requested. */
 function applyTimedEffect(playerId, blessing) {
+  // Allow in spawn except Speed (would re-introduce slowdown navigation issue)
+  const effectProbe = effects.timedEffectOf(blessing);
+  if (effectProbe && effectProbe.effectName === "Speed" && spawnMode.get(String(playerId)) === true) return false;
   const effect = effects.timedEffectOf(blessing);
   if (!effect) return false;
   // Remember only if it wasn't already there — we must not clear a pre-existing effect later
@@ -729,6 +834,7 @@ function applyTimedEffect(playerId, blessing) {
 
 /** Puts a run's lasting potion effect on the player (Thorns). Indefinite until we clear it. */
 function applyRunEffect(playerId, effect) {
+  if (effect && effect.effectName === "Speed" && spawnMode.get(String(playerId)) === true) return false;
   const shouldTrack = !hadEffectBefore(playerId, effect.effectName);
   try {
     api.applyEffect(playerId, effect.effectName, null, { inbuiltLevel: effect.level });
@@ -1071,6 +1177,9 @@ onPlayerBoughtShopItem = (playerId, categoryKey, itemKey) => {
   // stack stays; the run's blessings and the timed ones are dropped.
   endRun(playerId, "Your run is over: this run's Blessings are gone. Permanent ones stay.");
   stopLobbyCountdown(playerId);
+  try { spawnMode.set(String(playerId), true); } catch (_) {}
+  try { if (typeof api.setPlayerGamemode === "function") api.setPlayerGamemode(playerId, SPAWN_GAMEMODE); } catch (_) {}
+  try { applyBlessingOptions(playerId, baseClientOptions()); } catch (_) {}
   api.setClientOption(playerId, "middleTextUpper", "");
   closeShop(playerId);
   api.sendMessage(playerId, [{ str: { translationKey: "classicGame:teleportedToSpawn" } }]);
@@ -1090,6 +1199,7 @@ tick = () => {
       // Nothing left to do.
     }
   }
+  try { tickSpawnCheck(); } catch (_) {}
 };
 
 onPlayerJoin = (playerId) => {
@@ -1101,6 +1211,10 @@ onPlayerJoin = (playerId) => {
   // Nothing is read from a database, because nothing was ever written to one.
   resetPlayerProgress(playerId);
   api.setPosition(playerId, LOBBY_POSITION);
+  try { spawnMode.set(String(playerId), true); } catch (_) {}
+  try { if (typeof api.setPlayerGamemode === "function") api.setPlayerGamemode(playerId, SPAWN_GAMEMODE); } catch (_) {}
+  // In spawn, keep blessings but fix speed for navigation (no slowdown)
+  try { applyBlessingOptions(playerId, baseClientOptions()); } catch (_) {}
   const names = DIFFICULTIES.filter((entry) => entry.fromLobby).map((entry) => entry.label).join(", ");
   api.sendMessage(
     playerId,
@@ -1138,6 +1252,7 @@ onPlayerLeave = (playerId) => {
     api.setClientOption(playerId, "middleTextUpper", "");
   } catch (_) {}
   shopOpen.delete(playerId);
+  try { spawnMode.delete(String(playerId)); } catch (_) {}
   try {
     closeShop(playerId);
   } catch (_) {}
@@ -1251,6 +1366,9 @@ onRespawnRequest = (playerId) => {
   if (!service().inDungeon(playerId)) return false;
   stopLobbyCountdown(playerId);
   service().teleportToSpawn(playerId);
+  try { spawnMode.set(String(playerId), true); } catch (_) {}
+  try { if (typeof api.setPlayerGamemode === "function") api.setPlayerGamemode(playerId, SPAWN_GAMEMODE); } catch (_) {}
+  try { applyBlessingOptions(playerId, baseClientOptions()); } catch (_) {}
   api.setClientOption(playerId, "middleTextUpper", "");
   // **Dying ends the run**: this run's Blessings and the timed ones are gone, the permanent
   // stack stays and is re-applied.
@@ -1265,7 +1383,8 @@ onRespawnRequest = (playerId) => {
   }
   blessings().forget(accountKeyOf(playerId));
   blessings().setPermanent(accountKeyOf(playerId), loadPermanent(playerId));
-  applyBlessingOptions(playerId, baseClientOptions());
+  // Spawn: keep permanent but fix speed for navigation
+  try { applyBlessingOptions(playerId, baseClientOptions()); } catch (_) {}
   showPoints(playerId, 0);
   refreshBlessingTiles(playerId);
   closeShop(playerId);
@@ -1321,6 +1440,11 @@ globalThis.DUNGEON_LEVELS = DIFFICULTIES.map((entry) => ({ id: entry.id, label: 
 // Crate 16s protection: test every second if owner is >6 blocks away, then clear
 scheduleInterval(() => {
   try { crateTick(api); } catch (_) {}
+}, 20);
+
+// Spawn peacefulAdventure enforcement: every second
+scheduleInterval(() => {
+  try { tickSpawnCheck(); } catch (_) {}
 }, 20);
 
 // The shop is registered once at load; `onPlayerJoin` repeats it for the first player.
