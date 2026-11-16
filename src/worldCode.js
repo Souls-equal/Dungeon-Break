@@ -474,6 +474,29 @@ function permanentKeyOf(playerId) {
   return `session:${playerId}`;
 }
 
+/** Tracks potion effects given *during this run* — so we only clear what **we** gave, not what was already there. */
+const sessionPotionEffects = new Map(); // playerId -> Set<effectName>
+function getSessionEffects(playerId) {
+  let set = sessionPotionEffects.get(String(playerId));
+  if (!set) { set = new Set(); sessionPotionEffects.set(String(playerId), set); }
+  return set;
+}
+function hadEffectBefore(playerId, effectName) {
+  try {
+    if (typeof api.getEffects === "function") {
+      const list = api.getEffects(playerId);
+      if (Array.isArray(list) && list.includes(effectName)) return true;
+    }
+    if (typeof api.hasEffect === "function" && api.hasEffect(playerId, effectName)) return true;
+  } catch (_) {}
+  return false;
+}
+function rememberSessionEffect(playerId, effectName) {
+  if (!effectName) return;
+  if (hadEffectBefore(playerId, effectName)) return; // was already there — not ours to clear
+  getSessionEffects(playerId).add(effectName);
+}
+
 /** The aura level of a player, from the game. `1` when the game cannot say. */
 function auraLevelOf(playerId) {
   try {
@@ -685,34 +708,35 @@ function baseClientOptions() {
   };
 }
 
-/** Puts a timed blessing on the player, through the engine's own effect timer. */
+/** Puts a timed blessing on the player, through the engine's own effect timer. Uses api.applyEffect — visible icon + timer, as requested. */
 function applyTimedEffect(playerId, blessing) {
   const effect = effects.timedEffectOf(blessing);
   if (!effect) return false;
+  // Remember only if it wasn't already there — we must not clear a pre-existing effect later
+  const shouldTrack = !hadEffectBefore(playerId, effect.effectName);
   try {
     api.applyEffect(playerId, effect.effectName, effect.durationMs, { inbuiltLevel: effect.level });
+    if (shouldTrack) rememberSessionEffect(playerId, effect.effectName);
   } catch (error) {
     try {
       api.log(`[Dungeon] the ${effect.effectName} effect could not be applied: ${error && error.message ? error.message : error}`);
-    } catch (_) {
-      // The blessing is still recorded; the engine may not know this effect name.
-    }
+    } catch (_) {}
     return false;
   }
   return true;
 }
 
-/** Puts a run's lasting potion effect on the player (Thorns). */
+/** Puts a run's lasting potion effect on the player (Thorns). Indefinite until we clear it. */
 function applyRunEffect(playerId, effect) {
+  const shouldTrack = !hadEffectBefore(playerId, effect.effectName);
   try {
     api.applyEffect(playerId, effect.effectName, null, { inbuiltLevel: effect.level });
+    if (shouldTrack) rememberSessionEffect(playerId, effect.effectName);
     return true;
   } catch (error) {
     try {
       api.log(`[Dungeon] the ${effect.effectName} effect could not be applied: ${error && error.message ? error.message : error}`);
-    } catch (_) {
-      // Nothing left to do.
-    }
+    } catch (_) {}
     return false;
   }
 }
@@ -765,31 +789,33 @@ function savePermanent(playerId, counts) {
  * permanent stack is re-applied for good measure.
  */
 /**
- * Takes off every effect the session was holding, without touching the permanent stack.
- *
- * Used when a session is dropped (a join, a leave that already ended the run) and when a run
- * ends. The engine ignores an effect it does not have, so this can be called blind — and it
- * must be, or a blessing applied in one session could follow a player into the next one.
+ * Takes off every potion effect the session was holding, without touching the permanent stack.
+ * ONLY clears effects *we* gave via api.applyEffect during this game — never what was already there.
+ * Uses the sessionPotionEffects set populated at apply time (checked via api.getEffects/hasEffect).
  */
 function dropSessionEffects(playerId) {
+  const tracked = sessionPotionEffects.get(String(playerId));
+  if (tracked && tracked.size > 0) {
+    for (const effectName of [...tracked]) {
+      try { api.removeEffect(playerId, effectName); } catch (_) {}
+    }
+    // keep set until forget/clearRun fully drops it — endRun will delete below
+    return;
+  }
+  // Fallback for old saves / no tracking yet: remove what the blessing service says we hold
   const key = accountKeyOf(playerId);
   const run = blessings().runOf(key);
   for (const effect of effects.runEffects(run)) {
-    try {
-      api.removeEffect(playerId, effect.effectName);
-    } catch (_) {
-      // Nothing left to do: the effect may never have been applied.
-    }
+    try { api.removeEffect(playerId, effect.effectName); } catch (_) {}
   }
   for (const entry of blessings().timedOf(key)) {
     const effect = effects.timedEffectOf(entry.blessing);
     if (!effect) continue;
-    try {
-      api.removeEffect(playerId, effect.effectName);
-    } catch (_) {
-      // Nothing left to do.
-    }
+    try { api.removeEffect(playerId, effect.effectName); } catch (_) {}
   }
+}
+function clearSessionEffectsTracking(playerId) {
+  sessionPotionEffects.delete(String(playerId));
 }
 
 function endRun(playerId, reason) {
@@ -797,6 +823,7 @@ function endRun(playerId, reason) {
   // **The effects go first**, while the holdings still say which ones they were.
   dropSessionEffects(playerId);
   const dropped = blessings().clearRun(key);
+  clearSessionEffectsTracking(playerId);
 
   const hadSomething = dropped.run.length > 0 || dropped.timed.length > 0;
   applyBlessingOptions(playerId, baseClientOptions());
@@ -962,7 +989,9 @@ function resetPlayerProgress(playerId) {
   }
   // A session that is forgotten must not leave an effect behind: the run's lasting potions
   // (Thorns) and any timer belong to the session that is being dropped.
+  // Only effects *we* gave — never what was already there before the game.
   dropSessionEffects(playerId);
+  clearSessionEffectsTracking(playerId);
   blessings().forget(accountKeyOf(playerId));
   // **The permanent stack comes back from the save**, before anything is drawn: the tiles
   // show what the player owns, not what the previous session happened to leave in memory.
@@ -1118,7 +1147,9 @@ onPlayerLeave = (playerId) => {
   endRun(playerId, "");
   // The **session** goes with the player, and only the session: the permanent stack was saved
   // when it changed, so a leave cannot lose it, and the next join reads it back.
-  dropSessionEffects(playerId);
+  // endRun already cleared tracked potion effects; this is legacy fallback + tracking cleanup
+  try { dropSessionEffects(playerId); } catch (_) {}
+  clearSessionEffectsTracking(playerId);
   blessings().forget(accountKeyOf(playerId));
   // Clear per-player shop overrides so no tiles linger for a disconnected player.
   for (const key of CHOICE_KEYS) {
