@@ -168,5 +168,12 @@ export function generateChest(api, playerId, chestPos, rarity, random = Math.ran
   } catch (_) {
     try { api.sendMessage(playerId, "Chest opened (" + rarity + ")!"); } catch (_) {}
   }
+  // Ouvre automatiquement le coffre pour le joueur (api: openChestForPlayer)
+  try {
+    if (typeof api.openChestForPlayer === "function") {
+      const pos = normalizeChestPos(chestPos);
+      if (pos) api.openChestForPlayer(playerId, pos.x, pos.y, pos.z);
+    }
+  } catch (_) {}
   return true;
 }
