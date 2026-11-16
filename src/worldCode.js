@@ -46,6 +46,10 @@ import {
 } from "./crate/service.js";
 import { RANKS, NONE_RANK_ID, getRank } from "./ranks/config.js";
 import { createRanksService, NONE_ID } from "./ranks/service.js";
+import { DIFFICULTY_COLOR, CRATE_COLOR, PRESETS } from "./particles/config.js";
+import { spawn as spawnParticles } from "./particles/service.js";
+// expose presets for service helpers (avoid circular)
+globalThis.__PARTICLE_PRESETS = { PRESETS };
 
 const LOBBY_CONFIG = {
   countdownSeconds: 10,
@@ -236,10 +240,20 @@ function service() {
           // A logging failure must never break a build.
         }
       },
-      onRoomDiscovered: (playerId) => {
+      onRoomDiscovered: (playerId, chunkX, chunkZ, difficulty) => {
         try {
           const newly = ranks().recordRoom(playerId);
           if (newly && newly.length) handleRankUnlocks(playerId, newly);
+        } catch(_){}
+        // particules room clear: anneau + burst
+        try {
+          const col = difficulty ? (DIFFICULTY_COLOR[difficulty.id] || "#FFD700") : "#FFD700";
+          const cx = chunkX * 32 + 16;
+          const cz = chunkZ * 32 + 16;
+          // y from player pos or difficulty floor
+          let y = 0;
+          try { const p = api.getPosition(playerId); if(p) y = p[1]; } catch(_){}
+          spawnParticles(api, [cx, y+0.5, cz], PRESETS.roomClear(col), { radius: 1.2, height: 1.2 });
         } catch(_){}
       },
     });
@@ -283,7 +297,22 @@ function completeLobbyCountdown(playerId, countdown) {
   if (lobbyCountdowns[playerId] !== countdown) return;
   countdown.completed = true;
   stopLobbyCountdown(playerId);
-  const entered = service().enterDifficulty(playerId, countdown.difficulty);
+  // vortex au pad avant téléport
+  try {
+    const col = DIFFICULTY_COLOR[countdown.difficulty.id] || "#FFD700";
+    const pad = Object.keys(countdown.activePads)[0];
+    if (pad) {
+      const [px,py,pz] = pad.split(",").map(Number);
+      spawnParticles(api, [px+0.5, py+1, pz+0.5], PRESETS.entryVortex(col), { radius: 0.6, height: 3.5 });
+    }
+  } catch(_){}
+  const entered = service().enterDifficulty(playerId, countdown.difficulty, (diff, landing)=>{
+    // vortex à l’atterrissage
+    try {
+      const col = DIFFICULTY_COLOR[diff.id] || "#FFD700";
+      spawnParticles(api, landing, PRESETS.entryVortex(col), { radius: 0.6, height: 3.5 });
+    } catch(_){}
+  });
   if (entered) {
     try { spawnMode.set(String(playerId), false); } catch (_) {}
     try { if (typeof api.setPlayerGamemode === "function") api.setPlayerGamemode(playerId, DUNGEON_GAMEMODE); } catch (_) {}
@@ -313,6 +342,11 @@ function deferLobbyCountdownCancellation(playerId, countdown) {
 
 function startLobbyCountdown(playerId, x, y, z, difficulty) {
   if (!ensureUnlockedOrPay(playerId, difficulty)) return;
+  // particles: anneau au pad
+  try {
+    const col = DIFFICULTY_COLOR[difficulty.id] || "#FFD700";
+    spawnParticles(api, [x+0.5, y+0.5, z+0.5], PRESETS.padRing(col), { radius: 0.9, height: 0.1 });
+  } catch(_){}
   const key = padKey(x, y, z);
   const current = lobbyCountdowns[playerId];
 
@@ -351,6 +385,11 @@ function startLobbyCountdown(playerId, x, y, z, difficulty) {
       countdown.timer.stop();
       return;
     }
+    // tick particules
+    try {
+      const col = DIFFICULTY_COLOR[difficulty.id] || "#FFD700";
+      spawnParticles(api, [x+0.5, y+0.5, z+0.5], PRESETS.padTick(col), { radius: 0.5, height: 0.8 });
+    } catch(_){}
     countdown.secondsLeft -= 1;
     if (countdown.secondsLeft <= 0) {
       completeLobbyCountdown(playerId, countdown);
@@ -1685,6 +1724,13 @@ generateChest = (playerId, chestPos, rarity) => {
       const newly = ranks().recordCrate(playerId, rarity);
       if (newly && newly.length) handleRankUnlocks(playerId, newly);
     } catch(_) {}
+    // particules crate: fontaine
+    try {
+      const col = CRATE_COLOR[rarity] || "#FFFFFF";
+      const p = Array.isArray(chestPos) ? chestPos : [chestPos.x, chestPos.y, chestPos.z];
+      const pos = [Math.floor(p[0])+0.5, Math.floor(p[1])+1, Math.floor(p[2])+0.5];
+      spawnParticles(api, pos, PRESETS.crateFountain(col, rarity), { radius: 0.4, height: 1.5 });
+    } catch(_){}
   }
   return ok;
 };
