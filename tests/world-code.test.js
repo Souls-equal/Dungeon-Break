@@ -1183,14 +1183,29 @@ test("a roll offers three blessings and reserves the point; the choice spends it
   // The tile keeps saying what the player has: the point is on the table, not spent yet.
   assert.match(offered.get("Roll a Blessing").description, /2 points · the point is on the table/);
   assert.equal(offerTiles(world).length, 3, "three choices were not offered");
-  for (const { tile } of offerTiles(world)) {
+  for (const { tile, name } of offerTiles(world)) {
     assert.equal(tile.canBuy, true, "an offered blessing cannot be picked");
     assert.equal(tile.buyButtonText, "Choose");
-    // The title carries the **scope**: PERM, RUN or TIMED is what tells a player what they
-    // are buying, and it must never be missing.
-    assert.match(tile.customTitle, /\((PERM|RUN|TIMED)\)$/, `"${tile.customTitle}" has no scope`);
-    assert.match(tile.description, /(Common|Uncommon|Rare|Epic|Legendary|Mythic) · /);
-    assert.match(tile.description, /(Permanent|This run|Timed)/, "the description has no lifetime");
+    assert.equal(tile.currency, "Blessing Point");
+    assert.equal(tile.cost, 1);
+    // customTitle is now just the name (per user snippet)
+    assert.equal(tile.customTitle, name);
+    assert.ok(!/\((PERM|RUN|TIMED)\)$/.test(tile.customTitle), "old scope suffix should be gone");
+    // description is now styled array [Rarity][Type][Effect] with cool hexa colors
+    assert.ok(Array.isArray(tile.description), "description should be styled array");
+    assert.equal(tile.description.length, 3);
+    assert.match(tile.description[0].str, /\[(Common|Uncommon|Rare|Epic|Legendary|Mythic)\]/);
+    assert.match(tile.description[0].style.color, /^#[0-9A-Fa-f]{6}$/, "rarity color not hexa");
+    assert.match(tile.description[1].str, /\[(Physical|Equipment|Potion effect)\]/);
+    assert.match(tile.description[1].style.color, /^#[0-9A-Fa-f]{6}$/, "type color not hexa");
+    assert.match(tile.description[2].str, /(Gain|Loose)/, "effect should use Gain/Loose");
+    assert.ok(!tile.description[2].str.includes("+") && !tile.description[2].str.includes("-"), "effect should not use +/-");
+    // image per spec
+    const b = BLESSINGS.find((x) => x.name === name);
+    assert.ok(b, "blessing not found");
+    if (b.category === "equipment") assert.match(tile.image, /Chestplate/);
+    else if (b.category === "physical") assert.match(tile.image, /Block of/);
+    else if (b.category === "potion") assert.ok(tile.image.length > 0);
   }
   // Chat is not visible while the shop is open — the offer is in the tiles,
   // not in the chat, and the roll must not spam the chat.
@@ -1218,7 +1233,8 @@ test("a roll offers three blessings and reserves the point; the choice spends it
     "the card is not the blessing that was picked");
   assert.match(card.icon, /^fa-solid fa-/);
   assert.match(card.opts.color, /^rgb\(/, "the card background was not an rgb() colour");
-  assert.ok(card.text.includes(picked.tile.description.split("\n")[1]) || card.text.length > 0);
+  // card text includes effect — description is now styled array, check effect string inside
+  assert.ok(typeof picked.tile.description[2].str === "string" && picked.tile.description[2].str.length > 0 || card.text.length > 0);
   assert.equal(world.middleTexts.length, 1, "no banner was queued");
   assert.equal(world.shopCalls.length, 1, "the shop was not closed after the choice");
   assert.equal(world.shopOpen.has("p1"), false, "the shop stayed open");
@@ -1437,12 +1453,23 @@ test("/dbg blessings reports the level, the points and the odds, outside a dunge
  * measuring against.
  */
 function takeBlessing(world, pattern, playerId = "p1") {
+  const scopeToTag = { permanent: "PERM", run: "RUN", timed: "TIMED" };
+  function matchesScope(entry, pat) {
+    if (pat.test(entry.tile.customTitle)) return true;
+    const b = BLESSINGS.find((x) => x.name === entry.name);
+    if (!b) return false;
+    const tag = scopeToTag[b.scope] || b.scope;
+    if (pat.test(`(${tag})`)) return true;
+    if (pat.test(b.scope)) return true;
+    if (pat.test(b.category)) return true;
+    return false;
+  }
   for (let attempt = 0; attempt < 40; attempt += 1) {
     world.setAuraLevel(playerId, 40);
     world.context.onPlayerToggledShopMenu(playerId, true);
     world.context.onPlayerBoughtShopItem(playerId, "Blessings", "Roll a Blessing", {}, "");
     const entries = offerTiles(world, playerId);
-    const match = entries.find((entry) => pattern.test(entry.tile.customTitle));
+    const match = entries.find((entry) => matchesScope(entry, pattern));
     if (match) {
       const before = optionsOf(world, playerId);
       const effectsBefore = world.effects.length;
@@ -1453,14 +1480,15 @@ function takeBlessing(world, pattern, playerId = "p1") {
         effects: world.effects.slice(effectsBefore),
       };
     }
-    // A roll that does not contain the wanted scope is still spent: a **timed** blessing is
-    // the harmless one (it changes no client option), a permanent one is saved either way —
-    // and a run one is taken, then thrown away by a quick leave/join, so the baseline this
-    // test measures against is never polluted by the search itself.
-    const harmless = entries.find((entry) => /\(TIMED\)/.test(entry.tile.customTitle))
-      || entries.find((entry) => /\(PERM\)/.test(entry.tile.customTitle))
-      || entries[0];
-    const wasRun = /\(RUN\)/.test(harmless.tile.customTitle);
+    const harmless = entries.find((entry) => {
+      const b = BLESSINGS.find((x) => x.name === entry.name);
+      return b && b.scope === "timed";
+    }) || entries.find((entry) => {
+      const b = BLESSINGS.find((x) => x.name === entry.name);
+      return b && b.scope === "permanent";
+    }) || entries[0];
+    const bh = BLESSINGS.find((x) => x.name === harmless.name);
+    const wasRun = bh && bh.scope === "run";
     world.context.onPlayerBoughtShopItem(playerId, "Blessings", harmless.key, {}, "");
     if (wasRun) {
       world.context.onPlayerLeave(playerId);
@@ -1586,12 +1614,21 @@ test("a timed blessing applies one potion effect of 30 s to 2 min, and nothing e
   }
 });
 
-test("the blessing tile names the scope of every choice", () => {
+test("the blessing tile names the rarity and type with cool hexa colors", () => {
   const world = joinAtLevel(createWorld(["p1"]), 40);
   world.context.onPlayerBoughtShopItem("p1", "Blessings", "Roll a Blessing", {}, "");
-  for (const { tile } of offerTiles(world)) {
-    assert.match(tile.customTitle, /\((PERM|RUN|TIMED)\)$/,
-      `"${tile.customTitle}" does not say how long it lasts`);
-    assert.match(tile.description, /(Permanent|This run|Timed)/);
+  for (const { tile, name } of offerTiles(world)) {
+    // new spec: description styled array with rarity and type colors
+    assert.ok(Array.isArray(tile.description));
+    assert.match(tile.description[0].str, /\[(Common|Uncommon|Rare|Epic|Legendary|Mythic)\]/);
+    assert.match(tile.description[1].str, /\[(Physical|Equipment|Potion effect)\]/);
+    assert.match(tile.description[2].str, /(Gain|Loose)/);
+    const b = BLESSINGS.find((x) => x.name === name);
+    assert.ok(b);
+    // image per category/rarity
+    if (b.category === "equipment") assert.ok(tile.image.includes("Chestplate"));
+    if (b.category === "physical") assert.ok(tile.image.includes("Block of"));
+    assert.equal(tile.cost, 1);
+    assert.equal(tile.currency, "Blessing Point");
   }
 });

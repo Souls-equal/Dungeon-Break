@@ -88,21 +88,134 @@ export function cardFor(blessing, rarity) {
 }
 
 /**
- * The picture of a family.
- *
- * The shop takes a **block name** as an image, so this is a table of blocks the player
- * already knows, one per family: a shield for the body, armour for the gear, a bottle for
- * the brews. Nothing is placed in the world — the game only draws the picture.
+ * The picture of a family — now per spec:
+ * - Equipment → Chestplates of different materials per rarity
+ * - Physical  → Block of materials per rarity (like equipment)
+ * - Potion    → Icon related to the potion effect (IngameIconName from docs)
  */
-const FAMILY_IMAGES = {
-  physical: "Block of Iron",
-  equipment: "Block of Diamond",
-  potion: "Potion Table",
+const EQUIPMENT_IMAGES_BY_RARITY = {
+  common: "Wood Chestplate",
+  uncommon: "Iron Chestplate",
+  rare: "Iron Chestplate",
+  epic: "Gold Chestplate",
+  legendary: "Diamond Chestplate",
+  mythic: "Diamond Chestplate",
+};
+const PHYSICAL_IMAGES_BY_RARITY = {
+  common: "Block of Coal",
+  uncommon: "Block of Iron",
+  rare: "Block of Iron",
+  epic: "Block of Gold",
+  legendary: "Block of Diamond",
+  mythic: "Block of Diamond",
 };
 
-/** The image of a family, and `Beacon` for a family nobody has a picture for. */
+export function imageForBlessing(blessing, rarity) {
+  const cat = blessing.category;
+  const rid = rarity ? rarity.id : blessing.rarity;
+  if (cat === "equipment") return EQUIPMENT_IMAGES_BY_RARITY[rid] || "Iron Chestplate";
+  if (cat === "physical") return PHYSICAL_IMAGES_BY_RARITY[rid] || "Block of Iron";
+  if (cat === "potion") {
+    // Use icon related to the effect — IngameIconName from docs (e.g. Speed, Damage, Haste)
+    if (blessing.icon) return blessing.icon;
+    return "Potion Table";
+  }
+  return "Beacon";
+}
+
+/** Legacy: The image of a family, and `Beacon` for a family nobody has a picture for. */
 export function imageOf(categoryId) {
-  return FAMILY_IMAGES[categoryId] || "Beacon";
+  const map = { physical: "Block of Iron", equipment: "Block of Diamond", potion: "Potion Table" };
+  return map[categoryId] || "Beacon";
+}
+
+// ---- Gain/Loose helpers for description (no +/-) ----
+function formatEffectAmount(option, amount) {
+  // Human-readable label for client options
+  const labels = {
+    maxHealth: "max health",
+    receivingDamageMultiplier: "resistance",
+    dealingDamageMultiplier: "damage",
+    speedMultiplier: "speed",
+    healthRegenAmount: "health regen",
+    canClimbWalls: "wall climbing",
+    runningSpeed: "speed",
+    walkingSpeed: "speed",
+  };
+  const label = labels[option] || option;
+  if (option === "canClimbWalls") return amount ? "Gain wall climbing" : "Loose wall climbing";
+  // Multipliers are fractions (0.2 = 20%)
+  const isPercent = option.includes("Multiplier") || option === "healthRegenAmount";
+  let pct = "";
+  if (isPercent) {
+    // keep one decimal if needed, else integer
+    const perc = Math.round(Math.abs(amount) * 1000) / 10;
+    pct = Number.isInteger(perc) ? `${perc}%` : `${perc}%`;
+  } else {
+    pct = `${Math.abs(amount)}`;
+  }
+  // receivingDamageMultiplier: negative = gain resistance, positive = loose
+  if (option === "receivingDamageMultiplier") {
+    return amount < 0 ? `Gain ${pct} ${label}` : `Loose ${pct} ${label}`;
+  }
+  return amount > 0 ? `Gain ${pct} ${label}` : `Loose ${pct} ${label}`;
+}
+
+function describeClientEffect(effect) {
+  if (!effect || !effect.option) return null;
+  if (effect.mode === "set") return formatEffectAmount(effect.option, effect.value ? 1 : -1);
+  const main = formatEffectAmount(effect.option, effect.amount);
+  if (effect.second) {
+    const sec = effect.second.option ? formatEffectAmount(effect.second.option, effect.second.amount ?? effect.second.value) : null;
+    // for floor etc. second already handled
+    if (sec) return `${main} ${sec}`;
+  }
+  return main;
+}
+
+function describeRunBonus(effect) {
+  const map = { damage: "damage", reduction: "resistance", speed: "speed", maxHealth: "max health" };
+  const label = map[effect.bonus] || effect.bonus;
+  const abs = Math.abs(effect.amount);
+  const pct = effect.bonus === "maxHealth" ? `${abs}` : `${Math.round(abs * 100)}%`;
+  return effect.amount > 0 ? `Gain ${pct} ${label}` : `Loose ${pct} ${label}`;
+}
+
+function describePotionEffect(effect) {
+  if (!effect) return null;
+  const name = effect.effectName || "effect";
+  const lvl = effect.level > 1 ? ` ${effect.level}` : "";
+  // Loose not used for potions (all positive), but handle negative level? always Gain
+  return `Gain ${name}${lvl}`;
+}
+
+export function effectDescription(blessing) {
+  const eff = blessing.effect;
+  if (!eff) return blessing.description || "";
+  if (eff.kind === "client") {
+    // handle both primary and second (tradeoff) — combine into one short phrase
+    const parts = [];
+    const primary = describeClientEffect(eff);
+    if (primary) parts.push(primary);
+    // if second was not already merged (describeClientEffect merges second for client kind)
+    // for safety, if eff.second exists and primary didn't include it, add it
+    // (primary already includes second for client kind, so skip duplicate)
+    // For scope we still want short: keep as is
+    // add duration hint for potion-like client? no
+    return parts.join(" ") || blessing.description;
+  }
+  if (eff.kind === "run") {
+    return describeRunBonus(eff);
+  }
+  if (eff.kind === "potion") {
+    // timed vs run potion
+    if (Number.isFinite(eff.durationMs)) {
+      const secs = Math.round(eff.durationMs / 1000);
+      return `${describePotionEffect(eff)} for ${secs}s`;
+    }
+    return describePotionEffect(eff);
+  }
+  return blessing.description;
 }
 
 /**
@@ -119,21 +232,26 @@ export function imageOf(categoryId) {
  */
 export function choiceTile(draw, position) {
   const { blessing, rarity } = draw;
-  const category = categoryOf(blessing.category);
+  const category = categoryOf(blessing.category) || { label: blessing.category, colour: "#ffffff", textColour: "#ffffff" };
+  const rarityColor = rarity ? (rarity.colour || rarity.textColour) : "#ffffff";
+  const catColor = category.colour || category.textColour || "#ffffff";
+  const effectStr = effectDescription(blessing);
   return {
-    // A block name is an image the game already has, like the spawn item's. The family
-    // picks it, so three choices are never three identical tiles.
-    image: imageOf(blessing.category),
-    customTitle: `${blessing.name} (${scopeShortOf(blessing)})`,
-    description: `${rarity.label} · ${category ? category.label : "Unknown"} · ${scopeLabelOf(blessing)}\n${blessing.description}`,
+    image: imageForBlessing(blessing, rarity),
+    customTitle: blessing.name,
+    description: [
+      { str: `[${rarity ? rarity.label : "Unknown"}]\n`, style: { color: rarityColor } },
+      { str: `[${category.label}]\n`, style: { color: catColor } },
+      { str: effectStr },
+    ],
     buyButtonText: "Choose",
-    cost: 0,
+    currency: "Blessing Point",
+    cost: 1,
     canBuy: true,
     sortPriority: 100 - position,
     onBoughtMessage: `${blessing.name} chosen.`,
   };
 }
-
 /** `1. Iron Hide — Common · Physical`, for a line that has to list the offer. */
 export function offerLine(draw, position) {
   const category = categoryOf(draw.blessing.category);
