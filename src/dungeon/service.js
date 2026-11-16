@@ -37,6 +37,7 @@ const SIZE = DUNGEON_CONFIG.chunkSize;
 export function createDungeonService(options) {
   const api = options.api;
   const log = options.log || (() => {});
+  const onRoomDiscovered = options.onRoomDiscovered || null;
   const loader = createLoader({ api, log });
 
   /** playerId → { difficulty, landed, position } */
@@ -459,6 +460,9 @@ export function createDungeonService(options) {
     try {
       api.sendFlyingMiddleMessage(playerId, [{ str: "+" + aura }, { icon: "Aura XP Orb" }, { str: " XP" }], 50, 500);
     } catch (_) {}
+    if (onRoomDiscovered) {
+      try { onRoomDiscovered(playerId); } catch(_){}
+    }
     return aura;
   }
 

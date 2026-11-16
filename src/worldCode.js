@@ -44,6 +44,8 @@ import {
   isChestOwnedByOther as crateIsOwnedByOther,
   tickCrateLocks as crateTick,
 } from "./crate/service.js";
+import { RANKS, NONE_RANK_ID, getRank } from "./ranks/config.js";
+import { createRanksService, NONE_ID } from "./ranks/service.js";
 
 const LOBBY_CONFIG = {
   countdownSeconds: 10,
@@ -233,6 +235,12 @@ function service() {
         } catch (_) {
           // A logging failure must never break a build.
         }
+      },
+      onRoomDiscovered: (playerId) => {
+        try {
+          const newly = ranks().recordRoom(playerId);
+          if (newly && newly.length) handleRankUnlocks(playerId, newly);
+        } catch(_){}
       },
     });
   }
@@ -628,6 +636,81 @@ function blessings() {
   if (!blessingService) blessingService = createBlessingService({});
   return blessingService;
 }
+
+// ------------------------------- ranks ------------------------------------
+let ranksService = null;
+function ranks() {
+  if (!ranksService) ranksService = createRanksService({ api, log: (m)=>{ try{ api.log(m);}catch(_){} } });
+  return ranksService;
+}
+// map hex -> closest allowed nameColour (fallback if colorInLobbyLeaderboard not supported)
+function hexToNameColour(hex) {
+  const table = {
+    "#FF0000": "red", "#FF1A1A": "red", "#FF3B30": "red", "#C0392B": "red", "#E74C3C": "red",
+    "#00FF00": "lime", "#2ECC71": "lime", "#1ABC9C": "green", "#AAAAAA": "default", "#BDC3C7": "default",
+    "#FFFF00": "yellow", "#F1C40F": "yellow", "#F39C12": "orange",
+    "#0000FF": "blue", "#3498DB": "blue", "#5DADE2": "aqua", "#A569BD": "purple", "#7D3C98": "purple", "#E67E22": "orange",
+  };
+  const up = String(hex).toUpperCase();
+  if (table[up]) return table[up];
+  // heuristic
+  if (up.includes("FF3B") || up.includes("E74")) return "red";
+  if (up.includes("2ECC") || up.includes("1ABC")) return "green";
+  if (up.includes("349") || up.includes("5DA")) return "aqua";
+  if (up.includes("A569") || up.includes("7D3C")) return "purple";
+  if (up.includes("F39") || up.includes("F1C")) return "yellow";
+  return "default";
+}
+function applyRankVisuals(playerId) {
+  const rank = ranks().getDisplayRank(playerId);
+  const color = rank ? rank.color : "";
+  const nameColour = rank ? hexToNameColour(rank.color) : "default";
+  try {
+    // leaderboard color for everyone seeing this player
+    if (typeof api.setTargetedPlayerSettingForEveryone === "function") {
+      try { api.setTargetedPlayerSettingForEveryone(playerId, "colorInLobbyLeaderboard", color || "", true); } catch(_){}
+      try { api.setTargetedPlayerSettingForEveryone(playerId, "nameColour", nameColour, true); } catch(_){}
+      // nametag (optional) — show prefix as subtitle? minimal
+      if (rank) {
+        try { api.setTargetedPlayerSettingForEveryone(playerId, "nameTagInfo", { content: [{str: api.getEntityName(playerId) || String(playerId), style:{color:"white"}}], subtitle: [{str: rank.prefix, style:{color: rank.color}}], backgroundColor: "#00000088" }, true); } catch(_){}
+      } else {
+        try { api.setTargetedPlayerSettingForEveryone(playerId, "nameTagInfo", { content: [{str: api.getEntityName(playerId) || String(playerId), style:{color:"white"}}] }, true); } catch(_){}
+      }
+    }
+  } catch(_){}
+}
+function refreshRanksShop(playerId) {
+  const avail = ranks().getAvailableRanks(playerId);
+  const display = ranks().getDisplayRank(playerId);
+  const currentLabel = display ? display.label : "NONE";
+  // dropdown options: NONE + available labels (unique), sorted by rank sort
+  const sorted = [...avail].sort((a,b)=> (a.sort||0)-(b.sort||0));
+  const options = [NONE_RANK_ID, ...sorted.map(r=> r.label)];
+  // keep NONE first, rest sorted; but ensure uniqueness
+  const uniq = [...new Set(options)];
+  try {
+    api.createShopItemForPlayer(playerId, "Ranks", "Rank", {
+      image: "Crown",
+      customTitle: "Ranks",
+      description: `Current: ${currentLabel}`,
+      buyButtonText: "Select",
+      cost: 0,
+      canBuy: true,
+      sortPriority: 5,
+      userInput: { type: "dropdown", dropdownOptions: uniq, shouldResetSelectionOnOptionsChange: false, initialValue: currentLabel },
+    });
+    api.configureShopCategoryForPlayer(playerId, "Ranks", { customTitle: "Ranks", description: `Current: ${currentLabel}` });
+  } catch(e){ try{ api.log(`[Ranks] shop failed ${e && e.message}`);}catch(_){} }
+}
+function handleRankUnlocks(playerId, newly) {
+  if (!newly || newly.length===0) return;
+  for (const r of newly) {
+    try { api.sendMessage(playerId, `Unlocked rank ${r.prefix} !`, {color: r.color}); } catch(_){ try{ api.sendMessage(playerId, `Unlocked rank ${r.prefix} !`);}catch(_){}}
+  }
+  refreshRanksShop(playerId);
+  // also apply visuals if still NONE and new is first?
+}
+let rankTickCounter = 0;
 
 /**
  * The key an account is held under **for this session**.
@@ -1230,7 +1313,44 @@ function registerShopItems() {
   // (translationKey classicGame:utilities does not work on category names)
 }
 
-onPlayerBoughtShopItem = (playerId, categoryKey, itemKey) => {
+onPlayerBoughtShopItem = (playerId, categoryKey, itemKey, itemOrInput, userInputMaybe) => {
+  // Ranks — single button with dropdown
+  if (categoryKey === "Ranks" && itemKey === "Rank") {
+    try {
+      // api may pass (playerId, cat, key, item, userInput) or (playerId, cat, key, userInput) — handle both
+      let chosen = null;
+      if (typeof userInputMaybe === "string") chosen = userInputMaybe;
+      else if (typeof itemOrInput === "string") chosen = itemOrInput;
+      else if (itemOrInput && typeof itemOrInput === "object" && typeof itemOrInput.userInput === "string") chosen = itemOrInput.userInput;
+      if (!chosen) {
+        // fallback: try reading item customTitle? no — just return
+        return;
+      }
+      const label = String(chosen).trim();
+      if (label === NONE_RANK_ID || label === "NONE") {
+        ranks().setSelected(playerId, NONE_ID);
+        applyRankVisuals(playerId);
+        refreshRanksShop(playerId);
+        try { api.sendMessage(playerId, "Rank: NONE"); } catch(_){}
+        return;
+      }
+      const rank = RANKS.find(r=> r.label === label || r.id === label);
+      if (!rank) {
+        try { api.sendMessage(playerId, `Rank ${label} not found.`); } catch(_){}
+        return;
+      }
+      const ok = ranks().setSelected(playerId, rank.id);
+      if (!ok) {
+        try { api.sendMessage(playerId, `Rank ${rank.prefix} not unlocked.`); } catch(_){}
+        refreshRanksShop(playerId);
+        return;
+      }
+      applyRankVisuals(playerId);
+      refreshRanksShop(playerId);
+      try { api.sendMessage(playerId, `Rank: ${rank.prefix}`, {color: rank.color}); } catch(_){ try{ api.sendMessage(playerId, `Rank: ${rank.prefix}`);}catch(_){} }
+    } catch(e){ try{ api.log(`[Ranks] select failed ${e && e.message}`);}catch(_){} }
+    return;
+  }
   // A blessing roll: the point is checked in the service, so a tile the game let
   // through one tick after the last roll cannot buy a second one for free.
   if (categoryKey === BLESSING_CATEGORY) {
@@ -1282,6 +1402,28 @@ tick = () => {
     }
   }
   try { tickSpawnCheck(); } catch (_) {}
+  // ranks time tracking
+  try {
+    rankTickCounter++;
+    // each tick = 50ms, count time while in dungeon
+    const ids = (()=>{ try{ return api.getPlayerIds ? api.getPlayerIds() : []; }catch(_){ return []; } })();
+    for (const pid of ids) {
+      try {
+        const d = service().dungeonOf ? service().dungeonOf(pid) : null;
+        if (!d || !d.difficulty) continue;
+        ranks().recordTime(pid, d.difficulty.id, 1);
+        // also track rooms? rooms via discoverRoom hook below — but time already
+      } catch(_){}
+    }
+    if (rankTickCounter % 20 === 0) {
+      for (const pid of ids) {
+        try {
+          const newly = ranks().saveTime(pid);
+          if (newly && newly.length) handleRankUnlocks(pid, newly);
+        } catch(_){}
+      }
+    }
+  } catch(_){}
 };
 
 onPlayerJoin = (playerId) => {
@@ -1289,6 +1431,9 @@ onPlayerJoin = (playerId) => {
   // The shop is re-registered per join: an item created while nobody was online is
   // not always offered to the first player who arrives, and replacing it is free.
   registerShopItems();
+  // ranks load + visuals
+  try { ranks().load(playerId); } catch(_){}
+  try { ranks().checkUnlocks(playerId); } catch(_){}
   // **A join is a new run**: aura back to 0, points back to 0, no offer, no history.
   // Nothing is read from a database, because nothing was ever written to one.
   resetPlayerProgress(playerId);
@@ -1297,6 +1442,8 @@ onPlayerJoin = (playerId) => {
   try { if (typeof api.setPlayerGamemode === "function") api.setPlayerGamemode(playerId, SPAWN_GAMEMODE); } catch (_) {}
   // In spawn, keep blessings but fix speed for navigation (no slowdown)
   try { applyBlessingOptions(playerId, baseClientOptions()); } catch (_) {}
+  try { applyRankVisuals(playerId); } catch(_){}
+  try { refreshRanksShop(playerId); } catch(_){}
   const names = DIFFICULTIES.filter((entry) => entry.fromLobby).map((entry) => entry.label).join(", ");
   api.sendMessage(
     playerId,
@@ -1326,6 +1473,7 @@ onPlayerToggledShopMenu = (playerId, isOpen) => {
       // Nothing left to do.
     }
   }
+  try { refreshRanksShop(playerId); } catch(_){}
 };
 
 onPlayerLeave = (playerId) => {
@@ -1359,6 +1507,22 @@ onPlayerLeave = (playerId) => {
   try {
     showPoints(playerId, 0);
   } catch (_) {}
+  try { ranks().forget(playerId); } catch(_){}
+};
+
+// ---- chat ranks ----
+onPlayerChat = (playerId, chatMessage, channelName) => {
+  try {
+    const rank = ranks().getDisplayRank(playerId);
+    if (!rank) return true; // no prefix
+    const name = (()=>{ try{ const n = api.getEntityName(playerId); if(n) return String(n);}catch(_){} return String(playerId); })();
+    const prefixStyled = [{ str: rank.prefix + " ", style: { color: rank.color } }];
+    const nameStyled = [{ str: name + ": ", style: { color: "white" } }];
+    const msgStyled = [{ str: String(chatMessage), style: { color: "white" } }];
+    const full = [...prefixStyled, ...nameStyled, ...msgStyled];
+    try { api.broadcastMessage(full); } catch(_){ api.broadcastMessage(rank.prefix + " " + name + ": " + chatMessage); }
+    return false;
+  } catch(_){ return true; }
 };
 
 /**
@@ -1407,6 +1571,10 @@ onPlayerKilledMob = (playerId, mobId) => {
       // Nothing left to do.
     }
   }
+  try {
+    const newly = ranks().recordKill(playerId);
+    if (newly && newly.length) handleRankUnlocks(playerId, newly);
+  } catch(_){}
 };
 
 /**
@@ -1510,7 +1678,16 @@ getWeightedRandomItem = (rarity) => crateGetWeightedRandomItem(rarity);
 hasKey = (playerId, rarity) => crateHasKey(api, playerId, rarity);
 consumeKey = (playerId, rarity) => crateConsumeKey(api, playerId, rarity);
 // main entry: must be arrow for code-block reachability
-generateChest = (playerId, chestPos, rarity) => crateGenerateChest(api, playerId, chestPos, rarity);
+generateChest = (playerId, chestPos, rarity) => {
+  const ok = crateGenerateChest(api, playerId, chestPos, rarity);
+  if (ok) {
+    try {
+      const newly = ranks().recordCrate(playerId, rarity);
+      if (newly && newly.length) handleRankUnlocks(playerId, newly);
+    } catch(_) {}
+  }
+  return ok;
+};
 // alias often used in examples
 openCrate = generateChest;
 
