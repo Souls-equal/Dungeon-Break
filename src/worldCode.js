@@ -48,7 +48,7 @@ import { RANKS, NONE_RANK_ID, getRank } from "./ranks/config.js";
 import { createRanksService, NONE_ID } from "./ranks/service.js";
 import { DIFFICULTY_COLOR, CRATE_COLOR, PRESETS } from "./particles/config.js";
 import { spawn as spawnParticles } from "./particles/service.js";
-import { CRAFTS, ARMOR_SETS, SHARD_TO_MATERIAL } from "./crafting/config.js";
+import { CRAFTS, ARMOR_SETS, WEAPON_SETS, SHARD_TO_MATERIAL } from "./crafting/config.js";
 import { registerCraftingRecipes } from "./crafting/service.js";
 import { applyItemStats } from "./crafting/itemStats.js";
 // expose presets for service helpers (avoid circular)
@@ -548,13 +548,17 @@ function runDebugCommand(playerId, verb) {
     return;
   }
   if (verb === "crafts") {
-    debugSay(playerId, `[dbg] crafts: ${CRAFTS.length} recipes registered (shards -> materials -> armors)`);
+    debugSay(playerId, `[dbg] crafts: ${CRAFTS.length} recipes registered (shards -> materials -> armors + 72 weapons)`);
     for (const set of ARMOR_SETS) {
       debugSay(playerId, `[dbg] ${set.label} — mat: ${set.material} from ${set.shard} (tier ${set.tier})`);
     }
-    debugSay(playerId, `[dbg] Workbench: Amethite/Magmasteel/Rubellite/Serpentite (4 frag -> 1 ingot) + armor`);
-    debugSay(playerId, `[dbg] Artisan Bench: Cursemetal/Kingly/Sanguine/Spectral/Geo/Astral/Voltplate`);
-    debugSay(playerId, `[dbg] Example: 4 Amethite Fragment -> 1 Amethite | 5 Amethite+2 Iron Bar -> Amethite Helmet`);
+    for (const set of WEAPON_SETS) {
+      debugSay(playerId, `[dbg] ${set.label} weapons (${set.weapons} types): Sword/Dagger/Spear/Club/Mace/Whip/Bow/Crossbow/${set.label === "Sanguine" || set.label === "Spectral" || set.label === "Geo" || set.label === "Astral" ? "Staff" : "Boomerang"} — mat ${set.material} (tier ${set.tier})`);
+    }
+    debugSay(playerId, `[dbg] Workbench: Amethite/Magmasteel/Rubellite/Serpentite (4 frag -> 1 ingot) + armor + weapons`);
+    debugSay(playerId, `[dbg] Artisan Bench: Cursemetal/Kingly/Sanguine/Spectral/Geo/Astral/Voltplate + weapons`);
+    debugSay(playerId, `[dbg] Example: 4 Amethite Fragment -> 1 Amethite | 2 Amethite+1 Stick -> Amethite Sword (scales with dealingDamageMultiplier) | 5 Amethite+2 Iron Bar -> Amethite Helmet`);
+    debugSay(playerId, `[dbg] Weapons scale with Blessings: dealingDamageMultiplier + run/permanent bonuses apply to all 72 custom weapons.`);
     return;
   }
   if (verb === "shards") {
@@ -1555,7 +1559,7 @@ onPlayerJoin = (playerId) => {
     playerId,
     `Welcome to Dungeon Break! Step on a colored Concrete pad to choose your difficulty (${names}).`,
   );
-  try { api.sendMessage(playerId, "Shards in Crates -> craft materials (Workbench) -> craft custom armors (Artisan Bench). /dbg crafts | /dbg shards"); } catch(_){}
+  try { api.sendMessage(playerId, "Shards in Crates -> craft materials (Workbench) -> craft custom armors & 72 weapons (Artisan Bench). Weapons scale with Blessing damage multiplier! /dbg crafts | /dbg shards"); } catch(_){}
 };
 
 /**

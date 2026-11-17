@@ -217,6 +217,94 @@ export const CRAFTS = [
   { result: "Voltplate Gauntlets", produces: 1, station: "Artisan Bench", requires: [{ items: ["Voltite Cell"], amt: 4 }, { items: ["Copper Wire"], amt: 2 }] },
 ];
 
+// ────────────── ÉTAPE 2b: Matériaux -> Armes (9 types par set, 72 armes) ──────────────
+// Chaque arme suit le multiplicateur du joueur (dealingDamageMultiplier) via
+// - l'option client dealingDamageMultiplier (Bloxd applique déjà le multiplicateur aux dégâts d'armes)
+// - le hook onPlayerDamagingMob qui multiplie les dégâts rendus (fallback / mobs custom)
+// Coûts inspirés du vanilla: Sword 2+1, Dagger 1+1, Spear 1+2, Club 3+1, Mace 2+1+1, Whip 1+1, Bow 3+1+2, Crossbow 4+1+2+2, Boomerang 2+1, Staff 2+2+1
+export const WEAPON_CRAFTS = [
+  // Amethite — Workbench (Tier 1)
+  { result: "Amethite Sword", produces: 1, station: "Workbench", requires: [{ items: ["Amethite"], amt: 2 }, { items: ["Stick"], amt: 1 }] },
+  { result: "Amethite Dagger", produces: 1, station: "Workbench", requires: [{ items: ["Amethite"], amt: 1 }, { items: ["Stick"], amt: 1 }] },
+  { result: "Amethite Spear", produces: 1, station: "Workbench", requires: [{ items: ["Amethite"], amt: 1 }, { items: ["Stick"], amt: 2 }] },
+  { result: "Amethite Club", produces: 1, station: "Workbench", requires: [{ items: ["Amethite"], amt: 3 }, { items: ["Stick"], amt: 1 }] },
+  { result: "Amethite Mace", produces: 1, station: "Workbench", requires: [{ items: ["Amethite"], amt: 2 }, { items: ["Stick"], amt: 1 }, { items: ["Iron Bar"], amt: 1 }] },
+  { result: "Amethite Whip", produces: 1, station: "Workbench", requires: [{ items: ["Amethite"], amt: 1 }, { items: ["Cotton"], amt: 1 }] },
+  { result: "Amethite Bow", produces: 1, station: "Workbench", requires: [{ items: ["Amethite"], amt: 3 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }] },
+  { result: "Amethite Crossbow", produces: 1, station: "Workbench", requires: [{ items: ["Amethite"], amt: 4 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }, { items: ["Iron Bar"], amt: 2 }] },
+  { result: "Amethite Boomerang", produces: 1, station: "Workbench", requires: [{ items: ["Amethite"], amt: 2 }, { items: ["Stick"], amt: 1 }] },
+  // Magmasteel — Workbench
+  { result: "Magmasteel Sword", produces: 1, station: "Workbench", requires: [{ items: ["Magmasteel"], amt: 2 }, { items: ["Stick"], amt: 1 }] },
+  { result: "Magmasteel Dagger", produces: 1, station: "Workbench", requires: [{ items: ["Magmasteel"], amt: 1 }, { items: ["Stick"], amt: 1 }] },
+  { result: "Magmasteel Spear", produces: 1, station: "Workbench", requires: [{ items: ["Magmasteel"], amt: 1 }, { items: ["Stick"], amt: 2 }] },
+  { result: "Magmasteel Club", produces: 1, station: "Workbench", requires: [{ items: ["Magmasteel"], amt: 3 }, { items: ["Stick"], amt: 1 }] },
+  { result: "Magmasteel Mace", produces: 1, station: "Workbench", requires: [{ items: ["Magmasteel"], amt: 2 }, { items: ["Stick"], amt: 1 }, { items: ["Iron Bar"], amt: 1 }] },
+  { result: "Magmasteel Whip", produces: 1, station: "Workbench", requires: [{ items: ["Magmasteel"], amt: 1 }, { items: ["Cotton"], amt: 1 }] },
+  { result: "Magmasteel Bow", produces: 1, station: "Workbench", requires: [{ items: ["Magmasteel"], amt: 3 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }] },
+  { result: "Magmasteel Crossbow", produces: 1, station: "Workbench", requires: [{ items: ["Magmasteel"], amt: 4 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }, { items: ["Iron Bar"], amt: 2 }] },
+  { result: "Magmasteel Boomerang", produces: 1, station: "Workbench", requires: [{ items: ["Magmasteel"], amt: 2 }, { items: ["Stick"], amt: 1 }] },
+  // Rubellite — Workbench
+  { result: "Rubellite Sword", produces: 1, station: "Workbench", requires: [{ items: ["Rubellite"], amt: 2 }, { items: ["Stick"], amt: 1 }] },
+  { result: "Rubellite Dagger", produces: 1, station: "Workbench", requires: [{ items: ["Rubellite"], amt: 1 }, { items: ["Stick"], amt: 1 }] },
+  { result: "Rubellite Spear", produces: 1, station: "Workbench", requires: [{ items: ["Rubellite"], amt: 1 }, { items: ["Stick"], amt: 2 }] },
+  { result: "Rubellite Club", produces: 1, station: "Workbench", requires: [{ items: ["Rubellite"], amt: 3 }, { items: ["Stick"], amt: 1 }] },
+  { result: "Rubellite Mace", produces: 1, station: "Workbench", requires: [{ items: ["Rubellite"], amt: 2 }, { items: ["Stick"], amt: 1 }, { items: ["Iron Bar"], amt: 1 }] },
+  { result: "Rubellite Whip", produces: 1, station: "Workbench", requires: [{ items: ["Rubellite"], amt: 1 }, { items: ["Cotton"], amt: 1 }] },
+  { result: "Rubellite Bow", produces: 1, station: "Workbench", requires: [{ items: ["Rubellite"], amt: 3 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }] },
+  { result: "Rubellite Crossbow", produces: 1, station: "Workbench", requires: [{ items: ["Rubellite"], amt: 4 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }, { items: ["Iron Bar"], amt: 2 }] },
+  { result: "Rubellite Boomerang", produces: 1, station: "Workbench", requires: [{ items: ["Rubellite"], amt: 2 }, { items: ["Stick"], amt: 1 }] },
+  // Serpentite — Workbench
+  { result: "Serpentite Sword", produces: 1, station: "Workbench", requires: [{ items: ["Serpentite"], amt: 2 }, { items: ["Stick"], amt: 1 }] },
+  { result: "Serpentite Dagger", produces: 1, station: "Workbench", requires: [{ items: ["Serpentite"], amt: 1 }, { items: ["Stick"], amt: 1 }] },
+  { result: "Serpentite Spear", produces: 1, station: "Workbench", requires: [{ items: ["Serpentite"], amt: 1 }, { items: ["Stick"], amt: 2 }] },
+  { result: "Serpentite Club", produces: 1, station: "Workbench", requires: [{ items: ["Serpentite"], amt: 3 }, { items: ["Stick"], amt: 1 }] },
+  { result: "Serpentite Mace", produces: 1, station: "Workbench", requires: [{ items: ["Serpentite"], amt: 2 }, { items: ["Stick"], amt: 1 }, { items: ["Iron Bar"], amt: 1 }] },
+  { result: "Serpentite Whip", produces: 1, station: "Workbench", requires: [{ items: ["Serpentite"], amt: 1 }, { items: ["Cotton"], amt: 1 }] },
+  { result: "Serpentite Bow", produces: 1, station: "Workbench", requires: [{ items: ["Serpentite"], amt: 3 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }] },
+  { result: "Serpentite Crossbow", produces: 1, station: "Workbench", requires: [{ items: ["Serpentite"], amt: 4 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }, { items: ["Iron Bar"], amt: 2 }] },
+  { result: "Serpentite Boomerang", produces: 1, station: "Workbench", requires: [{ items: ["Serpentite"], amt: 2 }, { items: ["Stick"], amt: 1 }] },
+  // Sanguine — Artisan Bench (Steel Bar = Sanguine Alloy)
+  { result: "Sanguine Sword", produces: 1, station: "Artisan Bench", requires: [{ items: ["Steel Bar"], amt: 2 }, { items: ["Stick"], amt: 1 }] },
+  { result: "Sanguine Dagger", produces: 1, station: "Artisan Bench", requires: [{ items: ["Steel Bar"], amt: 1 }, { items: ["Stick"], amt: 1 }] },
+  { result: "Sanguine Spear", produces: 1, station: "Artisan Bench", requires: [{ items: ["Steel Bar"], amt: 1 }, { items: ["Stick"], amt: 2 }] },
+  { result: "Sanguine Club", produces: 1, station: "Artisan Bench", requires: [{ items: ["Steel Bar"], amt: 3 }, { items: ["Stick"], amt: 1 }] },
+  { result: "Sanguine Mace", produces: 1, station: "Artisan Bench", requires: [{ items: ["Steel Bar"], amt: 2 }, { items: ["Stick"], amt: 1 }, { items: ["Iron Bar"], amt: 1 }] },
+  { result: "Sanguine Whip", produces: 1, station: "Artisan Bench", requires: [{ items: ["Steel Bar"], amt: 1 }, { items: ["Cotton"], amt: 1 }] },
+  { result: "Sanguine Bow", produces: 1, station: "Artisan Bench", requires: [{ items: ["Steel Bar"], amt: 3 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }] },
+  { result: "Sanguine Crossbow", produces: 1, station: "Artisan Bench", requires: [{ items: ["Steel Bar"], amt: 4 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }, { items: ["Iron Bar"], amt: 2 }] },
+  { result: "Sanguine Staff", produces: 1, station: "Artisan Bench", requires: [{ items: ["Steel Bar"], amt: 2 }, { items: ["Stick"], amt: 2 }, { items: ["Gold Bar"], amt: 1 }] },
+  // Spectral — Artisan Bench (Logic Board = Spectral Essence)
+  { result: "Spectral Sword", produces: 1, station: "Artisan Bench", requires: [{ items: ["Logic Board"], amt: 2 }, { items: ["Stick"], amt: 1 }] },
+  { result: "Spectral Dagger", produces: 1, station: "Artisan Bench", requires: [{ items: ["Logic Board"], amt: 1 }, { items: ["Stick"], amt: 1 }] },
+  { result: "Spectral Spear", produces: 1, station: "Artisan Bench", requires: [{ items: ["Logic Board"], amt: 1 }, { items: ["Stick"], amt: 2 }] },
+  { result: "Spectral Club", produces: 1, station: "Artisan Bench", requires: [{ items: ["Logic Board"], amt: 3 }, { items: ["Stick"], amt: 1 }] },
+  { result: "Spectral Mace", produces: 1, station: "Artisan Bench", requires: [{ items: ["Logic Board"], amt: 2 }, { items: ["Stick"], amt: 1 }, { items: ["Iron Bar"], amt: 1 }] },
+  { result: "Spectral Whip", produces: 1, station: "Artisan Bench", requires: [{ items: ["Logic Board"], amt: 1 }, { items: ["Cotton"], amt: 1 }] },
+  { result: "Spectral Bow", produces: 1, station: "Artisan Bench", requires: [{ items: ["Logic Board"], amt: 3 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }] },
+  { result: "Spectral Crossbow", produces: 1, station: "Artisan Bench", requires: [{ items: ["Logic Board"], amt: 4 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }, { items: ["Iron Bar"], amt: 2 }] },
+  { result: "Spectral Staff", produces: 1, station: "Artisan Bench", requires: [{ items: ["Logic Board"], amt: 2 }, { items: ["Stick"], amt: 2 }, { items: ["Moonstone Dust"], amt: 1 }] },
+  // Geo — Artisan Bench (Copper Bar = Geo Core)
+  { result: "Geo Sword", produces: 1, station: "Artisan Bench", requires: [{ items: ["Copper Bar"], amt: 2 }, { items: ["Stick"], amt: 1 }] },
+  { result: "Geo Dagger", produces: 1, station: "Artisan Bench", requires: [{ items: ["Copper Bar"], amt: 1 }, { items: ["Stick"], amt: 1 }] },
+  { result: "Geo Spear", produces: 1, station: "Artisan Bench", requires: [{ items: ["Copper Bar"], amt: 1 }, { items: ["Stick"], amt: 2 }] },
+  { result: "Geo Club", produces: 1, station: "Artisan Bench", requires: [{ items: ["Copper Bar"], amt: 3 }, { items: ["Stick"], amt: 1 }] },
+  { result: "Geo Mace", produces: 1, station: "Artisan Bench", requires: [{ items: ["Copper Bar"], amt: 2 }, { items: ["Stick"], amt: 1 }, { items: ["Iron Bar"], amt: 1 }] },
+  { result: "Geo Whip", produces: 1, station: "Artisan Bench", requires: [{ items: ["Copper Bar"], amt: 1 }, { items: ["Cotton"], amt: 1 }] },
+  { result: "Geo Bow", produces: 1, station: "Artisan Bench", requires: [{ items: ["Copper Bar"], amt: 3 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }] },
+  { result: "Geo Crossbow", produces: 1, station: "Artisan Bench", requires: [{ items: ["Copper Bar"], amt: 4 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }, { items: ["Iron Bar"], amt: 2 }] },
+  { result: "Geo Staff", produces: 1, station: "Artisan Bench", requires: [{ items: ["Copper Bar"], amt: 2 }, { items: ["Stick"], amt: 2 }, { items: ["Iron Bar"], amt: 1 }] },
+  // Astral — Artisan Bench (Star Alloy = Astral Essence)
+  { result: "Astral Sword", produces: 1, station: "Artisan Bench", requires: [{ items: ["Star Alloy"], amt: 2 }, { items: ["Stick"], amt: 1 }] },
+  { result: "Astral Dagger", produces: 1, station: "Artisan Bench", requires: [{ items: ["Star Alloy"], amt: 1 }, { items: ["Stick"], amt: 1 }] },
+  { result: "Astral Spear", produces: 1, station: "Artisan Bench", requires: [{ items: ["Star Alloy"], amt: 1 }, { items: ["Stick"], amt: 2 }] },
+  { result: "Astral Club", produces: 1, station: "Artisan Bench", requires: [{ items: ["Star Alloy"], amt: 3 }, { items: ["Stick"], amt: 1 }] },
+  { result: "Astral Mace", produces: 1, station: "Artisan Bench", requires: [{ items: ["Star Alloy"], amt: 2 }, { items: ["Stick"], amt: 1 }, { items: ["Iron Bar"], amt: 1 }] },
+  { result: "Astral Whip", produces: 1, station: "Artisan Bench", requires: [{ items: ["Star Alloy"], amt: 1 }, { items: ["Cotton"], amt: 1 }] },
+  { result: "Astral Bow", produces: 1, station: "Artisan Bench", requires: [{ items: ["Star Alloy"], amt: 3 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }] },
+  { result: "Astral Crossbow", produces: 1, station: "Artisan Bench", requires: [{ items: ["Star Alloy"], amt: 4 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }, { items: ["Iron Bar"], amt: 2 }] },
+  { result: "Astral Staff", produces: 1, station: "Artisan Bench", requires: [{ items: ["Star Alloy"], amt: 2 }, { items: ["Stick"], amt: 2 }, { items: ["Comet Shard"], amt: 1 }] },
+];
+
 // Shard -> Material mapping pour affichage / debug
 export const SHARD_TO_MATERIAL = {
   "Amethite Fragment": "Amethite",
@@ -245,3 +333,18 @@ export const ARMOR_SETS = [
   { id: "astral", label: "Astral", material: "Star Alloy", shard: "Astral Shard", tier: 4 },
   { id: "voltplate", label: "Voltplate", material: "Voltite Cell", shard: "Voltite Dust", tier: 4 },
 ];
+
+// Arme sets pour debug (même tiers, 9 armes par set, 72 total)
+export const WEAPON_SETS = [
+  { id: "amethite", label: "Amethite", material: "Amethite", shard: "Amethite Fragment", tier: 1, weapons: 9 },
+  { id: "magmasteel", label: "Magmasteel", material: "Magmasteel", shard: "Magmasteel Fragment", tier: 1, weapons: 9 },
+  { id: "rubellite", label: "Rubellite", material: "Rubellite", shard: "Rubellite Fragment", tier: 1, weapons: 9 },
+  { id: "serpentite", label: "Serpentite", material: "Serpentite", shard: "Serpentite Fragment", tier: 1, weapons: 9 },
+  { id: "sanguine", label: "Sanguine", material: "Steel Bar", shard: "Sanguine Shard", tier: 3, weapons: 9 },
+  { id: "spectral", label: "Spectral", material: "Logic Board", shard: "Spectral Shard", tier: 3, weapons: 9 },
+  { id: "geo", label: "Geo", material: "Copper Bar", shard: "Geo Shard", tier: 3, weapons: 9 },
+  { id: "astral", label: "Astral", material: "Star Alloy", shard: "Astral Shard", tier: 4, weapons: 9 },
+];
+
+// Fusion CRAFTS (armor + weapons) pour rétro-compat: service importe CRAFTS
+for (const w of WEAPON_CRAFTS) CRAFTS.push(w);
