@@ -186,6 +186,51 @@ export function isChestLocked(api, chestPos, playerId) {
   return now < data.crateLockUntil;
 }
 
+/**
+ * Vide un coffre sans erreur même s'il est plein (bloquant le précédent setStandardChestItemSlot).
+ * 1) Reset des data du coffre qui contiennent aussi les slots (evite l'erreur "chest full" lors du vidage)
+ * 2) fallback brute force Air sur 27 slots
+ */
+export function clearChestInventory(api, chestPos) {
+  const p = normalizeChestPos(chestPos);
+  if (!p) return;
+  // 1) reset data chest — preserve uniquement les clés crateOwner* pour ne pas perdre le lock, le reste (inventory) est jeté
+  try {
+    let data = null;
+    try { data = api.getBlockData(p.x, p.y, p.z); } catch (_) { data = null; }
+    if (data && typeof data === "object") {
+      const crateKeep = {};
+      for (const k of ["crateOwnerId","crateOwnerName","crateRarity","crateOpenedAt","crateLockUntil"]) {
+        if (k in data) crateKeep[k] = data[k];
+      }
+      // Si data contenait des clés d'inventaire (items/slots/inventory etc.), les jeter revient à vider le coffre
+      // On détecte si data a plus que les clés crateKeep
+      const extraKeys = Object.keys(data).filter(k => !(k in crateKeep));
+      if (extraKeys.length > 0) {
+        try { api.setBlockData(p.x, p.y, p.z, crateKeep); } catch (_) {}
+        // si crateKeep vide, on force {} pour bien reset
+        if (Object.keys(crateKeep).length === 0) {
+          try { api.setBlockData(p.x, p.y, p.z, {}); } catch (_) {}
+        }
+      }
+    }
+  } catch (_) {}
+  // 2) brute force Air — couvre le cas où l'engine stocke l'inventaire hors data
+  for (let i = 0; i < 27; i++) {
+    try { api.setStandardChestItemSlot([p.x, p.y, p.z], i, "Air", 1, playerIdFallback(api, chestPos)); } catch (_) {}
+    try { api.setStandardChestItemSlot([p.x, p.y, p.z], i, "Air"); } catch (_) {}
+    // aussi via give/remove si dispo: on ignore
+  }
+  try {
+    if (typeof api.clearStandardChest === "function") api.clearStandardChest([p.x, p.y, p.z]);
+  } catch (_) {}
+}
+
+function playerIdFallback(api, chestPos) {
+  // helper to keep signature compatible when playerId non dispo — on tente sans
+  return undefined;
+}
+
 export function generateChest(api, playerId, chestPos, rarity, random = Math.random) {
   if (isChestLocked(api, chestPos, playerId)) {
     const data = getChestData(api, chestPos);
@@ -213,6 +258,8 @@ export function generateChest(api, playerId, chestPos, rarity, random = Math.ran
   }
   consumeKey(api, playerId, rarity);
   setChestOwner(api, chestPos, playerId, rarity);
+  // Vide d'abord via data reset (évite l'erreur si le joueur avait rempli le coffre)
+  clearChestInventory(api, chestPos);
   for (let i = 0; i < 27; i++) {
     if (random() * 100 < AIR_CHANCE[rarity]) {
       try { api.setStandardChestItemSlot(chestPos, i, "Air", 1, playerId); } catch (_) {}
