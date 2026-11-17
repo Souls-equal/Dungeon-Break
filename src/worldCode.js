@@ -21,7 +21,7 @@ import {
   setTimeout as scheduleTimeout,
   step as stepScheduler,
 } from "./utils/scheduler.js";
-import { DIFFICULTIES, DUNGEON_CONFIG, difficultyForPadBlock, priceForDifficulty, formatGold, UNLOCK_CURRENCY, UNLOCK_DB_KEY, DUNGEON_PRICES } from "./dungeon/config.js";
+import { DIFFICULTIES, DUNGEON_CONFIG, DUNGEON_VARIATION, difficultyForPadBlock, priceForDifficulty, formatGold, UNLOCK_CURRENCY, UNLOCK_DB_KEY, DUNGEON_PRICES } from "./dungeon/config.js";
 import { LOBBY_POSITION, createDungeonService } from "./dungeon/service.js";
 import { isChestBlock } from "./dungeon/loot.js";
 import { AURA_PER_LEVEL, MAX_AURA_LEVEL, categoryOf } from "./blessing/config.js";
@@ -293,6 +293,20 @@ function cancelLobbyCountdown(playerId) {
   if (stopLobbyCountdown(playerId)) {
     api.sendMessage(playerId, "Countdown cancelled. Step on a difficulty pad to try again.");
   }
+}
+
+/**
+ * Variation — seulement à l'aller.
+ * En custom game on passe de "default" (lobby) à `DUNGEON_VARIATION`.
+ * En world l'API n'existe pas → silent fail.
+ */
+function switchToDungeonVariation(playerId) {
+  try {
+    if (typeof api.getVariation !== "function" || typeof api.matchmakeToVariation !== "function") return;
+    const current = api.getVariation();
+    if (current !== "default") return;
+    api.matchmakeToVariation(playerId, DUNGEON_VARIATION);
+  } catch (_) {}
 }
 
 function completeLobbyCountdown(playerId, countdown) {
@@ -1375,7 +1389,7 @@ const SHOP_ITEMS = [
       image: "spawnicon.png",
       customTitle: [{ translationKey: "classicGame:teleportToLobbySpawn" }],
       description: [],
-      cost: 0,
+      // pas de cost: sinon le shop affiche le placeholder "free" — ce n'est pas un achat
       canBuy: true,
       sortPriority: 0,
     },

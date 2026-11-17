@@ -875,8 +875,8 @@ test("the shop offers spawn in a Utilities category", () => {
   assert.ok(items, "the Utilities category was not created");
   const spawn = items.get("Teleport to spawn");
   assert.ok(spawn, "the spawn item was not created");
-  // Free, with a buy button: the item is an action, not a purchase.
-  assert.equal(spawn.cost, 0);
+  // Not a purchase: no cost (cost:0 shows a "free" placeholder)
+  assert.equal(spawn.cost, undefined);
   assert.equal(spawn.canBuy, true);
   assert.ok(spawn.image, "the item has no image to draw");
 });

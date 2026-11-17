@@ -447,3 +447,10 @@ export function lobbyDifficulties() {
 export function floorOfLayer(chunkY) {
   return chunkY * DUNGEON_CONFIG.chunkSize;
 }
+
+/**
+ * Variation du donjon (custom games uniquement).
+ * `default` = lobby/spawn, `dungeon` = dans le donjon.
+ * Worlds n'ont pas de variations — l'appel échoue silencieusement.
+ */
+export const DUNGEON_VARIATION = "dungeon";
