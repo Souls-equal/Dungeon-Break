@@ -237,23 +237,14 @@ export function generateChest(api, playerId, chestPos, rarity, random = Math.ran
     const now = nowMs(api);
     const remaining = data && data.crateLockUntil ? Math.ceil((data.crateLockUntil - now) / 1000) : Math.ceil(CRATE_LOCK_MS / 1000);
     let ownerDisplay = data && (data.crateOwnerName || data.crateOwnerId) ? (data.crateOwnerName || data.crateOwnerId) : "another player";
-    // privilégie getEntityName pour afficher le pseudo au lieu de l'id
     if (data && data.crateOwnerId) {
       try { const n = api.getEntityName ? api.getEntityName(data.crateOwnerId) : null; if (n) ownerDisplay = n; } catch (_) {}
     }
-    try {
-      api.sendMessage(playerId, "This crate is being used by " + ownerDisplay + " - please wait " + remaining + "s", { color: "red" });
-    } catch (_) {
-      try { api.sendMessage(playerId, "This crate is being used by another player - please wait " + remaining + "s"); } catch (_) {}
-    }
+    try { api.sendMessage(playerId, [{str:"Busy — wait ", style:{color:"#ff5555"}}, {str:`${remaining}s`, style:{color:"#ffd700"}}]); } catch(_) { try { api.sendMessage(playerId, "This crate is being used by " + ownerDisplay + " - please wait " + remaining + "s"); } catch(_){} }
     return false;
   }
   if (!hasKey(api, playerId, rarity)) {
-    try {
-      api.sendMessage(playerId, "You need a " + CRATE_KEYS[rarity] + " to open this chest!", { color: "red" });
-    } catch (_) {
-      try { api.sendMessage(playerId, "You need a " + CRATE_KEYS[rarity] + " to open this chest!"); } catch (_) {}
-    }
+    try { api.sendMessage(playerId, [{str:"Need ", style:{color:"#ff5555"}}, {str:CRATE_KEYS[rarity], style:{color:"#ffd700"}}]); } catch(_) { try { api.sendMessage(playerId, "You need a " + CRATE_KEYS[rarity] + " to open this chest!"); } catch(_){} }
     return false;
   }
   consumeKey(api, playerId, rarity);
@@ -270,11 +261,7 @@ export function generateChest(api, playerId, chestPos, rarity, random = Math.ran
     const amount = getAmountForItem(item, random);
     try { api.setStandardChestItemSlot(chestPos, i, item.name, amount, playerId); } catch (_) {}
   }
-  try {
-    api.sendMessage(playerId, "Chest opened (" + rarity + ")!", { color: "lightgray" });
-  } catch (_) {
-    try { api.sendMessage(playerId, "Chest opened (" + rarity + ")!"); } catch (_) {}
-  }
+  try { api.sendMessage(playerId, [{str:`${rarity}`, style:{color:"#55ff55"}}, {str:" crate opened", style:{color:"#aaaaaa"}}]); } catch(_) { try { api.sendMessage(playerId, "Chest opened (" + rarity + ")!"); } catch(_){} }
   // Ouvre automatiquement le coffre pour le joueur (api: openChestForPlayer)
   try {
     if (typeof api.openChestForPlayer === "function") {

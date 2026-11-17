@@ -34,6 +34,8 @@ import { chunkOfWorld, createLoader } from "./loader.js";
 export const LOBBY_POSITION = [10, 21, 10];
 
 const SIZE = DUNGEON_CONFIG.chunkSize;
+const MSG_COLORS = { gold:"#ffd700", green:"#55ff55", red:"#ff5555", gray:"#aaaaaa", white:"#ffffff", aqua:"#55ffff" };
+function cStr(text, color) { return { str: text, style:{color} }; }
 
 export function createDungeonService(options) {
   const api = options.api;
@@ -133,12 +135,10 @@ export function createDungeonService(options) {
     const gold = getGold(playerId);
     if (gold === null) return true; // no currency system (tests)
     if (gold >= price) {
-      if (spendGold(playerId, price)) { unlocks[difficulty.id] = true; saveUnlocks(playerId, unlocks); try { api.sendMessage(playerId, `Unlocked ${difficulty.label} for ${formatGold(price)}!`); } catch (_) {} return true; }
+      if (spendGold(playerId, price)) { unlocks[difficulty.id] = true; saveUnlocks(playerId, unlocks); try { api.sendMessage(playerId, [cStr("Unlocked ", MSG_COLORS.green), cStr(difficulty.label, MSG_COLORS.gold)]); } catch (_) {} return true; }
       unlocks[difficulty.id] = true; saveUnlocks(playerId, unlocks); return true;
     }
-    const have = gold === null ? 0 : gold;
-    try { api.sendMessage(playerId, `You need ${formatGold(price)} to unlock ${difficulty.label} (you have ${formatGold(have)}).`); } catch (_) {}
-    try { api.sendMessage(playerId, `Earn gold via Market Place to enter ${difficulty.label}.`); } catch (_) {}
+    try { api.sendMessage(playerId, [cStr("Need ", MSG_COLORS.red), cStr(formatGold(price), MSG_COLORS.gold), cStr(` for ${difficulty.label}`, MSG_COLORS.red)]); } catch (_) {}
     return false;
   }
 
@@ -159,7 +159,7 @@ export function createDungeonService(options) {
   function enterDifficulty(playerId, difficultyReference, onReady) {
     const difficulty = findDifficulty(difficultyReference);
     if (!difficulty) {
-      api.sendMessage(playerId, "That difficulty does not exist.");
+      try { api.sendMessage(playerId, [cStr("Unknown difficulty", MSG_COLORS.red)]); } catch(_){}
       return null;
     }
     if (!gateDifficulty(playerId, difficulty)) return null;
@@ -167,7 +167,7 @@ export function createDungeonService(options) {
     switchToDungeonVariation(playerId);
     const level = loader.levelState(difficulty, playerId);
     if (level.templates.length === 0) {
-      api.sendMessage(playerId, `${difficulty.label} has no rooms yet. ${DUNGEON_CONFIG.missingTemplatesMessage}`);
+      try { api.sendMessage(playerId, [cStr(difficulty.label, MSG_COLORS.gold), cStr(" — no rooms", MSG_COLORS.gray)]); } catch(_){}
       return null;
     }
 
@@ -249,11 +249,7 @@ export function createDungeonService(options) {
               return;
             }
             api.setClientOptions(playerId, { gravityMultiplier: 1 });
-            api.sendMessage(
-              playerId,
-              `The room could not be built. ${loader.entranceFailureMessage(difficulty, playerId)} `
-                + "You have been returned to the lobby.",
-            );
+            try { api.sendMessage(playerId, [cStr("Build failed", MSG_COLORS.red)]); } catch(_){}
             leave(playerId);
             log(`entrance copy failed for ${playerId} on ${difficulty.label}`);
             return;
@@ -273,11 +269,7 @@ export function createDungeonService(options) {
               return;
             }
             api.setClientOptions(playerId, { gravityMultiplier: 1 });
-            api.sendMessage(
-              playerId,
-              `The room could not be built. ${loader.entranceFailureMessage(difficulty, playerId)} `
-                + "You have been returned to the lobby.",
-            );
+            try { api.sendMessage(playerId, [cStr("Build failed", MSG_COLORS.red)]); } catch(_){}
             leave(playerId);
             log(`entrance copy failed for ${playerId} on ${difficulty.label}`);
             return;
@@ -298,10 +290,9 @@ export function createDungeonService(options) {
             // entrance — so it was the player's *first real step* that got swallowed, and
             // the first room of the run that went unpaid.
           }
-          // The landing and the floor block, in the message a player reads: a player
-          // inside a floor is a bug report with two numbers in it.
-          api.sendMessage(playerId, `Level: ${difficulty.label}`);
-          api.sendMessage(playerId, `Landed at y ${landing[1]} · floor block at y ${floorY}`);
+          // Minimal: level + landing (keep substrings for tests, but colored)
+          try { api.sendMessage(playerId, [cStr("Level: ", MSG_COLORS.white), cStr(difficulty.label, MSG_COLORS.gold)]); } catch(_){}
+          try { api.sendMessage(playerId, [cStr(`Landed at y ${landing[1]} · floor block at y ${floorY}`, MSG_COLORS.gray)]); } catch(_){}
           // The rooms around the player are planned from here, once: the next scan
           // (a few ticks later) would do the same, but the player would spend those
           // ticks staring at the edge of a single room.
@@ -385,7 +376,7 @@ export function createDungeonService(options) {
     if (!dungeon) return null;
     const target = nextDifficulty(dungeon.difficulty);
     if (!target) {
-      api.sendMessage(playerId, "This is as far as the dungeon goes.");
+      try { api.sendMessage(playerId, [cStr("Max level", MSG_COLORS.gray)]); } catch(_){}
       return null;
     }
     enterDifficulty(playerId, target);
@@ -507,12 +498,10 @@ export function createDungeonService(options) {
     const drawn = drawChestKey(dungeon.difficulty);
     const drop = openChest(api, { ...chest, itemName: keyItemName(drawn.label) });
     if (!drop) {
-      // The world is at its item-drop limit. Saying nothing would look like a chest that
-      // does not work, so the message names the cause.
-      api.sendMessage(playerId, "The key could not be dropped here — the world is full of items.");
+      try { api.sendMessage(playerId, [cStr("Inventory full", MSG_COLORS.red)]); } catch(_){}
       return { ...chest, key: drawn, dropped: false };
     }
-    api.sendMessage(playerId, `You found a ${drawn.label} Key! (${drawn.rarity})`);
+    try { api.sendMessage(playerId, [cStr(`${drawn.label} Key`, MSG_COLORS.gold), cStr(` (${drawn.rarity})`, MSG_COLORS.white)]); } catch(_){}
     return { ...chest, key: drawn, dropped: true };
   }
 

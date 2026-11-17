@@ -167,8 +167,11 @@ function describeClientEffect(effect) {
   const main = formatEffectAmount(effect.option, effect.amount);
   if (effect.second) {
     const sec = effect.second.option ? formatEffectAmount(effect.second.option, effect.second.amount ?? effect.second.value) : null;
-    // for floor etc. second already handled
-    if (sec) return `${main} ${sec}`;
+    if (sec) {
+      // Tradeoff: always line-break before Loose for readable shop tile
+      if (sec.startsWith("Loose")) return `${main}\n${sec}`;
+      return `${main} ${sec}`;
+    }
   }
   return main;
 }
@@ -193,16 +196,12 @@ export function effectDescription(blessing) {
   const eff = blessing.effect;
   if (!eff) return blessing.description || "";
   if (eff.kind === "client") {
-    // handle both primary and second (tradeoff) — combine into one short phrase
     const parts = [];
     const primary = describeClientEffect(eff);
     if (primary) parts.push(primary);
-    // if second was not already merged (describeClientEffect merges second for client kind)
-    // for safety, if eff.second exists and primary didn't include it, add it
-    // (primary already includes second for client kind, so skip duplicate)
-    // For scope we still want short: keep as is
-    // add duration hint for potion-like client? no
-    return parts.join(" ") || blessing.description;
+    const out = parts.join(" ") || blessing.description;
+    // Ensure any remaining " Loose" is split onto new line (shop tile readability)
+    return out.replace(/ Loose/g, "\nLoose");
   }
   if (eff.kind === "run") {
     return describeRunBonus(eff);
@@ -235,7 +234,8 @@ export function choiceTile(draw, position) {
   const category = categoryOf(blessing.category) || { label: blessing.category, colour: "#ffffff", textColour: "#ffffff" };
   const rarityColor = rarity ? (rarity.colour || rarity.textColour) : "#ffffff";
   const catColor = category.colour || category.textColour || "#ffffff";
-  const effectStr = effectDescription(blessing);
+  const rawEffect = effectDescription(blessing);
+  const effectStr = rawEffect.replace(/ Loose/g, "\nLoose");
   return {
     image: imageForBlessing(blessing, rarity),
     customTitle: blessing.name,
