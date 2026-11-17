@@ -50,6 +50,7 @@ import { DIFFICULTY_COLOR, CRATE_COLOR, PRESETS } from "./particles/config.js";
 import { spawn as spawnParticles } from "./particles/service.js";
 import { CRAFTS, ARMOR_SETS, SHARD_TO_MATERIAL } from "./crafting/config.js";
 import { registerCraftingRecipes } from "./crafting/service.js";
+import { applyItemStats } from "./crafting/itemStats.js";
 // expose presets for service helpers (avoid circular)
 globalThis.__PARTICLE_PRESETS = { PRESETS };
 
@@ -1285,13 +1286,8 @@ function rollBlessing(playerId) {
   const offer = blessings().roll(key, level);
   refreshBlessingTiles(playerId);
   if (!offer) {
-    api.sendMessage(playerId, "No Blessing point to spend. Discover a new room: every aura level gives one.");
     return false;
   }
-  // The tiles are what the player is looking at: the shop is open, and chat is not shown
-  // while it is. Announcing the offer here would be writing to a screen nobody can see.
-  api.sendMessage(playerId, "Three Blessings are offered. Pick one — it costs a point:");
-  offer.forEach((draw, position) => api.sendMessage(playerId, offerLine(draw, position)));
   return true;
 }
 
@@ -1309,7 +1305,6 @@ function chooseBlessing(playerId, position) {
   const result = blessings().choose(key, level, position);
   if (!result) {
     refreshBlessingTiles(playerId);
-    api.sendMessage(playerId, "That choice is no longer offered. Open the shop again.");
     return false;
   }
   applyBlessing(playerId, result.blessing, result.rarity);
@@ -1535,8 +1530,9 @@ tick = () => {
 };
 
 onPlayerJoin = (playerId) => {
-  // Crafts custom: shards -> materials -> armors (12 sets, 72 recipes)
+  // Crafts custom: shards -> materials -> armors (12 sets, 72 recipes) + renames/descriptions
   try { registerCraftingRecipes(api, playerId); } catch(_){}
+  try { applyItemStats(api, playerId); } catch(_){}
   // The owner's respawn rule and the aura scale travel together: they are the same call.
   // The shop is re-registered per join: an item created while nobody was online is
   // not always offered to the first player who arrives, and replacing it is free.
