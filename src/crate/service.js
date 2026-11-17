@@ -141,8 +141,19 @@ export function tickCrateLocks(api) {
   if (activeCrates.size === 0) return;
   const now = nowMs(api);
   for (const [key, crate] of [...activeCrates.entries()]) {
+    // Ownership never expires for opening prevention; only the re-roll lock does.
+    // After lockUntil, allow re-roll (isChestLocked → false) but keep crateOwnerId
+    // so isChestOwnedByOther still blocks unpaid opening.
     if (now >= crate.lockUntil) {
-      clearCrateLock(api, [crate.x, crate.y, crate.z]);
+      activeCrates.delete(key);
+      // remove lock timer from BlockData but keep owner for strict barrier
+      try {
+        const data = api.getBlockData(crate.x, crate.y, crate.z);
+        if (data && typeof data === "object" && data.crateLockUntil) {
+          const { crateLockUntil, ...rest } = data;
+          try { api.setBlockData(crate.x, crate.y, crate.z, rest); } catch (_) {}
+        }
+      } catch (_) {}
       continue;
     }
     let pos = null;
@@ -150,7 +161,6 @@ export function tickCrateLocks(api) {
       pos = api.getPosition(crate.ownerId);
     } catch (_) { pos = null; }
     if (!pos || !Array.isArray(pos) || pos.length < 3) {
-      // owner offline or no position — keep lock until timeout (don't auto-clear on leave)
       continue;
     }
     const dx = pos[0] - (crate.x + 0.5);
@@ -158,7 +168,15 @@ export function tickCrateLocks(api) {
     const dz = pos[2] - (crate.z + 0.5);
     const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
     if (dist > CRATE_CLEAR_DISTANCE) {
-      clearCrateLock(api, [crate.x, crate.y, crate.z]);
+      // Owner walked away → early unlock for re-roll only, owner stays
+      activeCrates.delete(key);
+      try {
+        const d2 = api.getBlockData(crate.x, crate.y, crate.z);
+        if (d2 && typeof d2 === "object" && d2.crateLockUntil) {
+          const { crateLockUntil, ...rest2 } = d2;
+          try { api.setBlockData(crate.x, crate.y, crate.z, rest2); } catch (_) {}
+        }
+      } catch (_) {}
     }
   }
 }

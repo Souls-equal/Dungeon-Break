@@ -167,7 +167,7 @@ export function createDungeonService(options) {
     switchToDungeonVariation(playerId);
     const level = loader.levelState(difficulty, playerId);
     if (level.templates.length === 0) {
-      try { api.sendMessage(playerId, [cStr(difficulty.label, MSG_COLORS.gold), cStr(" — no rooms", MSG_COLORS.gray)]); } catch(_){}
+      try { api.sendMessage(playerId, [cStr(difficulty.label, MSG_COLORS.gold), cStr(" has no rooms yet", MSG_COLORS.gray)]); } catch(_){}
       return null;
     }
 
@@ -249,7 +249,7 @@ export function createDungeonService(options) {
               return;
             }
             api.setClientOptions(playerId, { gravityMultiplier: 1 });
-            try { api.sendMessage(playerId, [cStr("Build failed", MSG_COLORS.red)]); } catch(_){}
+            try { api.sendMessage(playerId, [cStr("Build failed — not loaded", MSG_COLORS.red)]); } catch(_){}
             leave(playerId);
             log(`entrance copy failed for ${playerId} on ${difficulty.label}`);
             return;
@@ -269,7 +269,7 @@ export function createDungeonService(options) {
               return;
             }
             api.setClientOptions(playerId, { gravityMultiplier: 1 });
-            try { api.sendMessage(playerId, [cStr("Build failed", MSG_COLORS.red)]); } catch(_){}
+            try { api.sendMessage(playerId, [cStr("Build failed — not loaded", MSG_COLORS.red)]); } catch(_){}
             leave(playerId);
             log(`entrance copy failed for ${playerId} on ${difficulty.label}`);
             return;
