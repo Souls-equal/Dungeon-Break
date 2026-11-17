@@ -1225,10 +1225,9 @@ test("a roll offers three blessings and reserves the point; the choice spends it
   // not in the chat, and the roll must not spam the chat.
   assert.equal(world.helperCards.length, 0, "a roll drew a card before a choice");
   assert.equal(world.middleTexts.length, 0);
-  // The roll **does** write to chat: it is the only place the offer is listed with its names,
-  // and a player who closes the shop still knows what was on the table.
-  assert.equal(said(world, "p1").filter((line) => typeof line === "string" && /Three Blessings are offered/.test(line)).length, 1);
-  assert.equal(said(world, "p1").filter((line) => typeof line === "string" && /^\d\. /.test(line)).length, 3);
+  // The roll must not write to chat while the shop is open (invisible).
+  assert.equal(said(world, "p1").filter((line) => typeof line === "string" && /Three Blessings are offered/.test(line)).length, 0);
+  assert.equal(said(world, "p1").filter((line) => typeof line === "string" && /^\d\. /.test(line)).length, 0);
 
   // The pick: one point, one message, one card, one banner — and the shop closes.
   const picked = offerTiles(world)[1];
@@ -1277,9 +1276,8 @@ test("a roll with no point left is refused, and the choice tile closes", () => {
   assert.equal(blessingTiles(world).get("Roll a Blessing").canBuy, false);
   world.context.onPlayerBoughtShopItem("p1", "Blessings", "Roll a Blessing", {}, "");
   assert.equal(world.helperCards.length, 1, "a roll was given without a point");
-  // A refused roll says why. The tile already shows it cannot be bought; a player who clicks
-  // anyway is told what to do about it rather than left wondering.
-  assert.equal(said(world, "p1").filter((line) => typeof line === "string" && /No Blessing point/.test(line)).length, 1);
+  // A refused roll must not spam chat while shop is open; tile shows canBuy false.
+  assert.equal(said(world, "p1").filter((line) => typeof line === "string" && /No Blessing point/.test(line)).length, 0);
 });
 
 test("a second roll while an offer is open shows the same three, and reserves nothing", () => {
