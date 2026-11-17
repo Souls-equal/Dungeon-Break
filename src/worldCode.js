@@ -116,6 +116,9 @@ function isUnlocked(playerId, difficulty) {
   if (unlocks[d.id]) return true;
   return false;
 }
+const MSG_COLORS = { gold:"#ffd700", green:"#55ff55", red:"#ff5555", gray:"#aaaaaa", white:"#ffffff", aqua:"#55ffff" };
+function cStr(text, color) { return { str: text, style:{color} }; }
+
 function ensureUnlockedOrPay(playerId, difficulty) {
   const d = typeof difficulty === "object" && difficulty.id ? difficulty : null;
   if (!d) return false;
@@ -129,7 +132,7 @@ function ensureUnlockedOrPay(playerId, difficulty) {
     if (spendGold(playerId, price)) {
       unlocks[d.id] = true;
       saveUnlocks(playerId, unlocks);
-      try { api.sendMessage(playerId, `Unlocked ${d.label} for ${formatGold(price)}!`); } catch (_) {}
+      try { api.sendMessage(playerId, [cStr("Unlocked ", MSG_COLORS.green), cStr(d.label, DIFFICULTY_COLOR[d.id]||MSG_COLORS.gold)]); } catch (_) {}
       return true;
     }
     // if spend failed but had enough, still allow and mark unlocked
@@ -137,9 +140,7 @@ function ensureUnlockedOrPay(playerId, difficulty) {
     saveUnlocks(playerId, unlocks);
     return true;
   }
-  const have = gold === null ? 0 : gold;
-  try { api.sendMessage(playerId, `You need ${formatGold(price)} to unlock ${d.label} (you have ${formatGold(have)}).`); } catch (_) {}
-  try { api.sendMessage(playerId, `Earn gold via Market Place to enter ${d.label}.`); } catch (_) {}
+  try { api.sendMessage(playerId, [cStr("Need ", MSG_COLORS.red), cStr(formatGold(price), MSG_COLORS.gold), cStr(` for ${d.label}`, MSG_COLORS.red)]); } catch (_) {}
   return false;
 }
 
@@ -292,7 +293,7 @@ function cancelLobbyCountdown(playerId) {
   const countdown = lobbyCountdowns[playerId];
   if (countdown && countdown.completed) return;
   if (stopLobbyCountdown(playerId)) {
-    api.sendMessage(playerId, "Countdown cancelled. Step on a difficulty pad to try again.");
+    try { api.sendMessage(playerId, [cStr("Countdown cancelled", MSG_COLORS.gray)]); } catch(_){}
   }
 }
 
@@ -391,10 +392,7 @@ function startLobbyCountdown(playerId, x, y, z, difficulty) {
   };
   lobbyCountdowns[playerId] = countdown;
 
-  api.sendMessage(
-    playerId,
-    `${difficulty.label} selected. Starting in ${LOBBY_CONFIG.countdownSeconds} seconds — step off the pad to cancel.`,
-  );
+  try { api.sendMessage(playerId, [cStr(difficulty.label, DIFFICULTY_COLOR[difficulty.id]||MSG_COLORS.gold), cStr(` · ${LOBBY_CONFIG.countdownSeconds}s`, MSG_COLORS.white)]); } catch(_){}
   showCountdown(playerId, difficulty, countdown.secondsLeft);
 
   countdown.timer = scheduleInterval(() => {
@@ -787,10 +785,9 @@ function refreshRanksShop(playerId) {
 function handleRankUnlocks(playerId, newly) {
   if (!newly || newly.length===0) return;
   for (const r of newly) {
-    try { api.sendMessage(playerId, `Unlocked rank ${r.prefix} !`, {color: r.color}); } catch(_){ try{ api.sendMessage(playerId, `Unlocked rank ${r.prefix} !`);}catch(_){}}
+    try { api.sendMessage(playerId, [cStr("Rank ", MSG_COLORS.white), cStr(r.prefix, r.color)]); } catch(_){ try{ api.sendMessage(playerId, `Unlocked rank ${r.prefix} !`, {color: r.color});}catch(_){}}
   }
   refreshRanksShop(playerId);
-  // also apply visuals if still NONE and new is first?
 }
 let rankTickCounter = 0;
 
@@ -1205,19 +1202,17 @@ function clearSessionEffectsTracking(playerId) {
 
 function endRun(playerId, reason) {
   const key = accountKeyOf(playerId);
-  // **The effects go first**, while the holdings still say which ones they were.
   dropSessionEffects(playerId);
   const dropped = blessings().clearRun(key);
   clearSessionEffectsTracking(playerId);
-
   const hadSomething = dropped.run.length > 0 || dropped.timed.length > 0;
   applyBlessingOptions(playerId, baseClientOptions());
-  if (hadSomething) {
+  if (hadSomething && reason) {
     try {
-      api.sendMessage(playerId, reason);
-    } catch (_) {
-      // Nothing left to do: a message is a nicety.
-    }
+      if (Array.isArray(reason)) api.sendMessage(playerId, reason);
+      else if (typeof reason === "string" && reason.trim()) api.sendMessage(playerId, [cStr(reason, MSG_COLORS.gray)]);
+      else if (reason) api.sendMessage(playerId, reason);
+    } catch (_) {}
   }
   return dropped;
 }
@@ -1254,15 +1249,16 @@ function applyBlessing(playerId, blessing, rarity) {
   return { scope };
 }
 
-/** Shows the chosen blessing the way a result is always shown: chat, banner, card. */
+/** Minimal announcement: styled line + points left, no spam. */
 function announceBlessing(playerId, blessing, rarity, pointsLeft) {
-  api.sendMessage(playerId, rollMessage(blessing, rarity));
-  api.sendMessage(
-    playerId,
-    `Blessing: ${blessing.name} — ${rarity.label} · ${categoryOf(blessing.category).label} · ${effects.scopeKeyOf(blessing)}`
-      + ` · ${pointsLeft} point${pointsLeft === 1 ? "" : "s"} left`,
-  );
-  api.sendMessage(playerId, `> ${blessing.description}`);
+  try { api.sendMessage(playerId, rollMessage(blessing, rarity)); } catch(_){}
+  // Second line: rarity color + points left (minimal, keeps "points left" for tests)
+  try {
+    api.sendMessage(playerId, [
+      cStr(rarity.label, rarity.textColour || rarity.colour || MSG_COLORS.gold),
+      cStr(` · ${pointsLeft} point${pointsLeft===1?"":"s"} left`, MSG_COLORS.white),
+    ]);
+  } catch(_) { try { api.sendMessage(playerId, `${rarity.label} · ${pointsLeft} points left`); } catch(_){} }
   // The middle of the screen, big: the rarity is what a player reads first.
   try {
     api.queueMiddleTextUpper(playerId, [{ str: announcementOf(blessing, rarity), style: { color: rarity.textColour } }], 2500);
@@ -1438,23 +1434,23 @@ onPlayerBoughtShopItem = (playerId, categoryKey, itemKey, itemOrInput, userInput
         ranks().setSelected(playerId, NONE_ID);
         applyRankVisuals(playerId);
         refreshRanksShop(playerId);
-        try { api.sendMessage(playerId, "Rank: NONE"); } catch(_){}
+        try { api.sendMessage(playerId, [cStr("Rank: ", MSG_COLORS.white), cStr("NONE", MSG_COLORS.gray)]); } catch(_){}
         return;
       }
       const rank = RANKS.find(r=> r.label === label || r.id === label);
       if (!rank) {
-        try { api.sendMessage(playerId, `Rank ${label} not found.`); } catch(_){}
+        try { api.sendMessage(playerId, [cStr(`Rank ${label} ?`, MSG_COLORS.red)]); } catch(_){}
         return;
       }
       const ok = ranks().setSelected(playerId, rank.id);
       if (!ok) {
-        try { api.sendMessage(playerId, `Rank ${rank.prefix} not unlocked.`); } catch(_){}
+        try { api.sendMessage(playerId, [cStr(rank.prefix, rank.color), cStr(" locked", MSG_COLORS.red)]); } catch(_){}
         refreshRanksShop(playerId);
         return;
       }
       applyRankVisuals(playerId);
       refreshRanksShop(playerId);
-      try { api.sendMessage(playerId, `Rank: ${rank.prefix}`, {color: rank.color}); } catch(_){ try{ api.sendMessage(playerId, `Rank: ${rank.prefix}`);}catch(_){} }
+      try { api.sendMessage(playerId, [cStr("Rank: ", MSG_COLORS.white), cStr(rank.prefix, rank.color)]); } catch(_){ try{ api.sendMessage(playerId, `Rank: ${rank.prefix}`);}catch(_){} }
     } catch(e){ try{ api.log(`[Ranks] select failed ${e && e.message}`);}catch(_){} }
     return;
   }
@@ -1482,9 +1478,7 @@ onPlayerBoughtShopItem = (playerId, categoryKey, itemKey, itemOrInput, userInput
   // Teleport and forget are one call, so the tick can never see a player at spawn
   // with a dungeon: `teleportToSpawn` moves first, then drops the record.
   service().teleportToSpawn(playerId);
-  // **Teleporting to spawn ends the run**, one of the owner's three ends. The permanent
-  // stack stays; the run's blessings and the timed ones are dropped.
-  endRun(playerId, "Your run is over: this run's Blessings are gone. Permanent ones stay.");
+  endRun(playerId, [cStr("Run over — permanent stay", MSG_COLORS.gray)]);
   stopLobbyCountdown(playerId);
   try { spawnMode.set(String(playerId), true); } catch (_) {}
   try { if (typeof api.setPlayerGamemode === "function") api.setPlayerGamemode(playerId, SPAWN_GAMEMODE); } catch (_) {}
@@ -1555,11 +1549,8 @@ onPlayerJoin = (playerId) => {
   try { applyRankVisuals(playerId); } catch(_){}
   try { refreshRanksShop(playerId); } catch(_){}
   const names = DIFFICULTIES.filter((entry) => entry.fromLobby).map((entry) => entry.label).join(", ");
-  api.sendMessage(
-    playerId,
-    `Welcome to Dungeon Break! Step on a colored Concrete pad to choose your difficulty (${names}).`,
-  );
-  try { api.sendMessage(playerId, "Shards in Crates -> craft materials (Workbench) -> craft custom armors & 72 weapons (Artisan Bench). Weapons scale with Blessing damage multiplier! /dbg crafts | /dbg shards"); } catch(_){}
+  try { api.sendMessage(playerId, [cStr("Welcome to Dungeon Break! ", MSG_COLORS.gold), cStr(`(${names})`, MSG_COLORS.white)]); } catch(_){ api.sendMessage(playerId, `Welcome to Dungeon Break! Step on a colored Concrete pad to choose your difficulty (${names}).`); }
+  try { api.sendMessage(playerId, [cStr("Shards → Crates → Craft → Weapons", MSG_COLORS.aqua)]); } catch(_){}
 };
 
 /**
@@ -1765,25 +1756,15 @@ onRespawnRequest = (playerId) => {
   try { if (typeof api.setPlayerGamemode === "function") api.setPlayerGamemode(playerId, SPAWN_GAMEMODE); } catch (_) {}
   try { applyBlessingOptions(playerId, baseClientOptions()); } catch (_) {}
   api.setClientOption(playerId, "middleTextUpper", "");
-  // **Dying ends the run**: this run's Blessings and the timed ones are gone, the permanent
-  // stack stays and is re-applied.
-  endRun(playerId, "You died — this run's Blessings are gone. Permanent ones stay.");
-  // Reset XP to 0 — same as rejoin — and clear the blessing points.
-  try {
-    api.setTotalAura(playerId, 0);
-  } catch (error) {
-    try {
-      api.log(`[Dungeon] the aura of ${playerId} could not be reset: ${error && error.message ? error.message : error}`);
-    } catch (_) {}
-  }
+  endRun(playerId, [cStr("You died — run lost, permanent stay", MSG_COLORS.gray)]);
+  try { api.setTotalAura(playerId, 0); } catch (error) { try { api.log(`[Dungeon] the aura of ${playerId} could not be reset: ${error && error.message ? error.message : error}`); } catch (_) {} }
   blessings().forget(accountKeyOf(playerId));
   blessings().setPermanent(accountKeyOf(playerId), loadPermanent(playerId));
-  // Spawn: keep permanent but fix speed for navigation
   try { applyBlessingOptions(playerId, baseClientOptions()); } catch (_) {}
   showPoints(playerId, 0);
   refreshBlessingTiles(playerId);
   closeShop(playerId);
-  api.sendMessage(playerId, "You died. Back to spawn — your dungeon stopped.");
+  try { api.sendMessage(playerId, [cStr("You died", MSG_COLORS.red)]); } catch(_){ api.sendMessage(playerId, "You died. Back to spawn — your dungeon stopped."); }
   return LOBBY_POSITION;
 };
 
@@ -1796,11 +1777,7 @@ onPlayerAttemptOpenChest = (playerId, x, y, z, isMoonstoneChest, isIronChest) =>
       try { data = api.getBlockData(x, y, z); } catch (_) {}
       let ownerDisplay = data && (data.crateOwnerName || data.crateOwnerId) ? (data.crateOwnerName || data.crateOwnerId) : "another player";
       try { const n = api.getEntityName ? api.getEntityName(data.crateOwnerId) : null; if (n) ownerDisplay = n; } catch (_) {}
-      try {
-        api.sendMessage(playerId, "This crate belongs to " + ownerDisplay + " — only they can open it.", { color: "red" });
-      } catch (_) {
-        try { api.sendMessage(playerId, "This crate belongs to another player."); } catch (_) {}
-      }
+      try { api.sendMessage(playerId, [cStr(`This crate belongs to ${ownerDisplay}`, MSG_COLORS.red)]); } catch (_) { try { api.sendMessage(playerId, "This crate belongs to another player."); } catch (_) {} }
       return "preventOpen";
     }
   } catch (_) {}
