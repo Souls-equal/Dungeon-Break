@@ -78,6 +78,45 @@ function validate(code) {
         throw new Error(`Item given by the code is not in the game's item list: ${item}`);
       }
     }
+    // Validate crafting results and ingredients if available
+    try {
+      const craftPath = path.join(ROOT, "src", "crafting", "config.js");
+      if (fs.existsSync(craftPath)) {
+        const craftSrc = fs.readFileSync(craftPath, "utf8");
+        const re = /\"([A-Za-z0-9 \-]+)\"/g;
+        // Collect quoted strings that look like item names (heuristic: contain space or known suffix)
+        // Instead just ensure all quoted strings that are in our known sets are validated when they appear as result/requires
+        // For now validate that every result item in CRAFTS is known
+        const resultRe = /result:\s*\"([^\"]+)\"/g;
+        let m;
+        while ((m = resultRe.exec(craftSrc)) !== null) {
+          const name = m[1];
+          if (!itemNames.has(name)) throw new Error(`Crafted item not in game's item list: ${name}`);
+        }
+        const requiresRe = /items:\s*\[([^\]]+)\]/g;
+        while ((m = requiresRe.exec(craftSrc)) !== null) {
+          const inner = m[1];
+          const itemRe = /\"([^\"]+)\"/g;
+          let im;
+          while ((im = itemRe.exec(inner)) !== null) {
+            const name = im[1];
+            if (!itemNames.has(name)) throw new Error(`Craft ingredient not in game's item list: ${name}`);
+          }
+        }
+        // Validate crate loot table items
+        const cratePath = path.join(ROOT, "src", "crate", "config.js");
+        if (fs.existsSync(cratePath)) {
+          const crateSrc = fs.readFileSync(cratePath, "utf8");
+          const crateItemRe = /name:\s*\"([^\"]+)\"/g;
+          while ((m = crateItemRe.exec(crateSrc)) !== null) {
+            const name = m[1];
+            if (!itemNames.has(name)) throw new Error(`Crate loot item not in game's item list: ${name}`);
+          }
+        }
+      }
+    } catch (e) {
+      if (e && e.message && e.message.includes("not in game's item list")) throw e;
+    }
   }
 
   // The one call the whole generator is built on. A bundle without it is a bundle

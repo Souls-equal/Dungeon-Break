@@ -47,6 +47,11 @@ export const LOOT_TABLE = {
     { name: "Wood Gauntlets", amount: 1, weight: 4 },
     { name: "Wood Leggings", amount: 1, weight: 3 },
     { name: "Wood Boots", amount: 1, weight: 4 },
+
+    // Shards — Tier 1 (Common): surtout Amethite/Magmasteel/Rubellite
+    { name: "Amethite Fragment", min: 1, max: 3, weight: 22 },
+    { name: "Magmasteel Fragment", min: 1, max: 2, weight: 12 },
+    { name: "Rubellite Fragment", min: 1, max: 2, weight: 8 },
   ],
 
   Uncommon: [
@@ -69,6 +74,14 @@ export const LOOT_TABLE = {
     { name: "Iron Gauntlets", amount: 1, weight: 4 },
     { name: "Iron Leggings", amount: 1, weight: 3 },
     { name: "Iron Boots", amount: 1, weight: 4 },
+
+    // Shards — Tier 1+2
+    { name: "Amethite Fragment", min: 1, max: 3, weight: 14 },
+    { name: "Magmasteel Fragment", min: 1, max: 3, weight: 16 },
+    { name: "Rubellite Fragment", min: 1, max: 3, weight: 14 },
+    { name: "Serpentite Fragment", min: 1, max: 2, weight: 10 },
+    { name: "Sanguine Shard", min: 1, max: 2, weight: 4 },
+    { name: "Spectral Shard", min: 1, max: 2, weight: 4 },
   ],
 
   Rare: [
@@ -85,6 +98,15 @@ export const LOOT_TABLE = {
     { name: "Gold Gauntlets", amount: 1, weight: 4 },
     { name: "Gold Leggings", amount: 1, weight: 3 },
     { name: "Gold Boots", amount: 1, weight: 4 },
+
+    // Shards — Tier 2-3
+    { name: "Magmasteel Fragment", min: 1, max: 3, weight: 8 },
+    { name: "Rubellite Fragment", min: 1, max: 3, weight: 12 },
+    { name: "Serpentite Fragment", min: 1, max: 3, weight: 16 },
+    { name: "Sanguine Shard", min: 1, max: 3, weight: 10 },
+    { name: "Spectral Shard", min: 1, max: 3, weight: 10 },
+    { name: "Geo Shard", min: 1, max: 2, weight: 8 },
+    { name: "Voltite Dust", min: 1, max: 2, weight: 6 },
   ],
 
   Epic: [
@@ -101,6 +123,16 @@ export const LOOT_TABLE = {
     { name: "Diamond Gauntlets", amount: 1, weight: 4 },
     { name: "Diamond Leggings", amount: 1, weight: 3 },
     { name: "Diamond Boots", amount: 1, weight: 4 },
+
+    // Shards — Tier 3-4
+    { name: "Serpentite Fragment", min: 1, max: 3, weight: 6 },
+    { name: "Sanguine Shard", min: 1, max: 3, weight: 12 },
+    { name: "Spectral Shard", min: 1, max: 3, weight: 12 },
+    { name: "Geo Shard", min: 1, max: 3, weight: 10 },
+    { name: "Astral Shard", min: 1, max: 2, weight: 8 },
+    { name: "Voltite Dust", min: 1, max: 3, weight: 8 },
+    { name: "Comet Shard", min: 1, max: 2, weight: 6 },
+    { name: "Raw Voltite", min: 1, max: 2, weight: 4 },
   ],
 
   Legendary: [
@@ -117,5 +149,15 @@ export const LOOT_TABLE = {
     { name: "Diamond Chestplate", amount: 1, weight: 2 },
     { name: "Diamond Gauntlets", amount: 1, weight: 4 },
     { name: "Diamond Leggings", amount: 1, weight: 3 },
-    { name: "Diamond Boots", amount: 1, weight: 4 },  ],
+    { name: "Diamond Boots", amount: 1, weight: 4 },
+    // Shards — Tier 4 (endgame)
+    { name: "Sanguine Shard", min: 1, max: 3, weight: 10 },
+    { name: "Spectral Shard", min: 1, max: 3, weight: 10 },
+    { name: "Geo Shard", min: 1, max: 3, weight: 12 },
+    { name: "Astral Shard", min: 1, max: 3, weight: 14 },
+    { name: "Comet Shard", min: 1, max: 3, weight: 8 },
+    { name: "Voltite Dust", min: 1, max: 3, weight: 10 },
+    { name: "Raw Voltite", min: 1, max: 2, weight: 6 },
+    { name: "Star Alloy", min: 1, max: 2, weight: 4 },
+  ],
 };

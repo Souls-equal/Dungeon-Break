@@ -48,6 +48,8 @@ import { RANKS, NONE_RANK_ID, getRank } from "./ranks/config.js";
 import { createRanksService, NONE_ID } from "./ranks/service.js";
 import { DIFFICULTY_COLOR, CRATE_COLOR, PRESETS } from "./particles/config.js";
 import { spawn as spawnParticles } from "./particles/service.js";
+import { CRAFTS, ARMOR_SETS, SHARD_TO_MATERIAL } from "./crafting/config.js";
+import { registerCraftingRecipes } from "./crafting/service.js";
 // expose presets for service helpers (avoid circular)
 globalThis.__PARTICLE_PRESETS = { PRESETS };
 
@@ -454,6 +456,8 @@ const DEBUG_COMMANDS = {
   level: ["level", "dungeon", "dgn"],
   chests: ["chests", "chest", "loot", "keys"],
   blessings: ["blessings", "blessing", "rolls"],
+  crafts: ["crafts", "craft", "recipes", "recipe"],
+  shards: ["shards", "shard", "materials", "mats"],
 };
 
 function debugSay(playerId, message) {
@@ -526,6 +530,26 @@ function runDebugCommand(playerId, verb) {
     debugSay(playerId, `[dbg] session ${key} · last ${account.history.length} picked:`
       + (account.history.length > 0 ? ` ${account.history.map((entry) => `${entry.name} (${entry.rarity})`).join(", ")}` : " none"));
     debugSay(playerId, `[dbg] odds ${oddsOfTable()}`);
+    return;
+  }
+  if (verb === "crafts") {
+    debugSay(playerId, `[dbg] crafts: ${CRAFTS.length} recipes registered (shards -> materials -> armors)`);
+    for (const set of ARMOR_SETS) {
+      debugSay(playerId, `[dbg] ${set.label} — mat: ${set.material} from ${set.shard} (tier ${set.tier})`);
+    }
+    debugSay(playerId, `[dbg] Workbench: Amethite/Magmasteel/Rubellite/Serpentite (4 frag -> 1 ingot) + armor`);
+    debugSay(playerId, `[dbg] Artisan Bench: Cursemetal/Kingly/Sanguine/Spectral/Geo/Astral/Voltplate`);
+    debugSay(playerId, `[dbg] Example: 4 Amethite Fragment -> 1 Amethite | 5 Amethite+2 Iron Bar -> Amethite Helmet`);
+    return;
+  }
+  if (verb === "shards") {
+    debugSay(playerId, `[dbg] shards in Crates -> materials -> armors`);
+    for (const [shard, mat] of Object.entries(SHARD_TO_MATERIAL)) {
+      debugSay(playerId, `[dbg] ${shard} -> ${mat}`);
+    }
+    debugSay(playerId, `[dbg] Common crates: Amethite/Magmasteel/Rubellite | Uncommon: +Serpentite/Sanguine/Spectral`);
+    debugSay(playerId, `[dbg] Rare: +Geo/Voltite | Epic: +Astral/Comet/Raw Voltite | Legendary: Astral/Geo/Sanguine/Spectral`);
+    debugSay(playerId, `[dbg] Open crates with keys from dungeon chests: Wooden->Common ... Diamond->Legendary`);
     return;
   }
   const report = service().reportOf(playerId);
@@ -1497,6 +1521,8 @@ tick = () => {
 };
 
 onPlayerJoin = (playerId) => {
+  // Crafts custom: shards -> materials -> armors (12 sets, 72 recipes)
+  try { registerCraftingRecipes(api, playerId); } catch(_){}
   // The owner's respawn rule and the aura scale travel together: they are the same call.
   // The shop is re-registered per join: an item created while nobody was online is
   // not always offered to the first player who arrives, and replacing it is free.
@@ -1519,6 +1545,7 @@ onPlayerJoin = (playerId) => {
     playerId,
     `Welcome to Dungeon Break! Step on a colored Concrete pad to choose your difficulty (${names}).`,
   );
+  try { api.sendMessage(playerId, "Shards in Crates -> craft materials (Workbench) -> craft custom armors (Artisan Bench). /dbg crafts | /dbg shards"); } catch(_){}
 };
 
 /**

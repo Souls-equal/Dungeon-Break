@@ -7,7 +7,7 @@
   "scripts": {
     "build": "node tools/build-world-code.mjs",
     "watch": "node tools/build-world-code.mjs --watch",
-    "check": "node tools/build-world-code.mjs --check && node --check src/worldCode.js && node --check src/utils/scheduler.js && node --check src/dungeon/config.js && node --check src/dungeon/templates.js && node --check src/dungeon/loader.js && node --check src/dungeon/service.js && node --check src/blessing/config.js && node --check src/blessing/service.js && node --check src/blessing/effects.js && node --check src/blessing/presentation.js && node --check world-code/worldCode.js",
+    "check": "node tools/build-world-code.mjs --check && node --check src/worldCode.js && node --check src/utils/scheduler.js && node --check src/dungeon/config.js && node --check src/dungeon/templates.js && node --check src/dungeon/loader.js && node --check src/dungeon/service.js && node --check src/blessing/config.js && node --check src/blessing/service.js && node --check src/blessing/effects.js && node --check src/blessing/presentation.js && node --check src/crate/config.js && node --check src/crate/service.js && node --check src/crafting/config.js && node --check src/crafting/service.js && node --check world-code/worldCode.js",
     "test": "node --test"
   },
   "devDependencies": {
