@@ -18,6 +18,7 @@ import { chestOfClick, drawChestKey, openChest } from "./loot.js";
 import { keyItemName } from "./reward.js";
 import {
   DUNGEON_CONFIG,
+  DUNGEON_VARIATION,
   findDifficulty,
   floorOfLayer,
   nextDifficulty,
@@ -141,6 +142,20 @@ export function createDungeonService(options) {
     return false;
   }
 
+  /**
+   * Variation — seulement à l'aller.
+   * En custom game, passer de `default` (lobby) à `dungeon`.
+   * En world ou si l'API manque, échoue silencieusement.
+   */
+  function switchToDungeonVariation(playerId) {
+    try {
+      if (typeof api.getVariation !== "function" || typeof api.matchmakeToVariation !== "function") return;
+      const current = api.getVariation();
+      if (current !== "default") return; // déjà dans le donjon
+      api.matchmakeToVariation(playerId, DUNGEON_VARIATION);
+    } catch (_) {}
+  }
+
   function enterDifficulty(playerId, difficultyReference, onReady) {
     const difficulty = findDifficulty(difficultyReference);
     if (!difficulty) {
@@ -148,6 +163,8 @@ export function createDungeonService(options) {
       return null;
     }
     if (!gateDifficulty(playerId, difficulty)) return null;
+    // changer de variation seulement à l'aller (pas au retour spawn)
+    switchToDungeonVariation(playerId);
     const level = loader.levelState(difficulty, playerId);
     if (level.templates.length === 0) {
       api.sendMessage(playerId, `${difficulty.label} has no rooms yet. ${DUNGEON_CONFIG.missingTemplatesMessage}`);
