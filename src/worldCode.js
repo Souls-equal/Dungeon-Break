@@ -980,24 +980,55 @@ function logShopFailure(itemKey, error) {
  * (respawn, aura scale) and the engine's defaults for health, speed, damage. Each layer is
  * computed by `effects.js`, which is pure, so the sum is testable without a game.
  */
+const blessingDamageCache = new Map(); // playerId -> { dealing, receiving }
+
+function refreshDamageCache(playerId, options) {
+  try {
+    blessingDamageCache.set(String(playerId), {
+      dealing: Number.isFinite(options.dealingDamageMultiplier) ? options.dealingDamageMultiplier : 1,
+      receiving: Number.isFinite(options.receivingDamageMultiplier) ? options.receivingDamageMultiplier : 1,
+    });
+  } catch (_) {}
+}
+
+function dealingMultiplierOf(playerId) {
+  const cached = blessingDamageCache.get(String(playerId));
+  if (cached && Number.isFinite(cached.dealing)) return cached.dealing;
+  try {
+    const key = accountKeyOf(playerId);
+    const opts = effects.optionsFrom(blessings().permanentOf(key), blessings().runOf(key), {});
+    return Number.isFinite(opts.dealingDamageMultiplier) ? opts.dealingDamageMultiplier : 1;
+  } catch (_) { return 1; }
+}
+function receivingMultiplierOf(playerId) {
+  const cached = blessingDamageCache.get(String(playerId));
+  if (cached && Number.isFinite(cached.receiving)) return cached.receiving;
+  try {
+    const key = accountKeyOf(playerId);
+    const opts = effects.optionsFrom(blessings().permanentOf(key), blessings().runOf(key), {});
+    return Number.isFinite(opts.receivingDamageMultiplier) ? opts.receivingDamageMultiplier : 1;
+  } catch (_) { return 1; }
+}
+
 function applyBlessingOptions(playerId, base = {}) {
   const key = accountKeyOf(playerId);
   // In spawn, only permanent stack applies (run/timed disabled for navigation, no slowdown)
   if (spawnMode.get(String(playerId)) === true) {
     const spawnOpts = effects.optionsFrom(blessings().permanentOf(key), [], base);
     try { api.setClientOptions(playerId, spawnOpts); } catch (_) {}
+    refreshDamageCache(playerId, spawnOpts);
     return spawnOpts;
   }
   const options = effects.optionsFrom(blessings().permanentOf(key), blessings().runOf(key), base);
   try {
     api.setClientOptions(playerId, options);
-    return options;
   } catch (error) {
     try {
       api.log(`[Dungeon] blessing options could not be applied for ${playerId}: ${error && error.message ? error.message : error}`);
     } catch (_) {}
-    return options;
   }
+  refreshDamageCache(playerId, options);
+  return options;
 }
 
 /**
@@ -1536,6 +1567,7 @@ onPlayerLeave = (playerId) => {
   try { dropSessionEffects(playerId); } catch (_) {}
   clearSessionEffectsTracking(playerId);
   blessings().forget(accountKeyOf(playerId));
+  try { blessingDamageCache.delete(String(playerId)); } catch (_) {}
   // Clear per-player shop overrides so no tiles linger for a disconnected player.
   for (const key of CHOICE_KEYS) {
     try {
@@ -1633,6 +1665,39 @@ onMobDespawned = (mobId) => {
 // Empêche tout PvP dans tout le jeu — demandé explicitement
 onPlayerDamagingOtherPlayer = (attackingPlayer, damagedPlayer, damageDealt, withItem, bodyPartHit, damagerDbId, damageInfo) => {
   return "preventDamage";
+};
+
+// Les dégâts doivent être affectés par le multiplicateur de dégâts (blessings)
+onPlayerDamagingMob = (playerId, mobId, damageDealt, ...rest) => {
+  try {
+    // signatures variées: (playerId, mobId, damageDealt) ou (playerId, mobId, damageDealt, withItem, ...)
+    const dmg = Number(damageDealt);
+    if (!Number.isFinite(dmg)) return;
+    const mult = dealingMultiplierOf(playerId);
+    if (!Number.isFinite(mult) || mult === 1) return;
+    const scaled = dmg * mult;
+    // éviter de casser le test qui vérifie que l’attaque passe: on retourne le nouveau montant
+    return scaled;
+  } catch (_) {}
+};
+
+onMobDamagingPlayer = (mobId, playerId, damageDealt, ...rest) => {
+  try {
+    // signature: (mobId, playerId, damageDealt) — parfois (attackingMob, killedPlayer, damageDealt)
+    // on normalise: le playerId est le 2e arg qui ressemble à un playerId
+    let pid = playerId;
+    let dmg = damageDealt;
+    // si l’API envoie (mobId, playerId, damageDealt) on est bon, sinon fallback
+    if (!Number.isFinite(Number(dmg)) && Number.isFinite(Number(playerId))) {
+      // cas (mobId, damageDealt) rare
+      dmg = Number(playerId);
+      pid = mobId;
+    }
+    if (!Number.isFinite(Number(dmg))) return;
+    const mult = receivingMultiplierOf(pid);
+    if (!Number.isFinite(mult) || mult === 1) return;
+    return Number(dmg) * mult;
+  } catch (_) {}
 };
 
 /**
