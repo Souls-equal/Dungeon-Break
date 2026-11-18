@@ -304,9 +304,9 @@ function cancelLobbyCountdown(playerId) {
 }
 
 /**
- * Variation — seulement à l'aller.
- * En custom game on passe de "default" (lobby) à `DUNGEON_VARIATION`.
- * En world l'API n'existe pas → silent fail.
+ * Variation — only on entry.
+ * In custom game switch from "default" (lobby) to `DUNGEON_VARIATION`.
+ * In world API does not exist → silent fail.
  */
 function switchToDungeonVariation(playerId) {
   try {
@@ -321,7 +321,7 @@ function completeLobbyCountdown(playerId, countdown) {
   if (lobbyCountdowns[playerId] !== countdown) return;
   countdown.completed = true;
   stopLobbyCountdown(playerId);
-  // vortex au pad avant téléport
+  // vortex at pad before teleport
   try {
     const col = DIFFICULTY_COLOR[countdown.difficulty.id] || "#FFD700";
     const pad = Object.keys(countdown.activePads)[0];
@@ -331,7 +331,7 @@ function completeLobbyCountdown(playerId, countdown) {
     }
   } catch(_){}
   const entered = service().enterDifficulty(playerId, countdown.difficulty, (diff, landing)=>{
-    // vortex à l’atterrissage
+    // vortex at landing
     try {
       const col = DIFFICULTY_COLOR[diff.id] || "#FFD700";
       spawnParticles(api, landing, PRESETS.entryVortex(col), { radius: 0.6, height: 3.5 });
@@ -562,8 +562,8 @@ function runDebugCommand(playerId, verb) {
     }
     debugSay(playerId, `[dbg] Workbench: Amethite/Magmasteel/Rubellite/Serpentite (4 frag -> 1 ingot) + armor + weapons`);
     debugSay(playerId, `[dbg] Artisan Bench: Cursemetal/Kingly/Sanguine/Spectral/Geo/Astral/Voltplate + weapons`);
-    debugSay(playerId, `[dbg] Example: 4 Amethite Fragment -> 1 Amethite | 2 Amethite+1 Stick -> Amethite Sword (dmg auto-scaled + capacité élémentaire) | 5 Amethite+2 Iron Bar -> Amethite Helmet`);
-    debugSay(playerId, `[dbg] Weapons: dégâts auto-mis à jour (base × dealingMultiplier) + capacités élémentaires par set (Amethite éclat, Magmasteel brûlure, Sanguine vol de vie...)`);
+    debugSay(playerId, `[dbg] Example: 4 Amethite Fragment -> 1 Amethite | 2 Amethite+1 Stick -> Amethite Sword (dmg auto-scaled + elemental ability) | 5 Amethite+2 Iron Bar -> Amethite Helmet`);
+    debugSay(playerId, `[dbg] Weapons: damage auto-updated (base x dealingMultiplier) + elemental abilities per set (Amethite burst, Magmasteel burn, Sanguine lifesteal...)`);
     return;
   }
   if (verb === "shards") {
@@ -1735,7 +1735,7 @@ onPlayerKilledMob = (playerId, mobId) => {
       api.log(`[Dungeon] mob kill failed: ${error && error.message ? error.message : error}`);
     } catch (_) {}
   }
-  //Capacités armes à la mort (PvE) — Rubellite stack, Spectral vacuum, Geo mines, Astral glowing
+  // Weapon abilities on kill (PvE) — Rubellite stack, Spectral vacuum, Geo mines, Astral glowing
   try { onMobKilled(api, playerId, mobId); } catch (_) {}
   try {
     const newly = ranks().recordKill(playerId);
@@ -1757,18 +1757,18 @@ onMobDespawned = (mobId) => {
   }
 };
 
-// Empêche tout PvP dans tout le jeu — demandé explicitement
+// Prevent all PvP in the game — explicitly requested
 onPlayerDamagingOtherPlayer = (attackingPlayer, damagedPlayer, damageDealt, withItem, bodyPartHit, damagerDbId, damageInfo) => {
   return "preventDamage";
 };
 
-// Les dégâts doivent être affectés par le multiplicateur de dégâts (blessings)
-// Pour les armes custom, le dégât effectif est déjà dans le stat `damage` (refreshWeaponStats),
-// donc on n'applique pas 2× le multiplicateur. On ajoute seulement les procs élémentaires.
+// Damage must be affected by damage multiplier (blessings)
+// For custom weapons, effective damage is already in `damage` stat (refreshWeaponStats),
+// so we don't apply 2x multiplier. Only add elemental procs.
 onPlayerDamagingMob = (playerId, mobId, damageDealt, ...rest) => {
   let baseDmg = Number(damageDealt);
   const hasBase = Number.isFinite(baseDmg);
-  // Détection arme custom: si le joueur tient une arme de nos sets, le damage stat est déjà effectif
+  // Custom weapon detection: if player holds one of our sets, damage stat is already effective
   let isCustomWeapon = false;
   try {
     let heldName = null;
@@ -1793,10 +1793,10 @@ onPlayerDamagingMob = (playerId, mobId, damageDealt, ...rest) => {
       if (Number.isFinite(mult) && mult !== 1) scaled = baseDmg * mult;
     } catch (_) {}
   } else if (hasBase) {
-    scaled = baseDmg; // déjà effectif via setItemStat, on garde tel quel
+    scaled = baseDmg; // already effective via setItemStat, keep as is
   }
 
-  // Effet visuel + capacité élémentaire (PVE only) — rend l'extraDamage du proc
+  // Visual effect + elemental ability (PVE only) — returns proc extraDamage
   let extra = 0;
   let visualResult = null;
   try {
@@ -1900,7 +1900,7 @@ globalThis.LOOT_TABLE = LOOT_TABLE;
 getWeightedRandomItem = (rarity) => crateGetWeightedRandomItem(rarity);
 hasKey = (playerId, rarity) => crateHasKey(api, playerId, rarity);
 consumeKey = (playerId, rarity) => crateConsumeKey(api, playerId, rarity);
-// Safe chest empty — works même sur coffre trop rempli (36 slots, chunked 6/tick évite Argument too large)
+// Safe chest empty — works even on overfilled chest (36 slots, chunked 6/tick avoids Argument too large)
 emptyChest = (...args) => {
   try {
     let chestPos = null;

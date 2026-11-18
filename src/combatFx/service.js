@@ -1,8 +1,8 @@
 /**
- * combatFx/service.js — hooks visuels armes/armures
+ * combatFx/service.js — visual hooks for weapons/armor
  * - parse heldItem / armor slots → type/set
- * - compteurs de coups → proc tous les X (visuel)
- * - spawn particules + flying message (pas de middleText)
+ * - hit counters → proc every X (visual)
+ * - spawn particles + flying message (no middleText)
  */
 import {
   WEAPON_TYPES,
@@ -17,9 +17,9 @@ import { spawn as spawnParticles, weaponFx, weaponProcFx, armorFx, armorShimmer 
 import { handleHit } from "../weapons/service.js";
 import { weaponBaseDamage } from "../weapons/config.js";
 
-// Compteurs: playerId -> { weaponHits: Map<type,count>, armorHits: count, lastProcTick, lastArmorProcTick }
+// Counters: playerId -> { weaponHits: Map<type,count>, armorHits: count, lastProcTick, lastArmorProcTick }
 const hitCounters = new Map();
-const COOLDOWN_TICKS = 2; // anti-spam visuel si le moteur envoie 2 events par hit
+const COOLDOWN_TICKS = 2; // visual anti-spam if engine sends 2 events per hit
 
 function countersFor(playerId) {
   const k = String(playerId);
@@ -34,20 +34,22 @@ function countersFor(playerId) {
 // ── parsing ───────────────────────────────────────────────────────────
 export function parseWeaponInfo(itemName) {
   if (!itemName || typeof itemName !== "string") return null;
-  const parts = String(itemName).trim().split(/\s+/);
+  const clean = String(itemName).split("|")[0].trim();
+  const parts = clean.split(/\s+/);
   if (parts.length < 2) return null;
   const type = parts[parts.length - 1];
   if (!WEAPON_TYPES.includes(type)) return null;
   const setName = parts.slice(0, -1).join(" ");
   if (!WEAPON_SETS_FX[setName]) return null;
-  return { type, setName, full: itemName };
+  return { type, setName, full: clean };
 }
 
 export function parseArmorSet(itemName) {
   if (!itemName || typeof itemName !== "string") return null;
+  const clean = String(itemName).split("|")[0].trim();
   const names = Object.keys(ARMOR_SETS_FX).sort((a,b)=> b.length - a.length);
   for (const setName of names) {
-    if (String(itemName).startsWith(setName + " ")) return setName;
+    if (clean.startsWith(setName + " ")) return setName;
   }
   return null;
 }
@@ -81,7 +83,10 @@ export function getHeldWeaponInfo(api, playerId) {
   try {
     if (typeof api.getHeldItem === "function") {
       const held = api.getHeldItem(playerId);
-      if (held && held.name) return parseWeaponInfo(held.name);
+      if (held && held.name) {
+        const info = parseWeaponInfo(held.name);
+        if (info) return info;
+      }
     }
   } catch (_) {}
   try {
@@ -89,7 +94,10 @@ export function getHeldWeaponInfo(api, playerId) {
       const idx = api.getSelectedInventorySlotI(playerId);
       if (Number.isFinite(idx) && idx >= 0 && idx < 10) {
         const it = api.getItemSlot(playerId, idx);
-        if (it && it.name) return parseWeaponInfo(it.name);
+        if (it && it.name) {
+          const info = parseWeaponInfo(it.name);
+          if (info) return info;
+        }
       }
     }
   } catch (_) {}
@@ -117,7 +125,7 @@ function posOf(api, playerId, fallback) {
   return fallback || [0,0,0];
 }
 
-// ── weapon hit — appelé depuis onPlayerDamagingMob ─────────────────
+// ── weapon hit — called from onPlayerDamagingMob ─────────────────
 export function onWeaponHit(api, playerId, opts = {}) {
   if (!api || !playerId) return null;
   const info = getHeldWeaponInfo(api, playerId);
@@ -135,7 +143,7 @@ export function onWeaponHit(api, playerId, opts = {}) {
   const playerPos = opts.pos || posOf(api, playerId);
   try { weaponFx(api, playerPos, type, color, tierScale); } catch (_) {}
 
-  // capacité élémentaire réelle (PvE) — à chaque coup, pas seulement proc visuel
+  // real elemental ability (PvE) — every hit, not only visual proc
   let abilityResult = null;
   try {
     const base = weaponBaseDamage(info.full) ?? opts.baseDamage ?? 0;
@@ -150,7 +158,7 @@ export function onWeaponHit(api, playerId, opts = {}) {
     });
   } catch (_) {}
 
-  // visuel proc tous les X coups (indépendant de l'ability)
+  // visual proc every X hits (independent of ability)
   const every = fxCfg.every;
   const isProc = (count % every === 0);
   if (!isProc) return { type, setName, count, proc: false, ability: abilityResult };
@@ -161,14 +169,10 @@ export function onWeaponHit(api, playerId, opts = {}) {
 
   try { weaponProcFx(api, playerPos, type, color, tierScale); } catch (_) {}
 
-  // Pas de queueMiddleTextUpper — seulement flying si nécessaire, déjà géré par handleHit
-  // On garde un petit flying générique seulement si l'ability n'a rien affiché et que c'est un proc visuel pur
-  // Pour éviter spam, on ne fait rien ici — l'ability gère ses propres flying messages
-
   return { type, setName, count, proc: true, color, tierScale, label: fxCfg.label, ability: abilityResult };
 }
 
-// ── armor hit — appelé depuis onMobDamagingPlayer ───────────────────
+// ── armor hit — called from onMobDamagingPlayer ───────────────────
 export function onArmorHit(api, playerId, opts = {}) {
   if (!api || !playerId) return null;
   const armor = getEquippedArmorSet(api, playerId);
@@ -196,7 +200,6 @@ export function onArmorHit(api, playerId, opts = {}) {
   ctr.lastArmorProcTick = globalTick;
 
   try { armorFx(api, playerPos2, color, tierScale); } catch (_) {}
-  // Pas de queueMiddleTextUpper — flying discret
   try {
     if (typeof api.sendFlyingMiddleMessage === "function") {
       api.sendFlyingMiddleMessage(playerId, [{ str: "Guard! ", style:{color} }, { icon: "HealthShield" }], 50, 600);
@@ -205,7 +208,7 @@ export function onArmorHit(api, playerId, opts = {}) {
   return { setName, count, proc: true, color, tierScale };
 }
 
-// ── passif: shimmer d'aura pour full set ─
+// ── passive: aura shimmer for full set ─
 export function tickArmorShimmer(api) {
   if (!api || typeof api.getPlayerIds !== "function") return;
   let ids = [];

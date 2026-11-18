@@ -1,7 +1,7 @@
 /**
- * Particles presets — centralisé, minimal
- * Couleurs = hex pour gradients Bloxd (via RGB 0-255)
- * Formes: ring, vortex, burst, fountain
+ * Particle presets — centralized, minimal
+ * Colors as hex for Bloxd gradients (via RGB 0-255)
+ * Shapes: ring, vortex, burst, fountain
  */
 
 function hexToRgb(hex) {
@@ -17,7 +17,7 @@ export const PARTICLE_TEXTURES = {
   magic: "magic",
 };
 
-// Couleurs difficultés → padBlock mapping
+// Difficulty colors → pad block mapping
 export const DIFFICULTY_COLOR = {
   veryEasy: "#7CFC00", // Lime
   easy: "#87CEEB", // Light Blue
@@ -25,8 +25,8 @@ export const DIFFICULTY_COLOR = {
   normal: "#FF8C00", // Orange
   hard: "#FF3B30", // Red
   insane: "#9B59B6", // Purple
-  nightmare: "#7D3C98", // Gray -> violet dark
-  hell: "#111111", // Black -> dark red glow
+  nightmare: "#7D3C98", // Dark violet
+  hell: "#111111", // Black with dark red glow
 };
 
 export const CRATE_COLOR = {
@@ -37,37 +37,37 @@ export const CRATE_COLOR = {
   Legendary: "#F1C40F",
 };
 
-// Couleurs armes — une par set (visible au slash)
+// Weapon colors — one per set (visible on slash)
 export const WEAPON_SET_COLOR = {
-  Amethite: "#9B59B6",   // violet cristal
-  Magmasteel: "#E74C3C", // rouge feu
-  Rubellite: "#E91E63",  // rose rubis (plus distinct que C0392B)
-  Serpentite: "#2ECC71", // vert écaille
+  Amethite: "#9B59B6",   // crystal violet
+  Magmasteel: "#E74C3C", // fire red
+  Rubellite: "#E91E63",  // ruby pink
+  Serpentite: "#2ECC71", // scale green
   Sanguine: "#8B0000",   // dark blood (Steel Bar)
-  Spectral: "#00D4C8",   // cyan spectral
-  Geo: "#D4A574",        // terre ocre (Copper Bar)
-  Astral: "#8A2BE2",     // violet cosmique (Star Alloy)
+  Spectral: "#00D4C8",   // spectral cyan
+  Geo: "#D4A574",        // earth ochre (Copper Bar)
+  Astral: "#8A2BE2",     // cosmic violet (Star Alloy)
 };
 
-// Même palette pour armures (défense)
+// Same palette for armors (defense)
 export const ARMOR_SET_COLOR = {
   Amethite: "#9B59B6",
   Magmasteel: "#E74C3C",
   Rubellite: "#E91E63",
   Serpentite: "#2ECC71",
-  Cursemetal: "#5D4037", // brun maudit (Iron Plate)
-  "Kingly Amethite": "#FFD700", // or royal (Gold Plate)
-  "Kingly Diamond": "#BDC3C7", // diamant (Machine Hull)
+  Cursemetal: "#5D4037", // cursed brown (Iron Plate)
+  "Kingly Amethite": "#FFD700", // royal gold (Gold Plate)
+  "Kingly Diamond": "#BDC3C7", // diamond (Machine Hull)
   Sanguine: "#8B0000",
   Spectral: "#00D4C8",
   Geo: "#D4A574",
   Astral: "#8A2BE2",
-  Voltplate: "#00E5FF", // cyan tech (Voltite Cell)
+  Voltplate: "#00E5FF", // tech cyan (Voltite Cell)
 };
 
-// Presets réutilisables
+// Reusable presets
 export const PRESETS = {
-  // Pad countdown: anneau plat au sol + étoile centre
+  // Pad countdown: flat ring on ground + center star
   padRing: (colorHex) => ({
     texture: PARTICLE_TEXTURES.star,
     minLifeTime: 0.6, maxLifeTime: 0.9,
@@ -89,7 +89,7 @@ export const PRESETS = {
     manualEmitCount: 6,
     colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb(colorHex), 1], maxColor: [...hexToRgb("#FFFFFF"), 1] }],
   }),
-  // Entrée: vortex colonne 4 blocks
+  // Entry: vortex column 4 blocks high
   entryVortex: (colorHex) => ({
     texture: PARTICLE_TEXTURES.magic,
     minLifeTime: 0.9, maxLifeTime: 1.4,
@@ -103,7 +103,7 @@ export const PRESETS = {
       { timeFraction: 1, minColor: [...hexToRgb("#FFFFFF"), 0.2], maxColor: [...hexToRgb("#FFFFFF"), 0] },
     ],
   }),
-  // Room clear: explosion + anneau
+  // Room clear: explosion + ring
   roomClear: (colorHex) => ({
     texture: PARTICLE_TEXTURES.star,
     minLifeTime: 0.5, maxLifeTime: 1.0,
@@ -114,7 +114,7 @@ export const PRESETS = {
     manualEmitCount: 28,
     colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb(colorHex), 1], maxColor: [...hexToRgb(colorHex), 0.8] }],
   }),
-  // Crate: fontaine hélice
+  // Crate: helix fountain
   crateFountain: (colorHex, rarity) => {
     const counts = { Common: 14, Uncommon: 18, Rare: 24, Epic: 30, Legendary: 40 };
     const sizes = { Common: 0.2, Uncommon: 0.25, Rare: 0.3, Epic: 0.35, Legendary: 0.45 };
@@ -132,8 +132,8 @@ export const PRESETS = {
       ],
     };
   },
-  // ── Combat FX — armes ──────────────────────────────────────────────
-  // Slash épée: arc horizontal plat, étoiles qui traînent
+  // ── Combat FX — weapons ──────────────────────────────────────────────
+  // Sword slash: flat horizontal arc, trailing stars
   weaponSlash: (colorHex, tierScale = 1) => ({
     texture: PARTICLE_TEXTURES.star,
     minLifeTime: 0.35, maxLifeTime: 0.55,
@@ -147,7 +147,7 @@ export const PRESETS = {
       { timeFraction: 1, minColor: [...hexToRgb("#FFFFFF"), 0.9], maxColor: [...hexToRgb("#FFFFFF"), 0] },
     ],
   }),
-  // Dagger: deux petites gerbes rapides (combo)
+  // Dagger: two quick bursts (combo)
   weaponDagger: (colorHex, tierScale = 1) => ({
     texture: PARTICLE_TEXTURES.spark,
     minLifeTime: 0.25, maxLifeTime: 0.4,
@@ -158,7 +158,7 @@ export const PRESETS = {
     manualEmitCount: Math.round(12 * tierScale),
     colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb(colorHex), 1], maxColor: [...hexToRgb("#FFFFFF"), 0.8] }],
   }),
-  // Spear: trait d'estoc — long et fin
+  // Spear: thrust trail — long and thin
   weaponSpear: (colorHex, tierScale = 1) => ({
     texture: PARTICLE_TEXTURES.spark,
     minLifeTime: 0.3, maxLifeTime: 0.5,
@@ -169,7 +169,7 @@ export const PRESETS = {
     manualEmitCount: Math.round(14 * tierScale),
     colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb(colorHex), 1], maxColor: [...hexToRgb(colorHex), 0] }],
   }),
-  // Club: onde de choc circulaire
+  // Club: circular shockwave
   weaponClub: (colorHex, tierScale = 1) => ({
     texture: PARTICLE_TEXTURES.smoke,
     minLifeTime: 0.5, maxLifeTime: 0.8,
@@ -183,7 +183,7 @@ export const PRESETS = {
       { timeFraction: 1, minColor: [...hexToRgb("#FFFFFF"), 0.6], maxColor: [...hexToRgb("#FFFFFF"), 0] },
     ],
   }),
-  // Mace: smash vertical avec flammes
+  // Mace: vertical smash with flames
   weaponMace: (colorHex, tierScale = 1) => ({
     texture: PARTICLE_TEXTURES.flame,
     minLifeTime: 0.4, maxLifeTime: 0.7,
@@ -197,7 +197,7 @@ export const PRESETS = {
       { timeFraction: 1, minColor: [...hexToRgb(colorHex), 0.4], maxColor: [...hexToRgb("#FFFFFF"), 0] },
     ],
   }),
-  // Whip: trait courbe léger
+  // Whip: light curved trail
   weaponWhip: (colorHex, tierScale = 1) => ({
     texture: PARTICLE_TEXTURES.spark,
     minLifeTime: 0.4, maxLifeTime: 0.65,
@@ -208,7 +208,7 @@ export const PRESETS = {
     manualEmitCount: Math.round(14 * tierScale),
     colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb(colorHex), 1], maxColor: [...hexToRgb("#FFFFFF"), 0.7] }],
   }),
-  // Bow: flèche lumineuse
+  // Bow: glowing arrow trail
   weaponBow: (colorHex, tierScale = 1) => ({
     texture: PARTICLE_TEXTURES.spark,
     minLifeTime: 0.35, maxLifeTime: 0.6,
@@ -219,7 +219,7 @@ export const PRESETS = {
     manualEmitCount: Math.round(10 * tierScale),
     colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb(colorHex), 1], maxColor: [...hexToRgb("#FFFFFF"), 0.9] }],
   }),
-  // Crossbow: burst percée
+  // Crossbow: piercing burst
   weaponCrossbow: (colorHex, tierScale = 1) => ({
     texture: PARTICLE_TEXTURES.star,
     minLifeTime: 0.4, maxLifeTime: 0.65,
@@ -233,7 +233,7 @@ export const PRESETS = {
       { timeFraction: 1, minColor: [...hexToRgb("#FFFFFF"), 0.5], maxColor: [...hexToRgb("#FFFFFF"), 0] },
     ],
   }),
-  // Boomerang: anneau tournant
+  // Boomerang: spinning ring
   weaponBoomerang: (colorHex, tierScale = 1) => ({
     texture: PARTICLE_TEXTURES.star,
     minLifeTime: 0.45, maxLifeTime: 0.7,
@@ -244,7 +244,7 @@ export const PRESETS = {
     manualEmitCount: Math.round(12 * tierScale),
     colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb(colorHex), 1], maxColor: [...hexToRgb("#FFFFFF"), 0.7] }],
   }),
-  // Staff: vortex magique
+  // Staff: magic vortex
   weaponStaff: (colorHex, tierScale = 1) => ({
     texture: PARTICLE_TEXTURES.magic,
     minLifeTime: 0.6, maxLifeTime: 1.0,
@@ -258,7 +258,7 @@ export const PRESETS = {
       { timeFraction: 1, minColor: [...hexToRgb("#FFFFFF"), 0.8], maxColor: [...hexToRgb("#FFFFFF"), 0] },
     ],
   }),
-  // Hit de base: petite étincelle à chaque coup (tous types, 1 particule discrète)
+  // Base hit: small spark on every hit (all types, single subtle particle)
   weaponHit: (colorHex, tierScale = 1) => ({
     texture: PARTICLE_TEXTURES.spark,
     minLifeTime: 0.2, maxLifeTime: 0.35,
@@ -269,8 +269,8 @@ export const PRESETS = {
     manualEmitCount: Math.round(4 * tierScale),
     colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb(colorHex), 1], maxColor: [...hexToRgb("#FFFFFF"), 0.6] }],
   }),
-  // ── Armures ──────────────────────────────────────────────────────────
-  // Bouclier défensif (quand touché avec set complet)
+  // ── Armors ──────────────────────────────────────────────────────────
+  // Defensive shield (when hit with full set)
   armorShield: (colorHex, tierScale = 1) => ({
     texture: PARTICLE_TEXTURES.magic,
     minLifeTime: 0.5, maxLifeTime: 0.85,
@@ -284,7 +284,7 @@ export const PRESETS = {
       { timeFraction: 1, minColor: [...hexToRgb("#FFFFFF"), 0.6], maxColor: [...hexToRgb("#FFFFFF"), 0] },
     ],
   }),
-  // Shimmer passif (aura du set)
+  // Passive shimmer (set aura)
   armorShimmer: (colorHex, tierScale = 1) => ({
     texture: PARTICLE_TEXTURES.spark,
     minLifeTime: 0.6, maxLifeTime: 1.0,
@@ -296,8 +296,8 @@ export const PRESETS = {
     colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb(colorHex), 0.7], maxColor: [...hexToRgb(colorHex), 0] }],
   }),
 
-  // ── Sets spéciaux — nouveaux effets ──────────────────────────────────
-  // Amethite: grand anneau violet au sol
+  // ── Special sets — new effects ──────────────────────────────────
+  // Amethite: large violet ring on ground
   amethystZone: (tierScale = 1) => ({
     texture: PARTICLE_TEXTURES.magic,
     minLifeTime: 0.55, maxLifeTime: 0.9,
@@ -311,7 +311,7 @@ export const PRESETS = {
       { timeFraction: 1, minColor: [...hexToRgb("#FFFFFF"), 0.7], maxColor: [...hexToRgb("#FFFFFF"), 0] },
     ],
   }),
-  // Magmasteel: brûlure — flammes qui montent orange→rouge
+  // Magmasteel: burn — rising flames orange to red
   magmaBurn: () => ({
     texture: PARTICLE_TEXTURES.flame,
     minLifeTime: 0.45, maxLifeTime: 0.8,
@@ -326,7 +326,7 @@ export const PRESETS = {
       { timeFraction: 1, minColor: [...hexToRgb("#FFCC00"), 0], maxColor: [...hexToRgb("#FFFFFF"), 0] },
     ],
   }),
-  // Rubellite: large zone rose autour du joueur sur kill
+  // Rubellite: large pink zone around player on kill
   rubelliteKillZone: () => ({
     texture: PARTICLE_TEXTURES.magic,
     minLifeTime: 0.7, maxLifeTime: 1.1,
@@ -340,7 +340,7 @@ export const PRESETS = {
       { timeFraction: 1, minColor: [...hexToRgb("#FFD6E8"), 0.6], maxColor: [...hexToRgb("#FFFFFF"), 0] },
     ],
   }),
-  // Serpentite: poison vert qui tournoie lentement
+  // Serpentite: swirling green poison
   serpentPoison: () => ({
     texture: PARTICLE_TEXTURES.spark,
     minLifeTime: 0.6, maxLifeTime: 1.0,
@@ -354,7 +354,7 @@ export const PRESETS = {
       { timeFraction: 1, minColor: [...hexToRgb("#2ECC71"), 0], maxColor: [...hexToRgb("#FFFFFF"), 0] },
     ],
   }),
-  // Sanguine: heal — particules descendantes sur mob (rouge sombre) + montantes sur joueur (rose)
+  // Sanguine: heal — falling on mob (dark red) + rising on player (pink)
   sanguineDrainMob: () => ({
     texture: PARTICLE_TEXTURES.spark,
     minLifeTime: 0.4, maxLifeTime: 0.7,
@@ -381,7 +381,7 @@ export const PRESETS = {
       { timeFraction: 1, minColor: [...hexToRgb("#FFFFFF"), 0.7], maxColor: [...hexToRgb("#FF3366"), 0] },
     ],
   }),
-  // Spectral: invisibilité cyan/noir
+  // Spectral: cyan/black invisibility
   spectralInvis: () => ({
     texture: PARTICLE_TEXTURES.magic,
     minLifeTime: 0.5, maxLifeTime: 0.9,
@@ -395,7 +395,7 @@ export const PRESETS = {
       { timeFraction: 1, minColor: [...hexToRgb("#00D4C8"), 0.3], maxColor: [...hexToRgb("#000000"), 0] },
     ],
   }),
-  // Spectral: explosion cyan/noir large
+  // Spectral: large cyan/black explosion
   spectralExplosion: () => ({
     texture: PARTICLE_TEXTURES.star,
     minLifeTime: 0.55, maxLifeTime: 0.95,
@@ -409,7 +409,7 @@ export const PRESETS = {
       { timeFraction: 1, minColor: [...hexToRgb("#00D4C8"), 0.2], maxColor: [...hexToRgb("#FFFFFF"), 0] },
     ],
   }),
-  // Geo: mine — pulsation ocre qui clignote
+  // Geo: mine — pulsing ochre blink
   geoMineTick: () => ({
     texture: PARTICLE_TEXTURES.spark,
     minLifeTime: 0.35, maxLifeTime: 0.6,
@@ -450,7 +450,7 @@ export const PRESETS = {
       { timeFraction: 1, minColor: [...hexToRgb("#DAAAFF"), 0.5], maxColor: [...hexToRgb("#FFFFFF"), 0] },
     ],
   }),
-  // Astral: tornade violet/noir autour du mob
+  // Astral: violet/black tornado around mob
   astralTornado: () => ({
     texture: PARTICLE_TEXTURES.magic,
     minLifeTime: 0.7, maxLifeTime: 1.15,
@@ -464,7 +464,7 @@ export const PRESETS = {
       { timeFraction: 1, minColor: [...hexToRgb("#DAAAFF"), 0.6], maxColor: [...hexToRgb("#000000"), 0] },
     ],
   }),
-  // Astral: aura enveloppante (lenteur)
+  // Astral: enveloping aura (slowness)
   astralAura: () => ({
     texture: PARTICLE_TEXTURES.spark,
     minLifeTime: 0.5, maxLifeTime: 0.9,

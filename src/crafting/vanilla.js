@@ -1,27 +1,27 @@
 /**
- * Crafts vanilla ré-exposés après le hide-all.
+ * Vanilla crafts re-exposed after hide-all.
  *
- * Objectif : cacher tous les crafts non-moddés (removeItemCraftingRecipes(null))
- * puis ré-ajouter uniquement ce qui a du sens : armures + armes vanilla.
- * Les crafts custom (CRAFTS) restent la progression principale.
+ * Goal: hide all non-modded crafts (removeItemCraftingRecipes(null))
+ * then add back only what makes sense: vanilla armors + weapons.
+ * Custom crafts (CRAFTS) remain the main progression.
  *
- * Contrainte : tous les ingredients/results doivent exister dans item-names.txt
- * (sinon le craft ne fait rien / la validation échoue). On utilise donc des
- * proxies valides pour Wood/Stone (Stick / Coal).
+ * Constraint: all ingredients/results must exist in item-names.txt
+ * (otherwise craft does nothing / validation fails). So we use
+ * valid proxies for Wood/Stone (Stick / Coal).
  *
  * Stations:
- *  - Wood: handcraft (pas de station)
+ *  - Wood: handcraft (no station)
  *  - Stone/Iron/Gold/Diamond/Moonstone: Workbench
  *
- * Quantités basées sur Bloxd.io wiki (Equipment):
- *  - armure: Helmet 5, Chestplate 8, Leggings 7, Boots 4, Gauntlets 4 (28/set)
- *  - épée: Wood 3 planks, Stone/Iron/Gold/Diamond/Moonstone = 2 mat +1 Stick
- *  - pioche/hache: 3 mat +1 Stick (Wood seul: 4 Stick)
- *  - pelle: 1 mat +1 Stick (Wood seul: 2 Stick)
- *  - houe: 2 mat +1 Stick (Wood seul: 3 Stick)
- *  - arc: 3 mat +1 Cotton +2 Stick
- *  - arbalète: variantes (voir ci-dessous)
- *  - lance/dague/masse/massue/fouet/boomerang: patterns inspirés des code-blocks communautaires
+ * Quantities based on Bloxd.io wiki (Equipment):
+ *  - armor: Helmet 5, Chestplate 8, Leggings 7, Boots 4, Gauntlets 4 (28/set)
+ *  - sword: Wood 3 planks, Stone/Iron/Gold/Diamond/Moonstone = 2 mat +1 Stick
+ *  - pickaxe/axe: 3 mat +1 Stick (Wood only: 4 Stick)
+ *  - shovel: 1 mat +1 Stick (Wood only: 2 Stick)
+ *  - hoe: 2 mat +1 Stick (Wood only: 3 Stick)
+ *  - bow: 3 mat +1 Cotton +2 Stick
+ *  - crossbow: variants (see below)
+ *  - spear/dagger/mace/club/whip/boomerang: patterns inspired by community code blocks
  */
 
 // ------------------------------------------------------------------
@@ -41,19 +41,19 @@ function craft(result, station, requires) {
   return { result, produces: 1, station, requires };
 }
 
-// Wood/Stone sont des blocs, pas des items listés — on utilise Stick/Coal comme proxy valide
-// (le joueur les obtient en cassant du bois/pierre, compréhensible)
+// Wood/Stone are blocks, not listed items — we use Stick/Coal as valid proxies
+// (player gets them by breaking wood/stone, understandable)
 const WOOD_ING = ["Stick"];
 const STONE_ING = ["Coal"];
 
 export const VANILLA_CRAFTS = [
-  // ────────────────────────── ARMURES VANILLA ──────────────────────────
+  // ────────────────────────── VANILLA ARMORS ──────────────────────────
   ...armorSet("Wood", "Stick", undefined),
   ...armorSet("Iron", "Iron Bar", "Workbench"),
   ...armorSet("Gold", "Gold Bar", "Workbench"),
   ...armorSet("Diamond", "Diamond", "Workbench"),
 
-  // ────────────────────────── OUTILS VANILLA ──────────────────────────
+  // ────────────────────────── VANILLA TOOLS ──────────────────────────
   craft("Wood Pickaxe", undefined, [{ items: WOOD_ING, amt: 4 }]),
   craft("Wood Axe", undefined, [{ items: WOOD_ING, amt: 4 }]),
   craft("Wood Spade", undefined, [{ items: WOOD_ING, amt: 2 }]),
@@ -82,7 +82,7 @@ export const VANILLA_CRAFTS = [
   craft("Moonstone Pickaxe", "Workbench", [{ items: ["Stick"], amt: 1 }, { items: ["Moonstone"], amt: 3 }]),
   craft("Moonstone Axe", "Workbench", [{ items: ["Stick"], amt: 1 }, { items: ["Moonstone"], amt: 3 }]),
 
-  // ────────────────────────── ÉPÉES VANILLA ──────────────────────────
+  // ────────────────────────── VANILLA SWORDS ──────────────────────────
   craft("Wood Sword", undefined, [{ items: WOOD_ING, amt: 3 }]),
   craft("Stone Sword", "Workbench", [{ items: ["Stick"], amt: 1 }, { items: STONE_ING, amt: 2 }]),
   craft("Iron Sword", "Workbench", [{ items: ["Stick"], amt: 1 }, { items: ["Iron Bar"], amt: 2 }]),
@@ -90,7 +90,7 @@ export const VANILLA_CRAFTS = [
   craft("Diamond Sword", "Workbench", [{ items: ["Stick"], amt: 1 }, { items: ["Diamond"], amt: 2 }]),
   craft("Knight Sword", "Workbench", [{ items: ["Diamond Sword"], amt: 1 }, { items: ["Knight Heart"], amt: 3 }]),
 
-  // ────────────────────────── ARCS / ARBALÈTES VANILLA ──────────────────────────
+  // ────────────────────────── VANILLA BOWS / CROSSBOWS ──────────────────────────
   craft("Wood Bow", "Workbench", [{ items: WOOD_ING, amt: 3 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }]),
   craft("Stone Bow", "Workbench", [{ items: STONE_ING, amt: 3 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }]),
   craft("Iron Bow", "Workbench", [{ items: ["Iron Bar"], amt: 3 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }]),
@@ -103,7 +103,7 @@ export const VANILLA_CRAFTS = [
   craft("Gold Crossbow", "Workbench", [{ items: ["Gold Bar"], amt: 4 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }, { items: ["Iron Bar"], amt: 2 }]),
   craft("Diamond Crossbow", "Workbench", [{ items: ["Diamond"], amt: 4 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }, { items: ["Iron Bar"], amt: 2 }]),
 
-  // ────────────────────────── LANCES / DAGUES / MASSES / MASSUES / FOUETS / BOOMERANGS ──────────────────────────
+  // ────────────────────────── SPEARS / DAGGERS / MACES / CLUBS / WHIPS / BOOMERANGS ──────────────────────────
   craft("Wood Spear", "Workbench", [{ items: WOOD_ING, amt: 1 }, { items: ["Stick"], amt: 2 }]),
   craft("Stone Spear", "Workbench", [{ items: STONE_ING, amt: 1 }, { items: ["Stick"], amt: 2 }]),
   craft("Iron Spear", "Workbench", [{ items: ["Iron Bar"], amt: 1 }, { items: ["Stick"], amt: 2 }]),

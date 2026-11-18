@@ -59,7 +59,7 @@ export function getWeightedRandomItem(rarity, random = Math.random) {
 
 export function getAmountForItem(item, random = Math.random) {
   if (!item) return 1;
-  // Supporte {amount} fixe ou {min,max} aléatoire inclusif, ou {amountMin,amountMax}
+  // Supports fixed {amount} or inclusive random {min,max}, or {amountMin,amountMax}
   const hasMinMax = (Number.isFinite(item.min) && Number.isFinite(item.max)) || (Number.isFinite(item.amountMin) && Number.isFinite(item.amountMax));
   if (Number.isFinite(item.min) && Number.isFinite(item.max)) {
     const min = Math.floor(item.min);
@@ -281,7 +281,7 @@ export function isChestLocked(api, chestPos, playerId) {
 }
 
 /**
- * Vide un coffre sans erreur même s'il est plein (Argument too large).
+ * Empties a chest without error even if full (Argument too large).
  * Fix: 36 slots (not 27), no undefined args, sanitize BlockData, clearStandardChest first.
  */
 export function clearChestInventory(api, chestPos) {
@@ -290,7 +290,7 @@ export function clearChestInventory(api, chestPos) {
   const posArr = [p.x, p.y, p.z];
 
   // 1) Sanitize BlockData: keep only allowed crate keys, discard huge inventory/lore
-  // This alone vides le coffre si l'engine stocke l'inventaire dans blockData
+  // This alone empties the chest if the engine stores inventory in blockData
   try {
     let data = null;
     try { data = api.getBlockData(p.x, p.y, p.z); } catch (_) { data = null; }
@@ -423,7 +423,7 @@ export function generateChest(api, playerId, chestPos, rarity, random = Math.ran
     return false;
   }
   consumeKey(api, playerId, rarity);
-  // Descend le coffre d'un bloc à l'ouverture pour laisser plus de place et éviter le re-clic accidentel (roll vs reopen)
+  // Lower chest by one block on open for more space and to avoid accidental re-click (roll vs reopen)
   let effectivePos = chestPos;
   try { effectivePos = lowerChestOneBlock(api, chestPos); } catch (_) { effectivePos = chestPos; }
   setChestOwner(api, effectivePos, playerId, rarity);

@@ -449,8 +449,8 @@ export function floorOfLayer(chunkY) {
 }
 
 /**
- * Variation du donjon (custom games uniquement).
- * `default` = lobby/spawn, `dungeon` = dans le donjon.
- * Worlds n'ont pas de variations — l'appel échoue silencieusement.
+ * Dungeon variation (custom games only).
+ * `default` = lobby/spawn, `dungeon` = inside dungeon.
+ * Worlds have no variations — call fails silently.
  */
 export const DUNGEON_VARIATION = "dungeon";

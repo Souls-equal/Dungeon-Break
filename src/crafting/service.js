@@ -1,7 +1,7 @@
 /**
- * Crafting service — cache tous les crafts non-moddés, puis ré-expose
- * uniquement les crafts moddés + les crafts vanilla essentiels (armures/armes).
- * Appelé depuis onPlayerJoin pour chaque joueur (per-player recipes).
+ * Crafting service — hides all non-modded crafts, then re-exposes
+ * only modded crafts + essential vanilla crafts (armors/weapons).
+ * Called from onPlayerJoin for each player (per-player recipes).
  */
 
 import { CRAFTS } from "./config.js";
@@ -13,7 +13,7 @@ export function registerCraftingRecipes(api, playerId) {
     try { api.log("[Crafting] editItemCraftingRecipes not available"); } catch (_) {}
     return 0;
   }
-  // 1) Cacher tous les crafts non-moddés pour ne pas perdre le joueur
+  // 1) Hide all non-modded crafts so the player isn't overwhelmed
   //    api.removeItemCraftingRecipes(playerId, null) = remove all
   try {
     if (typeof api.removeItemCraftingRecipes === "function") {
@@ -24,8 +24,8 @@ export function registerCraftingRecipes(api, playerId) {
   }
 
   let ok = 0;
-  // 2) Groupe par result pour éviter d'écraser: une seule call par item avec toutes ses variantes
-  //    On combine VANILLA (armures/armes de base) + CRAFTS (shards -> matériaux -> armures custom)
+  // 2) Group by result to avoid overwriting: single call per item with all variants
+  //    Combine VANILLA (base armors/weapons) + CRAFTS (shards -> materials -> custom armors)
   const ALL = [...VANILLA_CRAFTS, ...CRAFTS];
   const byResult = new Map();
   for (const craft of ALL) {
@@ -49,7 +49,7 @@ export function registerCraftingRecipes(api, playerId) {
   return ok;
 }
 
-// Pour debug: liste les crafts d'un set
+// For debug: list crafts for a material
 export function craftsForMaterial(materialName) {
   return [...VANILLA_CRAFTS, ...CRAFTS].filter((c) => c.requires && c.requires.some((r) => r.items && r.items.includes(materialName)));
 }
