@@ -325,7 +325,9 @@ test("a roll is shown in its rarity's colour, on every surface", () => {
 
   // Chat: CustomTextStyling, so the name is written in the rarity's colour.
   const message = rollMessage(blessing, rarity);
-  assert.equal(message[0], "Blessing: ");
+  // New spec: prefix [TEMP]/[RUN]/[PERM] before rarity in roll display; first element is the scope tag.
+  assert.ok(String(message[0].str || message[0]).includes("PERM") || String(message[0].str || message[0]).includes("RUN") || String(message[0].str || message[0]).includes("TEMP"), "rollMessage should start with [PERM]/[RUN]/[TEMP] prefix");
+  assert.equal(message[1], "Blessing: ");
   const styled = message.find((part) => part && part.str === blessing.name);
   assert.ok(styled, "the name is not in the message");
   assert.equal(styled.style.color, rarity.textColour);
