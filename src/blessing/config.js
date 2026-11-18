@@ -680,7 +680,7 @@ export const BLESSINGS = [
     icon: "Invisibility",
     cardIcon: "fa-solid fa-ghost",
     description: "Invisibility for 30 seconds.",
-    effect: { kind: "potion", effectName: "Invisibility", level: 1, durationMs: 30000 },
+    effect: { kind: "potion", effectName: "Invisible", level: 1, durationMs: 30000 },
   },
   {
     id: "frenzy_tonic",

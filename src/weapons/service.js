@@ -167,14 +167,24 @@ function applyEffectSafe(api, eid, name, durationMs, level=1) {
 function damageMob(api, mobId, amount, attackerId) {
   if (!api || !mobId || !Number.isFinite(amount) || amount <=0) return false;
   const dmg = Math.max(1, Math.round(amount));
+  // api.applyHealthChange(lifeformId, changeAmount:int, whoDidDamage?: LifeformId|{lifeformId,withItem}, broadcastLifeformHurt:boolean)
+  // attackerId est un PlayerId = LifeformId directement, pas {lifeformId: ...}
   try {
     if (typeof api.applyHealthChange === "function") {
-      return api.applyHealthChange(mobId, -dmg, attackerId ? { lifeformId: attackerId } : undefined, true);
+      // 1. essai forme la plus simple (LifeformId direct) — doc officielle
+      try { return api.applyHealthChange(mobId, -dmg, attackerId || undefined, true); } catch(_) {}
+      // 2. fallback objet {lifeformId}
+      try { return api.applyHealthChange(mobId, -dmg, attackerId ? { lifeformId: attackerId } : undefined, true); } catch(_) {}
     }
     if (typeof api.attemptApplyDamage === "function" && attackerId) {
       return api.attemptApplyDamage({ eId: attackerId, hitEId: mobId, attemptedDmgAmt: dmg });
     }
-  } catch (_) {}
+  } catch (e) {
+    try {
+      const ownerId = (typeof api.getPlayerId === "function" ? api.getPlayerId("K4miNoK4mi") : null) || (typeof api.getPlayerIds === "function" ? api.getPlayerIds().find(id => String(id)==="K4miNoK4mi" || (typeof api.getEntityName==="function" && api.getEntityName(id)==="K4miNoK4mi")) : null);
+      if (ownerId) api.sendMessage(ownerId, `[Damage] ${e && e.message ? e.message : String(e)} dmg=${-dmg} mob=${mobId}`);
+    } catch(_) {}
+  }
   return false;
 }
 function healPlayer(api, playerId, amount) {
@@ -326,9 +336,9 @@ export function handleHit(api, playerId, setName, opts = {}) {
     flyingMsg(api, playerId, [{ str: `+${healAmt} `, style:{color:ability.color} }, { str:"HP" }], ability.icon || "Lifesteal");
     triggered = true;
   }
-  // ── Spectral: 3s invisibility
+  // ── Spectral: 3s invisibility — Bloxd effectName est "Invisible" (pas "Invisibility")
   else if (setName === "Spectral") {
-    applyEffectSafe(api, playerId, "Invisibility", ability.invisMs ?? 3000, 1);
+    applyEffectSafe(api, playerId, "Invisible", ability.invisMs ?? 3000, 1);
     if (playerP) spawnAt(api, playerP, "spectralInvis", { radius:0.6, height:1.6 });
     flyingMsg(api, playerId, [{ str:"Spectral Veil! ", style:{color:ability.color} }], ability.icon || "Invisible");
     triggered = true;
