@@ -115,6 +115,16 @@ export const ITEM_STAT_OVERRIDES = {
  "Voltplate Boots": { displayName: "Voltplate Boots", description: "Tier 4 voltplate boots." },
  "Voltplate Gauntlets": { displayName: "Voltplate Gauntlets", description: "Tier 4 voltplate gauntlets." },
 
+ "Moonstone Sword": { displayName: "Moonstone Sword", description: "Tier 5 sword — Balanced blade — high damage, crit 1.35x. 52 dmg. No proc — pure damage after Diamond." },
+ "Nova Alloy": { displayName: "Nova Alloy", description: "Tier 6 nova alloy. Craft Nova armor & Nova Blade at Artisan Bench." },
+ "Nova Shard": { displayName: "Nova Shard", description: "Tier 6 shard. Found in Epic+ crates. → Nova Alloy." },
+ "Nova Helmet": { displayName: "Nova Helmet", description: "Tier 6 nova helmet — ultimate set." },
+ "Nova Chestplate": { displayName: "Nova Chestplate", description: "Tier 6 nova chestplate." },
+ "Nova Leggings": { displayName: "Nova Leggings", description: "Tier 6 nova leggings." },
+ "Nova Boots": { displayName: "Nova Boots", description: "Tier 6 nova boots." },
+ "Nova Gauntlets": { displayName: "Nova Gauntlets", description: "Tier 6 nova gauntlets." },
+ "Nova Blade": { displayName: "Nova Blade", description: "Tier 6 blade — Energy blade — 68 dmg. Slash every hit · Speed when held · 20 charges laser (crouch+attack)." },
+
  // ── Weapons Tier 1 — Amethite — Every 4th hit: violet zone +60% ──
  "Amethite Sword": { displayName: "Amethite Sword", description: "Tier 1 sword — Balanced blade — high damage, crit 1.35x. 36 dmg. Every 4th hit: violet zone +60%." },
  "Amethite Dagger": { displayName: "Amethite Dagger", description: "Tier 1 dagger — Fast dagger — low damage, double from behind, combo scaling. 18 dmg. Every 4th hit: violet zone +60%." },

@@ -47,6 +47,8 @@ export const WEAPON_SET_COLOR = {
   Spectral: "#00D4C8",   // spectral cyan
   Geo: "#D4A574",        // earth ochre (Copper Bar)
   Astral: "#8A2BE2",     // cosmic violet (Star Alloy)
+  Moonstone: "#B0E0E6",  // moonstone pale blue
+  Nova: "#00FFFF",       // nova cyan
 };
 
 // Same palette for armors (defense)
@@ -63,6 +65,7 @@ export const ARMOR_SET_COLOR = {
   Geo: "#D4A574",
   Astral: "#8A2BE2",
   Voltplate: "#00E5FF", // tech cyan (Voltite Cell)
+  Nova: "#00FFFF", // nova cyan
 };
 
 // Reusable presets
@@ -476,6 +479,34 @@ export const PRESETS = {
     colorGradients: [
       { timeFraction: 0, minColor: [...hexToRgb("#8A2BE2"), 0.85], maxColor: [...hexToRgb("#111111"), 0.85] },
       { timeFraction: 1, minColor: [...hexToRgb("#8A2BE2"), 0], maxColor: [...hexToRgb("#000000"), 0] },
+    ],
+  }),
+  // Nova: slash each hit (cyan)
+  novaSlash: () => ({
+    texture: PARTICLE_TEXTURES.star,
+    minLifeTime: 0.35, maxLifeTime: 0.6,
+    minEmitPower: 1.5, maxEmitPower: 3.0,
+    minSize: 0.3, maxSize: 0.55,
+    gravity: [0, 0, 0],
+    blendMode: 1,
+    manualEmitCount: 20,
+    colorGradients: [
+      { timeFraction: 0, minColor: [...hexToRgb("#00FFFF"), 1], maxColor: [...hexToRgb("#FFFFFF"), 1] },
+      { timeFraction: 1, minColor: [...hexToRgb("#00FFFF"), 0.2], maxColor: [...hexToRgb("#FFFFFF"), 0] },
+    ],
+  }),
+  // Nova: laser beam (long line)
+  novaLaser: () => ({
+    texture: PARTICLE_TEXTURES.star,
+    minLifeTime: 0.4, maxLifeTime: 0.7,
+    minEmitPower: 2.0, maxEmitPower: 4.0,
+    minSize: 0.35, maxSize: 0.65,
+    gravity: [0, 0, 0],
+    blendMode: 1,
+    manualEmitCount: 30,
+    colorGradients: [
+      { timeFraction: 0, minColor: [...hexToRgb("#00FFFF"), 1], maxColor: [...hexToRgb("#88FFFF"), 1] },
+      { timeFraction: 1, minColor: [...hexToRgb("#FFFFFF"), 0.8], maxColor: [...hexToRgb("#00FFFF"), 0] },
     ],
   }),
 };

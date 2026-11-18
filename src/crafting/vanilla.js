@@ -88,6 +88,7 @@ export const VANILLA_CRAFTS = [
   craft("Iron Sword", "Workbench", [{ items: ["Stick"], amt: 1 }, { items: ["Iron Bar"], amt: 2 }]),
   craft("Gold Sword", "Workbench", [{ items: ["Stick"], amt: 1 }, { items: ["Gold Bar"], amt: 2 }]),
   craft("Diamond Sword", "Workbench", [{ items: ["Stick"], amt: 1 }, { items: ["Diamond"], amt: 2 }]),
+  craft("Moonstone Sword", "Workbench", [{ items: ["Stick"], amt: 1 }, { items: ["Moonstone"], amt: 2 }]),
   craft("Knight Sword", "Workbench", [{ items: ["Diamond Sword"], amt: 1 }, { items: ["Knight Heart"], amt: 3 }]),
 
   // ────────────────────────── VANILLA BOWS / CROSSBOWS ──────────────────────────

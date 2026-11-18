@@ -25,6 +25,11 @@ const lastWeaponSet = new Map(); // playerId -> setName (for handleKill)
 const geoMines = []; // { pos:[x,y,z], ownerId, explodeTick, dmg, radius }
 const astralGlowing = new Map(); // mobId -> { ownerId, expireTick, extraFrac }
 const astralAuraCooldown = new Map(); // playerId -> lastAuraTick
+const novaCharges = new Map(); // playerId -> charges 0..20
+const novaLasers = []; // { playerId, startPos:[x,y,z], dir:[x,y,z], endTick, dmg, range, ownerId }
+const novaCrouch = new Map(); // playerId -> bool isCrouching
+const novaLaserCooldown = new Map(); // playerId -> lastLaserTick
+let novaTickCounter = 0;
 
 // helpers
 function keyOf(id) { return String(id); }
@@ -281,6 +286,125 @@ function shieldAdd(api, playerId, add, cap) {
     if (typeof api.setShieldAmount==="function") api.setShieldAmount(playerId, next);
   } catch (_) {}
 }
+// ── Nova helpers ────────────────────────────────────────────────────
+function isPlayerCrouching(api, playerId) {
+  if (!api || !playerId) return false;
+  const k = keyOf(playerId);
+  if (novaCrouch.has(k)) {
+    const v = novaCrouch.get(k);
+    if (v === true) return true;
+  }
+  try { if (typeof api.isPlayerCrouching === "function" && api.isPlayerCrouching(playerId)) return true; } catch(_) {}
+  try { if (typeof api.getIsCrouching === "function" && api.getIsCrouching(playerId)) return true; } catch(_) {}
+  try { if (typeof api.isCrouching === "function" && api.isCrouching(playerId)) return true; } catch(_) {}
+  try { if (typeof api.getPlayerIsCrouching === "function" && api.getPlayerIsCrouching(playerId)) return true; } catch(_) {}
+  return false;
+}
+function getLookDir(api, playerId) {
+  const cands = [
+    () => typeof api.getPlayerDirection === "function" && api.getPlayerDirection(playerId),
+    () => typeof api.getPlayerFacingDirection === "function" && api.getPlayerFacingDirection(playerId),
+    () => typeof api.getLookDirection === "function" && api.getLookDirection(playerId),
+    () => typeof api.getEntityDirection === "function" && api.getEntityDirection(playerId),
+    () => typeof api.getFacingDirection === "function" && api.getFacingDirection(playerId),
+    () => typeof api.getPlayerLookVector === "function" && api.getPlayerLookVector(playerId),
+    () => typeof api.getLookVector === "function" && api.getLookVector(playerId),
+    () => typeof api.getRotation === "function" && api.getRotation(playerId),
+    () => typeof api.getEntityRotation === "function" && api.getEntityRotation(playerId),
+  ];
+  for (const fn of cands) {
+    try {
+      const v = fn();
+      if (Array.isArray(v) && v.length >= 3 && v.every(n => Number.isFinite(n))) {
+        const len = Math.sqrt(v[0]*v[0]+v[1]*v[1]+v[2]*v[2]) || 1;
+        return [v[0]/len, v[1]/len, v[2]/len];
+      }
+      if (v && typeof v === "object" && Number.isFinite(v.x) && Number.isFinite(v.y) && Number.isFinite(v.z)) {
+        const len = Math.sqrt(v.x*v.x+v.y*v.y+v.z*v.z) || 1;
+        return [v.x/len, v.y/len, v.z/len];
+      }
+      if (v && typeof v === "object" && Array.isArray(v.dir)) {
+        const d = v.dir; if (d.length>=3) { const len = Math.sqrt(d[0]*d[0]+d[1]*d[1]+d[2]*d[2])||1; return [d[0]/len,d[1]/len,d[2]/len]; }
+      }
+    } catch(_) {}
+  }
+  return [0, 0, 1];
+}
+function triggerNovaLaser(api, playerId) {
+  const k = keyOf(playerId);
+  const charges = novaCharges.get(k) || 0;
+  if (!charges || charges <= 0) return false;
+  const abil = abilityForSet("Nova");
+  if (!abil) return false;
+  const now = globalTick;
+  const last = novaLaserCooldown.get(k) || -9999;
+  if (now - last < 10) return false;
+  novaLaserCooldown.set(k, now);
+  const pPos = playerPos(api, playerId);
+  if (!pPos) return false;
+  const dir = getLookDir(api, playerId);
+  const durationTicks = Math.max(20, charges * (abil.laserPerCharge ?? 20));
+  const dmg = abil.laserDps ?? 6;
+  const range = abil.laserRange ?? 24;
+  novaLasers.push({
+    playerId: k,
+    ownerId: playerId,
+    startPos: [pPos[0], pPos[1]+0.9, pPos[2]],
+    dir,
+    endTick: now + durationTicks,
+    dmg,
+    range,
+    startTick: now,
+  });
+  novaCharges.set(k, 0);
+  try { flyingMsg(api, playerId, [{ str: "Nova Laser! ", style:{color: abil.color} }, { str: `${charges} charges` }], abil.icon || "Damage"); } catch(_) {}
+  return true;
+}
+function novaLaserTick(api, now) {
+  if (!novaLasers.length) return;
+  for (let i = novaLasers.length - 1; i >= 0; i--) {
+    const l = novaLasers[i];
+    if (now >= l.endTick) { novaLasers.splice(i,1); continue; }
+    try { const cur = playerPos(api, l.ownerId); if (cur) { l.startPos = [cur[0], cur[1]+0.9, cur[2]]; } } catch(_) {}
+    const dir = l.dir;
+    const range = l.range;
+    const step = 1.2;
+    const steps = Math.ceil(range / step);
+    for (let s = 1; s <= steps; s++) {
+      const t = s * step;
+      const x = l.startPos[0] + dir[0]*t;
+      const y = l.startPos[1] + dir[1]*t;
+      const z = l.startPos[2] + dir[2]*t;
+      const pos = [x,y,z];
+      if (s % 2 === 0) { try { spawnAt(api, pos, "novaLaser", { radius: 0.35, height: 0.4 }); } catch(_) {} }
+      else { try { spawnPreset(api, pos, p => p.novaLaser ? p.novaLaser() : null); } catch(_) {} }
+      const nears = nearbyMobs(api, pos, 1.6);
+      for (const { id } of nears) {
+        try { damageMob(api, id, l.dmg, l.ownerId); } catch(_) {}
+      }
+    }
+    try { spawnAt(api, l.startPos, "novaLaser", { radius: 0.6, height: 0.8 }); } catch(_) {}
+  }
+}
+function novaSpeedTick(api, now) {
+  if (now % 20 !== 0) return;
+  let pids = [];
+  try { pids = typeof api.getPlayerIds === "function" ? api.getPlayerIds() : []; } catch(_) { pids=[]; }
+  for (const pid of pids) {
+    try {
+      let held = null;
+      if (typeof api.getHeldItem === "function") { const h=api.getHeldItem(pid); if(h&&h.name) held=h.name; }
+      if (!held && typeof api.getSelectedInventorySlotI === "function" && typeof api.getItemSlot === "function") {
+        const idx=api.getSelectedInventorySlotI(pid);
+        if (Number.isFinite(idx)&&idx>=0&&idx<10) { const it=api.getItemSlot(pid, idx); if(it&&it.name) held=it.name; }
+      }
+      if (!held) continue;
+      const clean = String(held).split("|")[0].trim();
+      if (clean !== "Nova Blade" && !clean.startsWith("Nova ")) continue;
+      applyEffectSafe(api, pid, "Speed", 1200, 1);
+    } catch(_) {}
+  }
+}
 
 // ── refresh stats ────────────────────────────────────────────────────
 export function refreshWeaponStats(api, playerId, dealingMultiplier = 1) {
@@ -452,6 +576,32 @@ export function handleHit(api, playerId, setName, opts = {}) {
       }
     }
   }
+  // ── Moonstone: pure damage, no proc
+  else if (setName === "Moonstone") {
+    if (mobPos) {
+      try { spawnAt(api, mobPos, "weaponSlash", { radius: 0.5, height: 0.9 }); } catch(_) {}
+    }
+    return { triggered: false, ability };
+  }
+  // ── Nova: slash every hit + crouch laser
+  else if (setName === "Nova") {
+    if (isPlayerCrouching(api, playerId)) {
+      const ch = novaCharges.get(k) || 0;
+      if (ch > 0) {
+        triggerNovaLaser(api, playerId);
+      } else {
+        try { flyingMsg(api, playerId, [{ str: "Nova: no charge! ", style:{color: ability.color} }], ability.icon || "Damage"); } catch(_) {}
+      }
+    }
+    if (mobPos) {
+      try { spawnAt(api, mobPos, "novaSlash", { radius: 0.5, height: 1.0 }); } catch(_) {}
+      // fallback generic slash if preset missing
+      try { spawnPreset(api, mobPos, p => p.novaSlash ? p.novaSlash() : null); } catch(_) {}
+    } else if (playerP) {
+      try { spawnAt(api, playerP, "novaSlash", { radius: 0.6, height: 1.2 }); } catch(_) {}
+    }
+    triggered = true;
+  }
 
   if (triggered || extraDamage) {
     return { triggered, ability, extraDamage, lifesteal: ability.lifesteal ?? 0 };
@@ -581,6 +731,23 @@ export function onMobKilled(api, playerId, mobId) {
     }
     dotMap.delete(String(mobId));
   }
+  // ── Nova: charge per kill max 20
+  else if (detectedSet === "Nova") {
+    const maxC = ability.maxCharges ?? 20;
+    const cur = novaCharges.get(k) || 0;
+    const next = Math.min(maxC, cur + 1);
+    novaCharges.set(k, next);
+    try { flyingMsg(api, playerId, [{ str: `Nova +1 `, style:{color: ability.color} }, { str: `${next}/${maxC}` }], ability.icon || "Damage"); } catch(_) {}
+    if (mobP) { try { spawnAt(api, mobP, "novaSlash", { radius: 0.6, height: 1.0 }); } catch(_) {} }
+    else if (playerP) { try { spawnAt(api, playerP, "novaSlash", { radius: 0.6, height: 1.0 }); } catch(_) {} }
+    dotMap.delete(String(mobId));
+    astralGlowing.delete(String(mobId));
+  }
+  // ── Moonstone: no kill effect, just clean
+  else if (detectedSet === "Moonstone") {
+    dotMap.delete(String(mobId));
+    astralGlowing.delete(String(mobId));
+  }
   // ── Astral: kill gives Glowing to mobs in 15 blocks + violet particles + extra dmg flag
   else if (detectedSet === "Astral") {
     const center = mobP || playerP;
@@ -675,6 +842,10 @@ export function tickWeapons(api) {
     }
   }
 
+  // Nova: laser + speed
+  try { novaLaserTick(api, now); } catch(_) {}
+  try { novaSpeedTick(api, now); } catch(_) {}
+
   // Astral aura while holding weapon (every 20 ticks)
   if (now % 20 === 0 && api) {
     let pids = [];
@@ -749,12 +920,40 @@ export function onCollision(api, eId, otherEId) {
   // dégâts supplémentaires du boomerang via handleHit extraDamage déjà gérés par damageMob dans handleHit, sinon on applique le dégât de base via le moteur (déjà fait)
 }
 
+// ── Nova crouch tracking ───────────────────────────────────────────────
+export function onCrouchChange(api, playerId, isCrouching) {
+  const k = keyOf(playerId);
+  novaCrouch.set(k, !!isCrouching);
+  // if player crouches and has charges + holding Nova, we can hint laser? Not auto fire, only on attack.
+  // But also if crouching and we already have laser condition, we could trigger via attack handler
+}
+export function getNovaCharges(playerId) {
+  return novaCharges.get(keyOf(playerId)) || 0;
+}
+export function _getNovaChargesMap() { return novaCharges; }
+export function _getNovaLasers() { return novaLasers; }
+export function setNovaCharges(playerId, n) {
+  const k = keyOf(playerId);
+  if (!Number.isFinite(n) || n <= 0) novaCharges.delete(k);
+  else novaCharges.set(k, Math.max(0, Math.min(20, Math.floor(n))));
+}
+export function tryNovaLaser(api, playerId) {
+  return triggerNovaLaser(api, playerId);
+}
+export function isNovaCrouching(api, playerId) {
+  return isPlayerCrouching(api, playerId);
+}
+
 export function forgetPlayer(playerId) {
   const k = keyOf(playerId);
   lastAbilityTick.delete(k);
   amethiteHits.delete(k);
   rubelliteStacks.delete(k);
   lastWeaponSet.delete(k);
+  novaCharges.delete(k);
+  novaCrouch.delete(k);
+  novaLaserCooldown.delete(k);
+  for (let i=novaLasers.length-1;i>=0;i--) if (String(novaLasers[i].playerId)===k) novaLasers.splice(i,1);
   for (const [mid, e] of [...dotMap.entries()]) if (String(e.ownerId)===k) dotMap.delete(mid);
   for (let i=geoMines.length-1;i>=0;i--) if (String(geoMines[i].ownerId)===k) geoMines.splice(i,1);
   for (const [mid,e] of [...astralGlowing.entries()]) if (String(e.ownerId)===k) astralGlowing.delete(mid);
@@ -769,6 +968,10 @@ export function _reset() {
   geoMines.length=0;
   astralGlowing.clear();
   astralAuraCooldown.clear();
+  novaCharges.clear();
+  novaCrouch.clear();
+  novaLaserCooldown.clear();
+  novaLasers.length=0;
   deletedEntities.clear();
   throwableMap.clear();
   globalTick=0;

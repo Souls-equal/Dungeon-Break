@@ -1439,3 +1439,12 @@ Voltplate Chestplate
 Voltplate Gauntlets
 Voltplate Leggings
 Voltplate Boots
+Moonstone Sword
+Nova Blade
+Nova Helmet
+Nova Chestplate
+Nova Leggings
+Nova Boots
+Nova Gauntlets
+Nova Alloy
+Nova Shard
