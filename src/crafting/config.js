@@ -131,12 +131,10 @@ export const CRAFTS = [
   {
     result: "Nova Alloy",
     produces: 1,
-    station: "Artisan Bench",
+    station: "Workbench",
     requires: [
       { items: ["Star Alloy"], amt: 2 },
       { items: ["Voltite Cell"], amt: 1 },
-      { items: ["Moonstone"], amt: 1 },
-      { items: ["Comet Shard"], amt: 1 },
     ],
   },
 
@@ -317,14 +315,14 @@ export const WEAPON_CRAFTS = [
   { result: "Astral Staff", produces: 1, station: "Artisan Bench", requires: [{ items: ["Star Alloy"], amt: 2 }, { items: ["Stick"], amt: 2 }, { items: ["Comet Shard"], amt: 1 }] },
   // Moonstone Sword — juste après Diamond, plus de dégâts, Workbench
   { result: "Moonstone Sword", produces: 1, station: "Workbench", requires: [{ items: ["Moonstone"], amt: 2 }, { items: ["Stick"], amt: 1 }] },
-  // Nova Blade — dernière arme, Artisan Bench
-  { result: "Nova Blade", produces: 1, station: "Artisan Bench", requires: [{ items: ["Nova Alloy"], amt: 3 }, { items: ["Star Alloy"], amt: 1 }, { items: ["Voltite Cell"], amt: 1 }] },
-  // Nova Armors — 5 pièces, Artisan Bench (Nova Alloy = ultima)
-  { result: "Nova Helmet", produces: 1, station: "Artisan Bench", requires: [{ items: ["Nova Alloy"], amt: 5 }, { items: ["Comet Shard"], amt: 2 }] },
-  { result: "Nova Chestplate", produces: 1, station: "Artisan Bench", requires: [{ items: ["Nova Alloy"], amt: 8 }, { items: ["Comet Shard"], amt: 3 }] },
+  // Nova Blade — dernière arme, Workbench
+  { result: "Nova Blade", produces: 1, station: "Workbench", requires: [{ items: ["Nova Alloy"], amt: 3 }, { items: ["Stick"], amt: 1 }] },
+  // Nova Armors — 5 pièces, Workbench (Nova Alloy = ultima) — simplified to 1 ingredient to ensure valid recipes
+  { result: "Nova Helmet", produces: 1, station: "Workbench", requires: [{ items: ["Nova Alloy"], amt: 5 }] },
+  { result: "Nova Chestplate", produces: 1, station: "Workbench", requires: [{ items: ["Nova Alloy"], amt: 8 }] },
   { result: "Nova Leggings", produces: 1, station: "Workbench", requires: [{ items: ["Nova Alloy"], amt: 7 }] },
   { result: "Nova Boots", produces: 1, station: "Workbench", requires: [{ items: ["Nova Alloy"], amt: 4 }] },
-  { result: "Nova Gauntlets", produces: 1, station: "Artisan Bench", requires: [{ items: ["Nova Alloy"], amt: 4 }, { items: ["Comet Shard"], amt: 2 }] },
+  { result: "Nova Gauntlets", produces: 1, station: "Workbench", requires: [{ items: ["Nova Alloy"], amt: 4 }] },
 ];
 
 // Shard -> Material mapping for display / debug
