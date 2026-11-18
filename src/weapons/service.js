@@ -260,7 +260,7 @@ export function handleHit(api, playerId, setName, opts = {}) {
       extraDamage = Math.round(base * (ability.extraMult || 0.6));
       // zone particles
       if (mobPos) spawnZone(api, [mobPos[0], mobPos[1], mobPos[2]], "amethystZone", 2.2, 0.4);
-      flyingMsg(api, playerId, [{ str: "Zone violette! ", style:{color:ability.color} }, { str: `+${extraDamage}` }], "Amethyst Shard");
+      flyingMsg(api, playerId, [{ str: "Zone violette! ", style:{color:ability.color} }, { str: `+${extraDamage}` }], "Amethite");
       // zone damage to nearby mobs (if possible)
       if (mobPos && opts.mobId) {
         const nears = nearbyMobs(api, mobPos, 4);
@@ -274,30 +274,23 @@ export function handleHit(api, playerId, setName, opts = {}) {
       return { triggered:false, ability, count: next };
     }
   }
-  // ── Magmasteel: burn 20%/s ×5s
+  // ── Magmasteel: burn 20%/s ×5s — refresh on every hit
   else if (setName === "Magmasteel") {
-    // apply burn on this mob
-    const last = perPlayer.get(setName+"_burn_"+String(opts.mobId)) ?? -9999;
-    // we allow burn re-apply even if on cooldown? but limit 20 ticks per mob
-    if (opts.mobId && nowTick - last < 20) {
-      // still show particles but don't re-stack burn immediately
-      // we skip to avoid spam but still visual is handled elsewhere
-    } else if (opts.mobId) {
-      perPlayer.set(setName+"_burn_"+String(opts.mobId), nowTick);
+    if (opts.mobId) {
       const burnDmg = Math.max(1, Math.round((scaled||base) * (ability.burnFrac ?? 0.20)));
-      // store DOT
       dotMap.set(String(opts.mobId), {
         ownerId: playerId,
         dmg: burnDmg,
         ticksLeft: ability.burnTicks ?? 100,
         interval: ability.burnInterval ?? 20,
-        nextTick: nowTick + (ability.burnInterval ?? 20),
+        nextTick: globalTick + (ability.burnInterval ?? 20),
         type: "burn",
         pos: mobPos ? [...mobPos] : null,
         mobId: String(opts.mobId),
       });
-      flyingMsg(api, playerId, [{ str: "Brûlure! ", style:{color:ability.color} }], "Fire Charge");
+      flyingMsg(api, playerId, [{ str: "Brûlure! ", style:{color:ability.color} }], "Damage");
       if (mobPos) spawnAt(api, mobPos, "magmaBurn", { radius: 0.5, height: 1.2 });
+      // small particle burst always even on refresh
       triggered = true;
     }
   }
@@ -310,12 +303,12 @@ export function handleHit(api, playerId, setName, opts = {}) {
         dmg: burnDmg,
         ticksLeft: ability.poisonTicks ?? 160,
         interval: ability.poisonInterval ?? 20,
-        nextTick: nowTick + (ability.poisonInterval ?? 20),
+        nextTick: globalTick + (ability.poisonInterval ?? 20),
         type: "poison",
         pos: mobPos ? [...mobPos] : null,
         mobId: String(opts.mobId),
       });
-      flyingMsg(api, playerId, [{ str: "Venin! ", style:{color:ability.color} }], "Spider Eye");
+      flyingMsg(api, playerId, [{ str: "Venin! ", style:{color:ability.color} }], "Poisoned");
       if (mobPos) spawnAt(api, mobPos, "serpentPoison", { radius:0.5, height:1.0 });
       triggered = true;
     }
@@ -329,28 +322,22 @@ export function handleHit(api, playerId, setName, opts = {}) {
     // particles
     if (mobPos) spawnAt(api, mobPos, "sanguineDrainMob", { radius:0.4, height:0.6 });
     if (playerP) spawnAt(api, playerP, "sanguineHealPlayer", { radius:0.5, height:1.4 });
-    flyingMsg(api, playerId, [{ str: `+${healAmt} `, style:{color:ability.color} }, { str:"HP" }], "Apple");
+    flyingMsg(api, playerId, [{ str: `+${healAmt} `, style:{color:ability.color} }, { str:"HP" }], "Lifesteal");
     triggered = true;
   }
-  // ── Spectral: 3s invisibility + particles
+  // ── Spectral: 3s invisibility + particles — every hit refreshes
   else if (setName === "Spectral") {
-    const last = perPlayer.get(setName) ?? -9999;
-    if (nowTick - last < 30) { // 1.5s min entre invis pour pas spam
-      // skip
-    } else {
-      perPlayer.set(setName, nowTick);
-      applyEffectSafe(api, playerId, "Invisibility", ability.invisMs ?? 3000, 1);
-      if (playerP) spawnAt(api, playerP, "spectralInvis", { radius:0.6, height:1.6 });
-      flyingMsg(api, playerId, [{ str:"Voile spectral! ", style:{color:ability.color} }], "Ender Pearl");
-      triggered = true;
-    }
+    applyEffectSafe(api, playerId, "Invisibility", ability.invisMs ?? 3000, 1);
+    if (playerP) spawnAt(api, playerP, "spectralInvis", { radius:0.6, height:1.6 });
+    flyingMsg(api, playerId, [{ str:"Voile spectral! ", style:{color:ability.color} }], "Invisible");
+    triggered = true;
   }
   // ── Geo: bouclier par coup (default shield)
   else if (setName === "Geo") {
     shieldAdd(api, playerId, ability.shieldPerHit ?? 2, ability.shieldCap ?? 12);
     // petit visuel bouclier? on évite custom, mais on ajoute étincelle ocre discrète
     if (playerP) spawnAt(api, playerP, "geoMineTick", { radius:0.6, height:1.2 });
-    flyingMsg(api, playerId, [{ str:"+Bouclier ", style:{color:ability.color} }], "Shield");
+    flyingMsg(api, playerId, [{ str:"+Bouclier ", style:{color:ability.color} }], "HealthShield");
     triggered = true;
     // cooldown minimal 5 ticks pour pas stack infini sur bow rapide
     const last = perPlayer.get(setName) ?? -9999;
@@ -359,25 +346,24 @@ export function handleHit(api, playerId, setName, opts = {}) {
     }
     perPlayer.set(setName, nowTick);
   }
-  // ── Astral: tornade + vérifier glowing bonus
+  // ── Astral: tornade + vérifier glowing bonus — tornado every hit (light cooldown 5 ticks)
   else if (setName === "Astral") {
-    // glowing bonus damage if target is glowing
     if (opts.mobId && astralGlowing.has(String(opts.mobId))) {
       const g = astralGlowing.get(String(opts.mobId));
-      if (g && g.expireTick > nowTick) {
+      if (g && g.expireTick > globalTick) {
         const bonus = ability.glowingExtraFrac ?? 0.35;
         extraDamage += Math.round(base * bonus);
       }
     }
-    // tornade
     if (mobPos) {
-      // cooldown 15 ticks pour tornade afin d'éviter spam bow
       const last = perPlayer.get("Astral_tornado") ?? -9999;
-      if (nowTick - last >= 15) {
+      if (nowTick - last >= 5) {
         perPlayer.set("Astral_tornado", nowTick);
         spawnZone(api, [mobPos[0], mobPos[1], mobPos[2]], "astralTornado", 1.4, 1.8);
-        // flying only occasional
-        if (nowTick % 40 < 15) flyingMsg(api, playerId, [{ str:"Tornade astrale! ", style:{color:ability.color} }], "Nether Star");
+        flyingMsg(api, playerId, [{ str:"Tornade astrale! ", style:{color:ability.color} }], "Glowing");
+        triggered = true;
+      } else if (extraDamage) {
+        // still count as triggered for damage even if tornado on short cd
         triggered = true;
       }
     }
@@ -460,7 +446,7 @@ export function onMobKilled(api, playerId, mobId) {
     // large pink zone
     if (playerP) spawnZone(api, [playerP[0], playerP[1], playerP[2]], "rubelliteKillZone", 2.0, 0.6);
     const lvlStr = newLevel===1 ? "I" : newLevel===2 ? "II" : "III";
-    flyingMsg(api, playerId, [{ str:`Cœur rubis ${lvlStr}! `, style:{color:ability.color} }], "Heart of the Sea");
+    flyingMsg(api, playerId, [{ str:`Cœur rubis ${lvlStr}! `, style:{color:ability.color} }], "Health Regen");
     // also clear DOT on this mob
     dotMap.delete(String(mobId));
   }
@@ -503,7 +489,7 @@ export function onMobKilled(api, playerId, mobId) {
       }
       // big cyan explosion particles at center
       spawnZone(api, center, "spectralExplosion", 2.5, 1.0);
-      flyingMsg(api, playerId, [{ str:"Explosion spectrale! ", style:{color:ability.color} }], "Soul Lantern");
+      flyingMsg(api, playerId, [{ str:"Explosion spectrale! ", style:{color:ability.color} }], "Damage");
     }
     dotMap.delete(String(mobId));
     astralGlowing.delete(String(mobId));
@@ -534,7 +520,7 @@ export function onMobKilled(api, playerId, mobId) {
         // small ticking particles initially
         spawnAt(api, mPos, "geoMineTick", { radius:0.5, height:0.6 });
       }
-      flyingMsg(api, playerId, [{ str:"Mines posées! ", style:{color:ability.color} }], "TNT");
+      flyingMsg(api, playerId, [{ str:"Mines posées! ", style:{color:ability.color} }], "Damage Reduction");
     }
     dotMap.delete(String(mobId));
   }
@@ -552,7 +538,7 @@ export function onMobKilled(api, playerId, mobId) {
       // also center big violet cloud
       spawnZone(api, center, "astralGlowing", 2.5, 1.2);
       const cnt = nears.length;
-      if (cnt>0) flyingMsg(api, playerId, [{ str:`Glowing ×${cnt}! `, style:{color:ability.color} }], "Ender Eye");
+      if (cnt>0) flyingMsg(api, playerId, [{ str:`Glowing ×${cnt}! `, style:{color:ability.color} }], "Glowing");
     }
     dotMap.delete(String(mobId));
   }
