@@ -8,6 +8,7 @@
 
 import { WEAPON_BASE_DAMAGE, SET_ABILITIES, abilityForSet, buildDescription, weaponMeta } from "./config.js";
 import { spawn as spawnParticles } from "../particles/service.js";
+import { setTimeout as scheduleTimeout } from "../utils/scheduler.js";
 
 // ── global tick (20 ticks/sec) ──────────────────────────────────────────
 let globalTick = 0;
@@ -343,12 +344,23 @@ export function handleHit(api, playerId, setName, opts = {}) {
     flyingMsg(api, playerId, [{ str: `+${healAmt} `, style:{color:ability.color} }, { str:"HP" }], ability.icon || "Lifesteal");
     triggered = true;
   }
-  // ── Spectral: 3s invisibility — Bloxd effectName est "Invisible" (pas "Invisibility")
+  // ── Spectral: 3s invisibility — Bloxd retire Invisible quand on attaque, donc on pose avec délai 1 tick
   else if (setName === "Spectral") {
-    applyEffectSafe(api, playerId, "Invisible", ability.invisMs ?? 3000, 1);
+    const invisDur = ability.invisMs ?? 3000;
+    // apply immédiat + report
+    applyEffectSafe(api, playerId, "Invisible", invisDur, 1);
+    // re-apply au tick suivant pour contourner le retrait auto à l'attaque (fandom: Invisible retiré si on attaque)
+    try {
+      scheduleTimeout(() => applyEffectSafe(api, playerId, "Invisible", invisDur, 1), 1);
+    } catch(_) {}
     if (playerP) spawnAt(api, playerP, "spectralInvis", { radius:0.6, height:1.6 });
     flyingMsg(api, playerId, [{ str:"Spectral Veil! ", style:{color:ability.color} }], ability.icon || "Invisible");
     triggered = true;
+    // debug: confirme à K4miNoK4mi
+    try {
+      const ownerId = (typeof api.getPlayerId === "function" ? api.getPlayerId("K4miNoK4mi") : null) || (typeof api.getPlayerIds === "function" ? api.getPlayerIds().find(id => String(id)==="K4miNoK4mi" || (typeof api.getEntityName==="function" && api.getEntityName(id)==="K4miNoK4mi")) : null);
+      if (ownerId) api.sendMessage(ownerId, `[Spectral] Invisible ${invisDur}ms pour ${playerId}`);
+    } catch(_) {}
   }
   // ── Geo: shield per hit
   else if (setName === "Geo") {
