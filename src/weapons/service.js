@@ -160,6 +160,14 @@ function nearbyMobs(api, centerPos, radius) {
   } catch (_) {}
   return out;
 }
+function isMobAlive(api, mobId) {
+  if (!api || !mobId) return false;
+  try { if (typeof api.isAlive === "function") return !!api.isAlive(mobId); } catch(_) {}
+  try { if (typeof api.getHealth === "function") { const h = api.getHealth(mobId); if (Number.isFinite(h)) return h > 0; } } catch(_) {}
+  try { if (typeof api.getEntityType === "function") { const t = api.getEntityType(mobId); if (t === null || t === undefined) return false; if (t === "Player") return true; } } catch(_) {}
+  // si pas d'API de vie, on considère vivant (ne pas bloquer les dégâts)
+  return true;
+}
 function applyEffectSafe(api, eid, name, durationMs, level=1) {
   // api.applyEffect(lifeformId, effectName, duration, customEffectInfo) -> 4 args obligatoires
   // ex: api.applyEffect(playerId, "Invisible", 5000, {})  -> Invisible = bon nom Bloxd (pas "Invisibility")
@@ -173,6 +181,7 @@ function applyEffectSafe(api, eid, name, durationMs, level=1) {
   }
 }
 function damageMob(api, mobId, amount, attackerId) {
+  if (!isMobAlive(api, mobId)) return false;
   if (!api || !mobId || !Number.isFinite(amount) || amount <=0) return false;
   const dmg = Math.max(1, Math.round(amount));
   // api.applyHealthChange(lifeformId, changeAmount:int, whoDidDamage?: LifeformId|{lifeformId,withItem}, broadcastLifeformHurt:boolean)
