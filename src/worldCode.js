@@ -1650,6 +1650,25 @@ onPlayerJoin = (playerId) => {
   const names = DIFFICULTIES.filter((entry) => entry.fromLobby).map((entry) => entry.label).join(", ");
   api.sendMessage(playerId, [cStr("Welcome to Dungeon Break! ", MSG_COLORS.gold), cStr(`(${names})`, MSG_COLORS.white)]);
   api.sendMessage(playerId, [cStr("Shards → Crates → Craft → Weapons", MSG_COLORS.aqua)])
+  // Give a Wood Sword if player has no item containing "Sword"
+  try {
+    let hasSword = false;
+    if (typeof api.getItemSlot === "function") {
+      for (let i = 0; i < 60; i++) {
+        try { const it = api.getItemSlot(playerId, i); if (it && it.name && String(it.name).includes("Sword")) { hasSword = true; break; } } catch(_){}
+      }
+    }
+    if (!hasSword && typeof api.getHeldItem === "function") {
+      try { const h = api.getHeldItem(playerId); if (h && h.name && String(h.name).includes("Sword")) hasSword = true; } catch(_){}
+    }
+    if (!hasSword) {
+      if (typeof api.giveItem === "function") api.giveItem(playerId, "Wood Sword", 1);
+      else if (typeof api.giveItemStack === "function") api.giveItemStack(playerId, "Wood Sword", 1);
+      else if (typeof api.setItemSlot === "function") {
+        for (let i = 0; i < 10; i++) { try { const it = api.getItemSlot(playerId, i); if (!it || !it.name || it.name === "Air") { api.setItemSlot(playerId, i, "Wood Sword", 1); break; } } catch(_){} }
+      }
+    }
+  } catch(e) { reportErrorToOwner(e); }
 };
 
 /**
