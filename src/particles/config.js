@@ -65,7 +65,8 @@ export const ARMOR_SET_COLOR = {
   Geo: "#D4A574",
   Astral: "#8A2BE2",
   Voltplate: "#00E5FF", // tech cyan (Voltite Cell)
-  Nova: "#00FFFF", // nova cyan
+  Nova: "#FFFFFF", // nova white/lime
+  "Nova2": "#32CD32",
 };
 
 // Reusable presets
@@ -508,5 +509,153 @@ export const PRESETS = {
       { timeFraction: 0, minColor: [...hexToRgb("#00FFFF"), 1], maxColor: [...hexToRgb("#88FFFF"), 1] },
       { timeFraction: 1, minColor: [...hexToRgb("#FFFFFF"), 0.8], maxColor: [...hexToRgb("#00FFFF"), 0] },
     ],
+  }),
+  // ── Armor sets — Amethite
+  amethiteWave: () => ({
+    texture: PARTICLE_TEXTURES.magic, minLifeTime: 0.5, maxLifeTime: 0.9, minEmitPower: 0.6, maxEmitPower: 1.6, minSize: 0.30, maxSize: 0.55, gravity: [0,0.3,0], blendMode: 1, manualEmitCount: 22,
+    colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb("#9B59B6"),1], maxColor: [...hexToRgb("#D8B4FE"),1] }, { timeFraction: 1, minColor: [...hexToRgb("#FFFFFF"),0.6], maxColor: [...hexToRgb("#9B59B6"),0] }],
+  }),
+  amethiteCharge: () => ({
+    texture: PARTICLE_TEXTURES.spark, minLifeTime: 0.4, maxLifeTime: 0.7, minEmitPower: 0.3, maxEmitPower: 0.9, minSize: 0.14, maxSize: 0.28, gravity: [0,0.6,0], blendMode: 1, manualEmitCount: 12,
+    colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb("#9B59B6"),0.9], maxColor: [...hexToRgb("#D8B4FE"),0.9] }, { timeFraction: 1, minColor: [...hexToRgb("#9B59B6"),0], maxColor: [...hexToRgb("#FFFFFF"),0] }],
+  }),
+  // Magmasteel
+  magmaLavaProtect: () => ({
+    texture: PARTICLE_TEXTURES.spark, minLifeTime: 0.4, maxLifeTime: 0.7, minEmitPower: 0.2, maxEmitPower: 0.7, minSize: 0.12, maxSize: 0.22, gravity: [0,0.8,0], blendMode: 1, manualEmitCount: 10,
+    colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb("#E67E22"),0.9], maxColor: [...hexToRgb("#FF7700"),0.9] }, { timeFraction: 1, minColor: [...hexToRgb("#E67E22"),0], maxColor: [...hexToRgb("#FFFFFF"),0] }],
+  }),
+  magmaExplosion: () => ({
+    texture: PARTICLE_TEXTURES.flame, minLifeTime: 0.5, maxLifeTime: 0.9, minEmitPower: 1.5, maxEmitPower: 3.0, minSize: 0.35, maxSize: 0.65, gravity: [0,1.2,0], blendMode: 1, manualEmitCount: 28,
+    colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb("#E67E22"),1], maxColor: [...hexToRgb("#FF4400"),1] }, { timeFraction: 1, minColor: [...hexToRgb("#FFCC00"),0.6], maxColor: [...hexToRgb("#FFFFFF"),0] }],
+  }),
+  // Rubellite
+  rubelliteRegen: () => ({
+    texture: PARTICLE_TEXTURES.spark, minLifeTime: 0.5, maxLifeTime: 0.9, minEmitPower: 0.4, maxEmitPower: 1.0, minSize: 0.14, maxSize: 0.26, gravity: [0,1.2,0], blendMode: 1, manualEmitCount: 10,
+    colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb("#E91E63"),0.9], maxColor: [...hexToRgb("#FF88CC"),0.9] }, { timeFraction: 1, minColor: [...hexToRgb("#E91E63"),0], maxColor: [...hexToRgb("#FFFFFF"),0] }],
+  }),
+  rubelliteMaxAura: () => ({
+    texture: PARTICLE_TEXTURES.magic, minLifeTime: 0.6, maxLifeTime: 1.0, minEmitPower: 0.3, maxEmitPower: 0.8, minSize: 0.22, maxSize: 0.40, gravity: [0,0.6,0], blendMode: 1, manualEmitCount: 14,
+    colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb("#E91E63"),0.7], maxColor: [...hexToRgb("#FF88CC"),0.7] }, { timeFraction: 1, minColor: [...hexToRgb("#E91E63"),0], maxColor: [...hexToRgb("#FFFFFF"),0] }],
+  }),
+  // Serpentite
+  serpentActive: () => ({
+    texture: PARTICLE_TEXTURES.spark, minLifeTime: 0.6, maxLifeTime: 1.0, minEmitPower: 0.3, maxEmitPower: 0.8, minSize: 0.14, maxSize: 0.26, gravity: [0,0.8,0], blendMode: 1, manualEmitCount: 8,
+    colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb("#32CD32"),0.8], maxColor: [...hexToRgb("#2ECC71"),0.8] }, { timeFraction: 1, minColor: [...hexToRgb("#32CD32"),0], maxColor: [...hexToRgb("#FFFFFF"),0] }],
+  }),
+  serpentSpread: () => ({
+    texture: PARTICLE_TEXTURES.magic, minLifeTime: 0.4, maxLifeTime: 0.7, minEmitPower: 1.2, maxEmitPower: 2.2, minSize: 0.24, maxSize: 0.42, gravity: [0,1.0,0], blendMode: 1, manualEmitCount: 16,
+    colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb("#32CD32"),1], maxColor: [...hexToRgb("#2ECC71"),1] }, { timeFraction: 1, minColor: [...hexToRgb("#FFFFFF"),0.5], maxColor: [...hexToRgb("#32CD32"),0] }],
+  }),
+  // Cursemetal
+  curseApply: () => ({
+    texture: PARTICLE_TEXTURES.magic, minLifeTime: 0.5, maxLifeTime: 0.9, minEmitPower: 0.6, maxEmitPower: 1.4, minSize: 0.22, maxSize: 0.40, gravity: [0,1.0,0], blendMode: 1, manualEmitCount: 16,
+    colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb("#87CEEB"),1], maxColor: [...hexToRgb("#111111"),1] }, { timeFraction: 1, minColor: [...hexToRgb("#87CEEB"),0.3], maxColor: [...hexToRgb("#000000"),0] }],
+  }),
+  curseActive: () => ({
+    texture: PARTICLE_TEXTURES.spark, minLifeTime: 0.6, maxLifeTime: 1.0, minEmitPower: 0.2, maxEmitPower: 0.6, minSize: 0.12, maxSize: 0.22, gravity: [0,0.4,0], blendMode: 1, manualEmitCount: 8,
+    colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb("#87CEEB"),0.8], maxColor: [...hexToRgb("#111111"),0.8] }, { timeFraction: 1, minColor: [...hexToRgb("#87CEEB"),0], maxColor: [...hexToRgb("#000000"),0] }],
+  }),
+  curseSpread: () => ({
+    texture: PARTICLE_TEXTURES.spark, minLifeTime: 0.4, maxLifeTime: 0.7, minEmitPower: 1.0, maxEmitPower: 2.0, minSize: 0.18, maxSize: 0.32, gravity: [0,0.8,0], blendMode: 1, manualEmitCount: 14,
+    colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb("#00BFFF"),1], maxColor: [...hexToRgb("#87CEEB"),1] }, { timeFraction: 1, minColor: [...hexToRgb("#FFFFFF"),0.6], maxColor: [...hexToRgb("#00BFFF"),0] }],
+  }),
+  curseExplosion: () => ({
+    texture: PARTICLE_TEXTURES.smoke, minLifeTime: 0.6, maxLifeTime: 1.0, minEmitPower: 1.6, maxEmitPower: 3.2, minSize: 0.36, maxSize: 0.68, gravity: [0,0.6,0], blendMode: 1, manualEmitCount: 30,
+    colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb("#111111"),1], maxColor: [...hexToRgb("#87CEEB"),1] }, { timeFraction: 1, minColor: [...hexToRgb("#000000"),0.6], maxColor: [...hexToRgb("#00BFFF"),0] }],
+  }),
+  // Kingly Amethite
+  kinglyAmethiteActivation: () => ({
+    texture: PARTICLE_TEXTURES.spark, minLifeTime: 0.4, maxLifeTime: 0.7, minEmitPower: 0.5, maxEmitPower: 1.2, minSize: 0.16, maxSize: 0.28, gravity: [0,1.0,0], blendMode: 1, manualEmitCount: 12,
+    colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb("#9B59B6"),1], maxColor: [...hexToRgb("#FFFFFF"),1] }, { timeFraction: 1, minColor: [...hexToRgb("#9B59B6"),0], maxColor: [...hexToRgb("#FFFFFF"),0] }],
+  }),
+  kinglyAmethiteAccum: () => ({
+    texture: PARTICLE_TEXTURES.magic, minLifeTime: 0.7, maxLifeTime: 1.1, minEmitPower: 0.4, maxEmitPower: 1.0, minSize: 0.22, maxSize: 0.40, gravity: [0,0.8,0], blendMode: 1, manualEmitCount: 18,
+    colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb("#9B59B6"),0.9], maxColor: [...hexToRgb("#FFFFFF"),0.9] }, { timeFraction: 1, minColor: [...hexToRgb("#9B59B6"),0], maxColor: [...hexToRgb("#FFFFFF"),0] }],
+  }),
+  kinglyAmethiteCircle: () => ({
+    texture: PARTICLE_TEXTURES.star, minLifeTime: 0.5, maxLifeTime: 0.8, minEmitPower: 0.3, maxEmitPower: 0.8, minSize: 0.24, maxSize: 0.44, gravity: [0,0.4,0], blendMode: 1, manualEmitCount: 16,
+    colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb("#9B59B6"),1], maxColor: [...hexToRgb("#D8B4FE"),1] }, { timeFraction: 1, minColor: [...hexToRgb("#FFFFFF"),0.6], maxColor: [...hexToRgb("#9B59B6"),0] }],
+  }),
+  kinglyAmethiteExplosion: () => ({
+    texture: PARTICLE_TEXTURES.star, minLifeTime: 0.5, maxLifeTime: 0.9, minEmitPower: 1.8, maxEmitPower: 3.2, minSize: 0.34, maxSize: 0.62, gravity: [0,0.8,0], blendMode: 1, manualEmitCount: 32,
+    colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb("#9B59B6"),1], maxColor: [...hexToRgb("#FFFFFF"),1] }, { timeFraction: 1, minColor: [...hexToRgb("#FFFFFF"),0.5], maxColor: [...hexToRgb("#9B59B6"),0] }],
+  }),
+  // Kingly Diamond
+  kinglyDiamondShieldGen: () => ({
+    texture: PARTICLE_TEXTURES.spark, minLifeTime: 0.4, maxLifeTime: 0.7, minEmitPower: 0.4, maxEmitPower: 0.9, minSize: 0.14, maxSize: 0.26, gravity: [0,1.0,0], blendMode: 1, manualEmitCount: 12,
+    colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb("#FFD700"),1], maxColor: [...hexToRgb("#FFFFFF"),1] }, { timeFraction: 1, minColor: [...hexToRgb("#FFD700"),0], maxColor: [...hexToRgb("#FFFFFF"),0] }],
+  }),
+  kinglyDiamondActive: () => ({
+    texture: PARTICLE_TEXTURES.spark, minLifeTime: 0.6, maxLifeTime: 1.0, minEmitPower: 0.3, maxEmitPower: 0.7, minSize: 0.12, maxSize: 0.22, gravity: [0,0.9,0], blendMode: 1, manualEmitCount: 8,
+    colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb("#FFD700"),0.8], maxColor: [...hexToRgb("#FFFFFF"),0.8] }, { timeFraction: 1, minColor: [...hexToRgb("#FFD700"),0], maxColor: [...hexToRgb("#FFFFFF"),0] }],
+  }),
+  kinglyDiamondBreak: () => ({
+    texture: PARTICLE_TEXTURES.star, minLifeTime: 0.5, maxLifeTime: 0.9, minEmitPower: 1.6, maxEmitPower: 3.0, minSize: 0.32, maxSize: 0.60, gravity: [0,1.2,0], blendMode: 1, manualEmitCount: 28,
+    colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb("#FFFFFF"),1], maxColor: [...hexToRgb("#FFD700"),1] }, { timeFraction: 1, minColor: [...hexToRgb("#FFFFFF"),0.6], maxColor: [...hexToRgb("#FFD700"),0] }],
+  }),
+  kinglyDiamondUltimate: () => ({
+    texture: PARTICLE_TEXTURES.magic, minLifeTime: 0.7, maxLifeTime: 1.1, minEmitPower: 0.4, maxEmitPower: 1.0, minSize: 0.28, maxSize: 0.52, gravity: [0,0.6,0], blendMode: 1, manualEmitCount: 22,
+    colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb("#FFD700"),1], maxColor: [...hexToRgb("#FFFFFF"),1] }, { timeFraction: 1, minColor: [...hexToRgb("#FFD700"),0], maxColor: [...hexToRgb("#FFFFFF"),0] }],
+  }),
+  // Sanguine
+  sanguineWave: () => ({
+    texture: PARTICLE_TEXTURES.star, minLifeTime: 0.5, maxLifeTime: 0.8, minEmitPower: 0.6, maxEmitPower: 1.4, minSize: 0.26, maxSize: 0.48, gravity: [0,0.4,0], blendMode: 1, manualEmitCount: 20,
+    colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb("#8B0000"),1], maxColor: [...hexToRgb("#FF0000"),1] }, { timeFraction: 1, minColor: [...hexToRgb("#8B0000"),0.5], maxColor: [...hexToRgb("#FF0000"),0] }],
+  }),
+  sanguineExplosion: () => ({
+    texture: PARTICLE_TEXTURES.star, minLifeTime: 0.5, maxLifeTime: 0.9, minEmitPower: 1.6, maxEmitPower: 3.2, minSize: 0.34, maxSize: 0.62, gravity: [0,0.8,0], blendMode: 1, manualEmitCount: 30,
+    colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb("#8B0000"),1], maxColor: [...hexToRgb("#000000"),1] }, { timeFraction: 1, minColor: [...hexToRgb("#FF0000"),0.6], maxColor: [...hexToRgb("#000000"),0] }],
+  }),
+  // Spectral
+  spectralReappear: () => ({
+    texture: PARTICLE_TEXTURES.spark, minLifeTime: 0.4, maxLifeTime: 0.7, minEmitPower: 0.4, maxEmitPower: 0.9, minSize: 0.14, maxSize: 0.26, gravity: [0,0.8,0], blendMode: 1, manualEmitCount: 12,
+    colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb("#00D4C8"),0.9], maxColor: [...hexToRgb("#FFFFFF"),0.9] }, { timeFraction: 1, minColor: [...hexToRgb("#00D4C8"),0], maxColor: [...hexToRgb("#FFFFFF"),0] }],
+  }),
+  spectralSpiral: () => ({
+    texture: PARTICLE_TEXTURES.magic, minLifeTime: 0.6, maxLifeTime: 1.0, minEmitPower: 0.6, maxEmitPower: 1.4, minSize: 0.22, maxSize: 0.42, gravity: [0,0.6,0], blendMode: 1, manualEmitCount: 20,
+    colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb("#00D4C8"),1], maxColor: [...hexToRgb("#111111"),1] }, { timeFraction: 1, minColor: [...hexToRgb("#00D4C8"),0.4], maxColor: [...hexToRgb("#000000"),0] }],
+  }),
+  // Geo
+  geoShield: () => ({
+    texture: PARTICLE_TEXTURES.spark, minLifeTime: 0.4, maxLifeTime: 0.7, minEmitPower: 0.3, maxEmitPower: 0.8, minSize: 0.14, maxSize: 0.26, gravity: [0,1.0,0], blendMode: 1, manualEmitCount: 10,
+    colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb("#D4A574"),1], maxColor: [...hexToRgb("#8B5A2B"),1] }, { timeFraction: 1, minColor: [...hexToRgb("#D4A574"),0], maxColor: [...hexToRgb("#FFFFFF"),0] }],
+  }),
+  geoSeismic: () => ({
+    texture: PARTICLE_TEXTURES.smoke, minLifeTime: 0.5, maxLifeTime: 0.8, minEmitPower: 0.8, maxEmitPower: 1.6, minSize: 0.28, maxSize: 0.48, gravity: [0,0.2,0], blendMode: 1, manualEmitCount: 20,
+    colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb("#D4A574"),1], maxColor: [...hexToRgb("#5A3A1A"),1] }, { timeFraction: 1, minColor: [...hexToRgb("#D4A574"),0.5], maxColor: [...hexToRgb("#FFFFFF"),0] }],
+  }),
+  // Voltplate
+  voltplateDischarge: () => ({
+    texture: PARTICLE_TEXTURES.spark, minLifeTime: 0.4, maxLifeTime: 0.7, minEmitPower: 1.0, maxEmitPower: 2.0, minSize: 0.18, maxSize: 0.34, gravity: [0,0.6,0], blendMode: 1, manualEmitCount: 16,
+    colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb("#00E5FF"),1], maxColor: [...hexToRgb("#78909C"),1] }, { timeFraction: 1, minColor: [...hexToRgb("#00E5FF"),0.5], maxColor: [...hexToRgb("#FFFFFF"),0] }],
+  }),
+  voltplateChain: () => ({
+    texture: PARTICLE_TEXTURES.spark, minLifeTime: 0.3, maxLifeTime: 0.6, minEmitPower: 0.8, maxEmitPower: 1.6, minSize: 0.12, maxSize: 0.24, gravity: [0,0.4,0], blendMode: 1, manualEmitCount: 10,
+    colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb("#00E5FF"),1], maxColor: [...hexToRgb("#FFFFFF"),1] }, { timeFraction: 1, minColor: [...hexToRgb("#00E5FF"),0], maxColor: [...hexToRgb("#FFFFFF"),0] }],
+  }),
+  voltplateCharge: () => ({
+    texture: PARTICLE_TEXTURES.spark, minLifeTime: 0.5, maxLifeTime: 0.9, minEmitPower: 0.3, maxEmitPower: 0.8, minSize: 0.12, maxSize: 0.22, gravity: [0,1.2,0], blendMode: 1, manualEmitCount: 8,
+    colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb("#00E5FF"),0.8], maxColor: [...hexToRgb("#78909C"),0.8] }, { timeFraction: 1, minColor: [...hexToRgb("#00E5FF"),0], maxColor: [...hexToRgb("#78909C"),0] }],
+  }),
+  voltplateUltimate: () => ({
+    texture: PARTICLE_TEXTURES.star, minLifeTime: 0.6, maxLifeTime: 1.0, minEmitPower: 1.8, maxEmitPower: 3.6, minSize: 0.38, maxSize: 0.68, gravity: [0,0.8,0], blendMode: 1, manualEmitCount: 36,
+    colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb("#00E5FF"),1], maxColor: [...hexToRgb("#FFFFFF"),1] }, { timeFraction: 1, minColor: [...hexToRgb("#FFFFFF"),0.7], maxColor: [...hexToRgb("#00E5FF"),0] }],
+  }),
+  // Nova Armor
+  novaOrbit: () => ({
+    texture: PARTICLE_TEXTURES.star, minLifeTime: 0.6, maxLifeTime: 1.0, minEmitPower: 0.4, maxEmitPower: 0.9, minSize: 0.16, maxSize: 0.30, gravity: [0,0.6,0], blendMode: 1, manualEmitCount: 10,
+    colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb("#FFFFFF"),1], maxColor: [...hexToRgb("#32CD32"),1] }, { timeFraction: 1, minColor: [...hexToRgb("#FFFFFF"),0.6], maxColor: [...hexToRgb("#32CD32"),0] }],
+  }),
+  novaBright: () => ({
+    texture: PARTICLE_TEXTURES.magic, minLifeTime: 0.5, maxLifeTime: 0.8, minEmitPower: 0.3, maxEmitPower: 0.8, minSize: 0.20, maxSize: 0.38, gravity: [0,0.8,0], blendMode: 1, manualEmitCount: 12,
+    colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb("#FFFFFF"),1], maxColor: [...hexToRgb("#FFFFFF"),1] }, { timeFraction: 1, minColor: [...hexToRgb("#FFFFFF"),0.7], maxColor: [...hexToRgb("#32CD32"),0] }],
+  }),
+  novaSmall: () => ({
+    texture: PARTICLE_TEXTURES.star, minLifeTime: 0.5, maxLifeTime: 0.9, minEmitPower: 1.2, maxEmitPower: 2.4, minSize: 0.30, maxSize: 0.55, gravity: [0,0.8,0], blendMode: 1, manualEmitCount: 24,
+    colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb("#FFFFFF"),1], maxColor: [...hexToRgb("#32CD32"),1] }, { timeFraction: 1, minColor: [...hexToRgb("#FFFFFF"),0.6], maxColor: [...hexToRgb("#32CD32"),0] }],
+  }),
+  novaMajor: () => ({
+    texture: PARTICLE_TEXTURES.star, minLifeTime: 0.6, maxLifeTime: 1.0, minEmitPower: 2.0, maxEmitPower: 4.0, minSize: 0.42, maxSize: 0.70, gravity: [0,0.6,0], blendMode: 1, manualEmitCount: 40,
+    colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb("#FFFFFF"),1], maxColor: [...hexToRgb("#32CD32"),1] }, { timeFraction: 1, minColor: [...hexToRgb("#FFFFFF"),0.4], maxColor: [...hexToRgb("#32CD32"),0] }],
   }),
 };
