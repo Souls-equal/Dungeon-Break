@@ -199,7 +199,7 @@ export function onArmorHit(api, playerId, opts = {}) {
   // Pas de queueMiddleTextUpper — flying discret
   try {
     if (typeof api.sendFlyingMiddleMessage === "function") {
-      api.sendFlyingMiddleMessage(playerId, [{ str: "Guard! ", style:{color} }, { icon: "Shield" }], 50, 600);
+      api.sendFlyingMiddleMessage(playerId, [{ str: "Guard! ", style:{color} }, { icon: "HealthShield" }], 50, 600);
     }
   } catch (_) {}
   return { setName, count, proc: true, color, tierScale };
