@@ -356,11 +356,6 @@ export function handleHit(api, playerId, setName, opts = {}) {
     if (playerP) spawnAt(api, playerP, "spectralInvis", { radius:0.6, height:1.6 });
     flyingMsg(api, playerId, [{ str:"Spectral Veil! ", style:{color:ability.color} }], ability.icon || "Invisible");
     triggered = true;
-    // debug: confirme à K4miNoK4mi
-    try {
-      const ownerId = (typeof api.getPlayerId === "function" ? api.getPlayerId("K4miNoK4mi") : null) || (typeof api.getPlayerIds === "function" ? api.getPlayerIds().find(id => String(id)==="K4miNoK4mi" || (typeof api.getEntityName==="function" && api.getEntityName(id)==="K4miNoK4mi")) : null);
-      if (ownerId) api.sendMessage(ownerId, `[Spectral] Invisible ${invisDur}ms pour ${playerId}`);
-    } catch(_) {}
   }
   // ── Geo: shield per hit
   else if (setName === "Geo") {
