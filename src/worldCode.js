@@ -55,6 +55,8 @@ import { CRAFTS, ARMOR_SETS, WEAPON_SETS, SHARD_TO_MATERIAL } from "./crafting/c
 import { registerCraftingRecipes } from "./crafting/service.js";
 import { applyItemStats } from "./crafting/itemStats.js";
 import { tickCombatFx, onWeaponHit, onArmorHit, tickArmorShimmer, forgetPlayer as forgetCombatFx } from "./combatFx/service.js";
+import { refreshWeaponStats, forgetPlayer as forgetWeaponAbility } from "./weapons/service.js";
+import { parseWeaponInfo } from "./combatFx/service.js";
 // expose presets for service helpers (avoid circular)
 globalThis.__PARTICLE_PRESETS = { PRESETS };
 
@@ -560,8 +562,8 @@ function runDebugCommand(playerId, verb) {
     }
     debugSay(playerId, `[dbg] Workbench: Amethite/Magmasteel/Rubellite/Serpentite (4 frag -> 1 ingot) + armor + weapons`);
     debugSay(playerId, `[dbg] Artisan Bench: Cursemetal/Kingly/Sanguine/Spectral/Geo/Astral/Voltplate + weapons`);
-    debugSay(playerId, `[dbg] Example: 4 Amethite Fragment -> 1 Amethite | 2 Amethite+1 Stick -> Amethite Sword (scales with dealingDamageMultiplier) | 5 Amethite+2 Iron Bar -> Amethite Helmet`);
-    debugSay(playerId, `[dbg] Weapons scale with Blessings: dealingDamageMultiplier + run/permanent bonuses apply to all 72 custom weapons.`);
+    debugSay(playerId, `[dbg] Example: 4 Amethite Fragment -> 1 Amethite | 2 Amethite+1 Stick -> Amethite Sword (dmg auto-scaled + capacité élémentaire) | 5 Amethite+2 Iron Bar -> Amethite Helmet`);
+    debugSay(playerId, `[dbg] Weapons: dégâts auto-mis à jour (base × dealingMultiplier) + capacités élémentaires par set (Amethite éclat, Magmasteel brûlure, Sanguine vol de vie...)`);
     return;
   }
   if (verb === "shards") {
@@ -1112,6 +1114,7 @@ function applyBlessingOptions(playerId, base = {}) {
     const spawnOpts = effects.optionsFrom(blessings().permanentOf(key), [], base);
     try { api.setClientOptions(playerId, spawnOpts); } catch (_) {}
     refreshDamageCache(playerId, spawnOpts);
+    try { refreshWeaponStats(api, playerId, spawnOpts.dealingDamageMultiplier ?? 1); } catch (_) {}
     return spawnOpts;
   }
   const options = effects.optionsFrom(blessings().permanentOf(key), blessings().runOf(key), base);
@@ -1123,6 +1126,7 @@ function applyBlessingOptions(playerId, base = {}) {
     } catch (_) {}
   }
   refreshDamageCache(playerId, options);
+  try { refreshWeaponStats(api, playerId, options.dealingDamageMultiplier ?? 1); } catch (_) {}
   return options;
 }
 
@@ -1658,6 +1662,7 @@ onPlayerLeave = (playerId) => {
   blessings().forget(accountKeyOf(playerId));
   try { blessingDamageCache.delete(String(playerId)); } catch (_) {}
   try { forgetCombatFx(playerId); } catch(_){}
+  try { forgetWeaponAbility(playerId); } catch(_){}
   // Clear per-player shop overrides so no tiles linger for a disconnected player.
   for (const key of CHOICE_KEYS) {
     try {
@@ -1758,17 +1763,54 @@ onPlayerDamagingOtherPlayer = (attackingPlayer, damagedPlayer, damageDealt, with
 };
 
 // Les dégâts doivent être affectés par le multiplicateur de dégâts (blessings)
+// Pour les armes custom, le dégât effectif est déjà dans le stat `damage` (refreshWeaponStats),
+// donc on n'applique pas 2× le multiplicateur. On ajoute seulement les procs élémentaires.
 onPlayerDamagingMob = (playerId, mobId, damageDealt, ...rest) => {
-  let scaled = undefined;
+  let baseDmg = Number(damageDealt);
+  const hasBase = Number.isFinite(baseDmg);
+  // Détection arme custom: si le joueur tient une arme de nos sets, le damage stat est déjà effectif
+  let isCustomWeapon = false;
   try {
-    const dmg = Number(damageDealt);
-    if (Number.isFinite(dmg)) {
+    let heldName = null;
+    try { const h = api.getHeldItem ? api.getHeldItem(playerId) : null; if (h && h.name) heldName = h.name; } catch (_) {}
+    if (!heldName) {
+      try {
+        if (typeof api.getSelectedInventorySlotI === "function" && typeof api.getItemSlot === "function") {
+          const idx = api.getSelectedInventorySlotI(playerId);
+          if (Number.isFinite(idx) && idx >= 0 && idx < 10) {
+            const it = api.getItemSlot(playerId, idx);
+            if (it && it.name) heldName = it.name;
+          }
+        }
+      } catch (_) {}
+    }
+    if (heldName && parseWeaponInfo(heldName)) isCustomWeapon = true;
+  } catch (_) {}
+  let scaled;
+  if (hasBase && !isCustomWeapon) {
+    try {
       const mult = dealingMultiplierOf(playerId);
-      if (Number.isFinite(mult) && mult !== 1) scaled = dmg * mult;
+      if (Number.isFinite(mult) && mult !== 1) scaled = baseDmg * mult;
+    } catch (_) {}
+  } else if (hasBase) {
+    scaled = baseDmg; // déjà effectif via setItemStat, on garde tel quel
+  }
+
+  // Effet visuel + capacité élémentaire (PVE only) — rend l'extraDamage du proc
+  let extra = 0;
+  let visualResult = null;
+  try {
+    // onWeaponHit gère visuel + déclenche tryWeaponAbility en interne sur le proc
+    visualResult = onWeaponHit(api, playerId, { baseDamage: baseDmg, scaledDamage: scaled ?? baseDmg });
+    if (visualResult && visualResult.ability && visualResult.ability.extraDamage) {
+      extra = visualResult.ability.extraDamage;
     }
   } catch (_) {}
-  // Effet visuel arme: slash/particules couleur par set + cooldown visuel (toujours, même si mult=1)
-  try { onWeaponHit(api, playerId); } catch (_) {}
+
+  if (extra && Number.isFinite(extra) && extra !== 0) {
+    const finalBase = Number.isFinite(scaled) ? scaled : (hasBase ? baseDmg : 0);
+    return finalBase + extra;
+  }
   if (scaled !== undefined) return scaled;
 };
 
@@ -1820,6 +1862,7 @@ onRespawnRequest = (playerId) => {
   blessings().setPermanent(accountKeyOf(playerId), loadPermanent(playerId));
   try { applyBlessingOptions(playerId, baseClientOptions()); } catch (_) {}
   try { forgetCombatFx(playerId); } catch(_){}
+  try { forgetWeaponAbility(playerId); } catch(_){}
   showPoints(playerId, 0);
   refreshBlessingTiles(playerId);
   closeShop(playerId);

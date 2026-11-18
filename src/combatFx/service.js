@@ -14,6 +14,8 @@ import {
   tierScaleForArmor,
 } from "./config.js";
 import { spawn as spawnParticles, weaponFx, weaponProcFx, armorFx, armorShimmer } from "../particles/service.js";
+import { tryWeaponAbility } from "../weapons/service.js";
+import { weaponBaseDamage } from "../weapons/config.js";
 
 // Compteurs: playerId -> { weaponHits: Map<type,count>, armorHits: count, lastProcTick, lastArmorProcTick }
 const hitCounters = new Map();
@@ -157,17 +159,31 @@ export function onWeaponHit(api, playerId, opts = {}) {
   // gros effet proc
   try { weaponProcFx(api, playerPos, type, color, tierScale); } catch (_) {}
 
-  // cooldown visuel: petit texte middle
+  // capacité élémentaire du set (vrai effet PVE)
+  let abilityResult = null;
   try {
-    if (typeof api.queueMiddleTextUpper === "function") {
-      const label = fxCfg.label;
-      api.queueMiddleTextUpper(playerId, [{ str: label + "!", style: { color } }], 700);
-    }
+    const base = weaponBaseDamage(info.full) ?? opts.baseDamage ?? 0;
+    const scaled = opts.scaledDamage ?? base;
+    abilityResult = tryWeaponAbility(api, playerId, setName, {
+      baseDamage: base,
+      scaledDamage: scaled,
+      tick: globalTick,
+      pos: playerPos,
+      type,
+    });
   } catch (_) {}
-  // aussi un message subtil tous les 2 procs pour bien montrer (optionnel)
-  // on ne spam pas le chat
 
-  return { type, setName, count, proc: true, color, tierScale, label: fxCfg.label };
+  // cooldown visuel: petit texte middle — si capacité a déjà affiché, on saute le label générique
+  if (!abilityResult || !abilityResult.triggered) {
+    try {
+      if (typeof api.queueMiddleTextUpper === "function") {
+        const label = fxCfg.label;
+        api.queueMiddleTextUpper(playerId, [{ str: label + "!", style: { color } }], 700);
+      }
+    } catch (_) {}
+  }
+
+  return { type, setName, count, proc: true, color, tierScale, label: fxCfg.label, ability: abilityResult };
 }
 
 // ── armor hit — appelé depuis onMobDamagingPlayer ───────────────────
