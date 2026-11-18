@@ -1450,3 +1450,4 @@ Nova Alloy
 Nova Shard
 Maple Log
 Maple Wood Planks
+Nova Matter
