@@ -55,7 +55,7 @@ import { CRAFTS, ARMOR_SETS, WEAPON_SETS, SHARD_TO_MATERIAL } from "./crafting/c
 import { registerCraftingRecipes } from "./crafting/service.js";
 import { applyItemStats } from "./crafting/itemStats.js";
 import { tickCombatFx, onWeaponHit, onArmorHit, tickArmorShimmer, forgetPlayer as forgetCombatFx } from "./combatFx/service.js";
-import { refreshWeaponStats, forgetPlayer as forgetWeaponAbility } from "./weapons/service.js";
+import { refreshWeaponStats, tickWeapons, onMobKilled, forgetPlayer as forgetWeaponAbility } from "./weapons/service.js";
 import { parseWeaponInfo } from "./combatFx/service.js";
 // expose presets for service helpers (avoid circular)
 globalThis.__PARTICLE_PRESETS = { PRESETS };
@@ -1563,6 +1563,7 @@ tick = () => {
   }
   try { tickSpawnCheck(); } catch (_) {}
   try { tickCombatFx(); } catch (_){}
+  try { tickWeapons(api); } catch (_){}
   try { tickArmorShimmer(api); } catch (_){}
   // ranks time tracking
   try {
@@ -1730,13 +1731,12 @@ onPlayerKilledMob = (playerId, mobId) => {
   try {
     service().mobKilled(playerId, mobId);
   } catch (error) {
-    // A death that cannot be filed must not break the tick that follows it.
     try {
       api.log(`[Dungeon] mob kill failed: ${error && error.message ? error.message : error}`);
-    } catch (_) {
-      // Nothing left to do.
-    }
+    } catch (_) {}
   }
+  //Capacités armes à la mort (PvE) — Rubellite stack, Spectral vacuum, Geo mines, Astral glowing
+  try { onMobKilled(api, playerId, mobId); } catch (_) {}
   try {
     const newly = ranks().recordKill(playerId);
     if (newly && newly.length) handleRankUnlocks(playerId, newly);
@@ -1800,8 +1800,7 @@ onPlayerDamagingMob = (playerId, mobId, damageDealt, ...rest) => {
   let extra = 0;
   let visualResult = null;
   try {
-    // onWeaponHit gère visuel + déclenche tryWeaponAbility en interne sur le proc
-    visualResult = onWeaponHit(api, playerId, { baseDamage: baseDmg, scaledDamage: scaled ?? baseDmg });
+    visualResult = onWeaponHit(api, playerId, { baseDamage: baseDmg, scaledDamage: scaled ?? baseDmg, mobId });
     if (visualResult && visualResult.ability && visualResult.ability.extraDamage) {
       extra = visualResult.ability.extraDamage;
     }
