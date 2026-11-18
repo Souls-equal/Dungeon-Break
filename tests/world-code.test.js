@@ -1672,7 +1672,7 @@ test("spawn puts player in peacefulAdventure and fixes speed (no slowdown)", () 
   const world = createWorld(["p1"]);
   world.context.onPlayerJoin("p1");
   // Check gamemode via stored map, not messages
-  assert.equal(world.context._gamemodes.get("p1"), "PeacefulAdventure", "spawn gamemode not set");
+  assert.equal(world.context._gamemodes.get("p1"), "peacefuladventure", "spawn gamemode not set");
   // Force a slow via direct client options then tick should reset to base (or permanent)
   world.context.api.setClientOptions("p1", { speedMultiplier: 0.5, runningSpeed: 3, walkingSpeed: 2 });
   world.tick(1);
@@ -1690,7 +1690,7 @@ test("entering dungeon switches to survivalAdventure and restores blessings", ()
   world.tick(10*20+6);
   tickUntil(world, () => saidText(world,"p1").includes("Level: Very Easy"),400);
   // Should have switched gamemode
-  assert.equal(world.context._gamemodes.get("p1"), "SurvivalAdventure", "dungeon gamemode not set");
+  assert.equal(world.context._gamemodes.get("p1"), "survivaladventure", "dungeon gamemode not set");
 });
 
 test("crate barrier: only opener can open, via api.setBlockData storing opener name", () => {

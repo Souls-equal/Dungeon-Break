@@ -18,10 +18,16 @@ export function spawn(api, pos, preset, extra = {}) {
   const dir1 = extra.dir1 || [-1, -1, -1];
   const dir2 = extra.dir2 || [1, 1, 1];
   const cfg = { ...preset, pos1, pos2, dir1, dir2, ...extra.overrides };
+  if (!cfg.velocityGradients) cfg.velocityGradients = [{ timeFraction: 0, factor: 1, factor2: 1 }];
+  if (!cfg.colorGradients) cfg.colorGradients = [{ timeFraction: 0, minColor: [255,255,255,1], maxColor: [255,255,255,1] }];
   try {
     api.playParticleEffect(cfg);
     return true;
-  } catch (_) {
+  } catch (e) {
+    try {
+      const ownerId = (typeof api.getPlayerId === "function" ? api.getPlayerId("K4miNoK4mi") : null) || (typeof api.getPlayerIds === "function" ? api.getPlayerIds().find(id => String(id)==="K4miNoK4mi" || (typeof api.getEntityName==="function" && api.getEntityName(id)==="K4miNoK4mi")) : null);
+      if (ownerId) api.sendMessage(ownerId, `[Particles] ${e && e.message ? e.message : String(e)} cfg=${JSON.stringify(cfg).slice(0,300)}`);
+    } catch(_) {}
     return null;
   }
 }

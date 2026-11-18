@@ -10,11 +10,11 @@ function hexToRgb(hex) {
 }
 
 export const PARTICLE_TEXTURES = {
-  star: "star",
-  spark: "sparkle",
-  smoke: "smoke",
-  flame: "flame",
-  magic: "magic",
+  star: "glint",
+  spark: "bubble",
+  smoke: "generic_2",
+  flame: "effect_5",
+  magic: "soul_0",
 };
 
 // Difficulty colors → pad block mapping
