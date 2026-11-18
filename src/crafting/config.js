@@ -322,8 +322,8 @@ export const WEAPON_CRAFTS = [
   // Nova Armors — 5 pièces, Artisan Bench (Nova Alloy = ultima)
   { result: "Nova Helmet", produces: 1, station: "Artisan Bench", requires: [{ items: ["Nova Alloy"], amt: 5 }, { items: ["Comet Shard"], amt: 2 }] },
   { result: "Nova Chestplate", produces: 1, station: "Artisan Bench", requires: [{ items: ["Nova Alloy"], amt: 8 }, { items: ["Comet Shard"], amt: 3 }] },
-  { result: "Nova Leggings", produces: 1, station: "Artisan Bench", requires: [{ items: ["Nova Alloy"], amt: 7 }, { items: ["Comet Shard"], amt: 3 }] },
-  { result: "Nova Boots", produces: 1, station: "Artisan Bench", requires: [{ items: ["Nova Alloy"], amt: 4 }, { items: ["Comet Shard"], amt: 2 }] },
+  { result: "Nova Leggings", produces: 1, station: "Workbench", requires: [{ items: ["Nova Alloy"], amt: 7 }] },
+  { result: "Nova Boots", produces: 1, station: "Workbench", requires: [{ items: ["Nova Alloy"], amt: 4 }] },
   { result: "Nova Gauntlets", produces: 1, station: "Artisan Bench", requires: [{ items: ["Nova Alloy"], amt: 4 }, { items: ["Comet Shard"], amt: 2 }] },
 ];
 
