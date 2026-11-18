@@ -98,6 +98,38 @@ function getPlayerDisplayName(api, playerId) {
   return playerId;
 }
 
+function lowerChestOneBlock(api, chestPos) {
+  const p = normalizeChestPos(chestPos);
+  if (!p) return chestPos;
+  try {
+    const data = api.getBlockData(p.x, p.y, p.z);
+    if (data && typeof data === "object" && data.crateLowered) return chestPos;
+  } catch (_) {}
+  const below = { x: p.x, y: p.y - 1, z: p.z };
+  let belowBlock = null;
+  try { belowBlock = api.getBlock(below.x, below.y, below.z); } catch (_) {}
+  if (belowBlock !== null && belowBlock !== "Air" && belowBlock !== undefined) return chestPos;
+  let originBlock = null;
+  try { originBlock = api.getBlock(p.x, p.y, p.z); } catch (_) {}
+  const blockName = originBlock && String(originBlock).includes("Chest") ? originBlock : "Chest";
+  let existingData = {};
+  try { existingData = api.getBlockData(p.x, p.y, p.z) || {}; } catch (_) {}
+  if (existingData === null || typeof existingData !== "object") existingData = {};
+  const newData = { ...existingData, crateLowered: true };
+  try { api.setBlock(below.x, below.y, below.z, blockName); } catch (_) { try { api.setBlock(below.x, below.y, below.z, "Chest"); } catch (_) {} }
+  try { api.setBlockData(below.x, below.y, below.z, newData); } catch (_) {}
+  try { api.setBlock(p.x, p.y, p.z, "Air"); } catch (_) {}
+  try { api.setBlockData(p.x, p.y, p.z, {}); } catch (_) {}
+  const oldKey = `${p.x}|${p.y}|${p.z}`;
+  const newKey = `${below.x}|${below.y}|${below.z}`;
+  if (activeCrates.has(oldKey)) {
+    const entry = activeCrates.get(oldKey);
+    activeCrates.delete(oldKey);
+    activeCrates.set(newKey, { ...entry, x: below.x, y: below.y, z: below.z });
+  }
+  return [below.x, below.y, below.z];
+}
+
 export function setChestOwner(api, chestPos, playerId, rarity) {
   const p = normalizeChestPos(chestPos);
   if (!p) return;
@@ -129,7 +161,7 @@ export function clearCrateLock(api, chestPos) {
   try { data = api.getBlockData(p.x, p.y, p.z); } catch (_) { data = null; }
   if (!data || typeof data !== "object") return;
   if (!data.crateOwnerId && !data.crateLockUntil) return;
-  const { crateOwnerId, crateOwnerName, crateRarity, crateOpenedAt, crateLockUntil, ...rest } = data;
+  const { crateOwnerId, crateOwnerName, crateRarity, crateOpenedAt, crateLockUntil, crateLowered, ...rest } = data;
   try { api.setBlockData(p.x, p.y, p.z, rest); } catch (_) {}
   // if no other data, clear to empty
   try {
@@ -141,8 +173,19 @@ export function tickCrateLocks(api) {
   if (activeCrates.size === 0) return;
   const now = nowMs(api);
   for (const [key, crate] of [...activeCrates.entries()]) {
+    // Ownership never expires for opening prevention; only the re-roll lock does.
+    // After lockUntil, allow re-roll (isChestLocked → false) but keep crateOwnerId
+    // so isChestOwnedByOther still blocks unpaid opening.
     if (now >= crate.lockUntil) {
-      clearCrateLock(api, [crate.x, crate.y, crate.z]);
+      activeCrates.delete(key);
+      // remove lock timer from BlockData but keep owner for strict barrier
+      try {
+        const data = api.getBlockData(crate.x, crate.y, crate.z);
+        if (data && typeof data === "object" && data.crateLockUntil) {
+          const { crateLockUntil, ...rest } = data;
+          try { api.setBlockData(crate.x, crate.y, crate.z, rest); } catch (_) {}
+        }
+      } catch (_) {}
       continue;
     }
     let pos = null;
@@ -150,7 +193,6 @@ export function tickCrateLocks(api) {
       pos = api.getPosition(crate.ownerId);
     } catch (_) { pos = null; }
     if (!pos || !Array.isArray(pos) || pos.length < 3) {
-      // owner offline or no position — keep lock until timeout (don't auto-clear on leave)
       continue;
     }
     const dx = pos[0] - (crate.x + 0.5);
@@ -158,7 +200,15 @@ export function tickCrateLocks(api) {
     const dz = pos[2] - (crate.z + 0.5);
     const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
     if (dist > CRATE_CLEAR_DISTANCE) {
-      clearCrateLock(api, [crate.x, crate.y, crate.z]);
+      // Owner walked away → early unlock for re-roll only, owner stays
+      activeCrates.delete(key);
+      try {
+        const d2 = api.getBlockData(crate.x, crate.y, crate.z);
+        if (d2 && typeof d2 === "object" && d2.crateLockUntil) {
+          const { crateLockUntil, ...rest2 } = d2;
+          try { api.setBlockData(crate.x, crate.y, crate.z, rest2); } catch (_) {}
+        }
+      } catch (_) {}
     }
   }
 }
@@ -200,7 +250,7 @@ export function clearChestInventory(api, chestPos) {
     try { data = api.getBlockData(p.x, p.y, p.z); } catch (_) { data = null; }
     if (data && typeof data === "object") {
       const crateKeep = {};
-      for (const k of ["crateOwnerId","crateOwnerName","crateRarity","crateOpenedAt","crateLockUntil"]) {
+      for (const k of ["crateOwnerId","crateOwnerName","crateRarity","crateOpenedAt","crateLockUntil","crateLowered"]) {
         if (k in data) crateKeep[k] = data[k];
       }
       // Si data contenait des clés d'inventaire (items/slots/inventory etc.), les jeter revient à vider le coffre
@@ -248,26 +298,27 @@ export function generateChest(api, playerId, chestPos, rarity, random = Math.ran
     return false;
   }
   consumeKey(api, playerId, rarity);
-  setChestOwner(api, chestPos, playerId, rarity);
-  // Vide d'abord via data reset (évite l'erreur si le joueur avait rempli le coffre)
-  clearChestInventory(api, chestPos);
+  // Descend le coffre d'un bloc à l'ouverture pour laisser plus de place et éviter le re-clic accidentel (roll vs reopen)
+  let effectivePos = chestPos;
+  try { effectivePos = lowerChestOneBlock(api, chestPos); } catch (_) { effectivePos = chestPos; }
+  setChestOwner(api, effectivePos, playerId, rarity);
+  clearChestInventory(api, effectivePos);
   for (let i = 0; i < 27; i++) {
     if (random() * 100 < AIR_CHANCE[rarity]) {
-      try { api.setStandardChestItemSlot(chestPos, i, "Air", 1, playerId); } catch (_) {}
+      try { api.setStandardChestItemSlot(effectivePos, i, "Air", 1, playerId); } catch (_) {}
       continue;
     }
     const item = getWeightedRandomItem(rarity, random);
     if (!item) continue;
     const amount = getAmountForItem(item, random);
-    try { api.setStandardChestItemSlot(chestPos, i, item.name, amount, playerId); } catch (_) {}
+    try { api.setStandardChestItemSlot(effectivePos, i, item.name, amount, playerId); } catch (_) {}
   }
   try { api.sendMessage(playerId, [{str:`${rarity}`, style:{color:"#55ff55"}}, {str:" crate opened", style:{color:"#aaaaaa"}}]); } catch(_) { try { api.sendMessage(playerId, "Chest opened (" + rarity + ")!"); } catch(_){} }
-  // Ouvre automatiquement le coffre pour le joueur (api: openChestForPlayer)
   try {
     if (typeof api.openChestForPlayer === "function") {
-      const pos = normalizeChestPos(chestPos);
+      const pos = normalizeChestPos(effectivePos);
       if (pos) api.openChestForPlayer(playerId, pos.x, pos.y, pos.z);
     }
   } catch (_) {}
-  return true;
+  return effectivePos;
 }

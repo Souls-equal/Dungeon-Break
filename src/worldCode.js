@@ -1799,23 +1799,23 @@ globalThis.LOOT_TABLE = LOOT_TABLE;
 getWeightedRandomItem = (rarity) => crateGetWeightedRandomItem(rarity);
 hasKey = (playerId, rarity) => crateHasKey(api, playerId, rarity);
 consumeKey = (playerId, rarity) => crateConsumeKey(api, playerId, rarity);
-// main entry: must be arrow for code-block reachability
+// main entry: must be arrow for code-block reachability — lowers chest by 1 on open (more space, no misclick roll vs reopen)
 generateChest = (playerId, chestPos, rarity) => {
-  const ok = crateGenerateChest(api, playerId, chestPos, rarity);
-  if (ok) {
+  const result = crateGenerateChest(api, playerId, chestPos, rarity);
+  if (result) {
     try {
       const newly = ranks().recordCrate(playerId, rarity);
       if (newly && newly.length) handleRankUnlocks(playerId, newly);
     } catch(_) {}
-    // particules crate: fontaine
     try {
       const col = CRATE_COLOR[rarity] || "#FFFFFF";
-      const p = Array.isArray(chestPos) ? chestPos : [chestPos.x, chestPos.y, chestPos.z];
+      const eff = (Array.isArray(result) && result.length >= 3) ? result : chestPos;
+      const p = Array.isArray(eff) ? eff : [eff.x, eff.y, eff.z];
       const pos = [Math.floor(p[0])+0.5, Math.floor(p[1])+1, Math.floor(p[2])+0.5];
       spawnParticles(api, pos, PRESETS.crateFountain(col, rarity), { radius: 0.4, height: 1.5 });
     } catch(_){}
   }
-  return ok;
+  return !!result;
 };
 // alias often used in examples
 openCrate = generateChest;

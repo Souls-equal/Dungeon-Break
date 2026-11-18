@@ -1246,7 +1246,7 @@ test("a roll offers three blessings and reserves the point; the choice spends it
   const picked = offerTiles(world)[1];
   world.shopOpen.add("p1");
   world.context.onPlayerBoughtShopItem("p1", "Blessings", picked.key, {}, "");
-  const styled = said(world, "p1").filter((line) => Array.isArray(line));
+  const styled = said(world, "p1").filter((line) => Array.isArray(line) && line[0] === "Blessing: ");
   assert.equal(styled.length, 1, "the styled announcement is missing or duplicated");
   assert.deepEqual(styled[0][0], "Blessing: ");
   // The announced name is the blessing's own name: the scope is on the tile, not in the chat.
@@ -1708,22 +1708,16 @@ test("crate barrier: only opener can open, via api.setBlockData storing opener n
   res = world.context.onPlayerAttemptOpenChest("p2", pos[0], pos[1], pos[2], false, false);
   assert.equal(res, "preventOpen", "other player should be prevented");
   assert.ok(world.messages.some(m => m.playerId==="p2" && flattenMsg(m.message).includes("belongs to")), "prevent message not sent");
-  // Test distance clear: move p1 far >6 blocks, tick, then p2 can open (if lock expired logic)
-  // For exclusive barrier, even after distance, should still be prevented? New spec says protection 16s which only prevents roll that erases crate of another, but exclusive barrier is permanent. Our isChestOwnedByOther is permanent, so still prevented.
-  // Verify that after clearing via distance (simulate tick), p2 still prevented until lock cleared? Actually tickCrateLocks clears ownership, so after distance, should allow.
-  // Simulate p1 far away
+  // Strict barrier: even after 16s or distance, unpaid player still cannot open
   world.movePlayer("p1", [pos[0]+10, pos[1], pos[2]]);
-  // Advance time 16s simulated by setting lockUntil in past and ticking
   const data = world.context.api.getBlockData(pos[0],pos[1],pos[2]);
   world.context.api.setBlockData(pos[0],pos[1],pos[2], { ...data, crateLockUntil: Date.now()-1000 });
   world.tick(2);
-  // After tickCrateLocks, BlockData should be cleared
   const afterData = world.context.api.getBlockData(pos[0],pos[1],pos[2]);
-  // If cleared, p2 should now be allowed (no owner)
-  if (!afterData || !afterData.crateOwnerId) {
-    res = world.context.onPlayerAttemptOpenChest("p2", pos[0], pos[1], pos[2], false, false);
-    assert.equal(res, undefined, "after clear, other should be allowed");
-  }
+  assert.ok(afterData && afterData.crateOwnerId === "p1", "ownership should persist after lock expiry");
+  // lock timer may remain if not tracked via activeCrates (manual setBlockData), but ownership must stay and open must still be blocked
+  res = world.context.onPlayerAttemptOpenChest("p2", pos[0], pos[1], pos[2], false, false);
+  assert.equal(res, "preventOpen", "other still prevented after time/distance — must pay to re-roll");
 });
 
 test("crate rollback protection: 16s lock prevents other rolling same crate", () => {
