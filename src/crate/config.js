@@ -48,6 +48,11 @@ export const LOOT_TABLE = {
     { name: "Wood Leggings", amount: 1, weight: 3 },
     { name: "Wood Boots", amount: 1, weight: 4 },
 
+    // Starter wood — requested for first two chests
+    { name: "Maple Wood Planks", min: 8, max: 16, weight: 40 },
+    { name: "Maple Log", min: 4, max: 8, weight: 40 },
+    { name: "Stick", min: 6, max: 12, weight: 35 },
+
     // Shards — Tier 1 (Common): surtout Amethite/Magmasteel/Rubellite
     { name: "Amethite Fragment", min: 1, max: 3, weight: 22 },
     { name: "Magmasteel Fragment", min: 1, max: 2, weight: 12 },
@@ -75,6 +80,11 @@ export const LOOT_TABLE = {
     { name: "Iron Leggings", amount: 1, weight: 3 },
     { name: "Iron Boots", amount: 1, weight: 4 },
 
+    // Starter wood — requested for first two chests
+    { name: "Maple Wood Planks", min: 8, max: 16, weight: 40 },
+    { name: "Maple Log", min: 4, max: 8, weight: 40 },
+    { name: "Stick", min: 6, max: 12, weight: 35 },
+
     // Shards — Tier 1+2
     { name: "Amethite Fragment", min: 1, max: 3, weight: 14 },
     { name: "Magmasteel Fragment", min: 1, max: 3, weight: 16 },
@@ -98,6 +108,9 @@ export const LOOT_TABLE = {
     { name: "Gold Gauntlets", amount: 1, weight: 4 },
     { name: "Gold Leggings", amount: 1, weight: 3 },
     { name: "Gold Boots", amount: 1, weight: 4 },
+
+    // Starter wood — Maple Log also in 3rd chest
+    { name: "Maple Log", min: 4, max: 8, weight: 35 },
 
     // Shards — Tier 2-3
     { name: "Magmasteel Fragment", min: 1, max: 3, weight: 8 },

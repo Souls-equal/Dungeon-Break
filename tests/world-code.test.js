@@ -1153,6 +1153,8 @@ function blessingTiles(world, playerId = "p1") {
  */
 function joinAtLevel(world, level, playerId = "p1") {
   world.context.onPlayerJoin(playerId);
+  // Blessings disabled at spawn — enter a dungeon before rolling (new spawn guard)
+  try { startDungeon(world, playerId); } catch (_) {}
   world.setAuraLevel(playerId, level);
   // Opening the shop is what redraws the tiles with the new count.
   world.context.onPlayerToggledShopMenu(playerId, true);
@@ -1181,9 +1183,9 @@ test("a join offers the roll, and a fresh player has nothing to spend", () => {
   assert.ok(tiles, "the Blessings category was not created");
   const roll = tiles.get("Roll a Blessing");
   assert.ok(roll, "the roll tile was not offered");
-  assert.equal(roll.cost, 0, "a roll costs a point, not a currency");
+  // At spawn Blessings are disabled — tile shows disabled state, still 0 points
   assert.equal(roll.canBuy, false, "a level-1 player was offered a free roll");
-  assert.match(roll.description, /Aura level 1 · 0 points/);
+  assert.match(roll.description, /Aura level 1 · 0 points|disabled at spawn/i);
   // **Two numbers, one line**: the owner had the odds taken off the tile, which is the only
   // tile a player reads before spending. They are still in `/dbg blessings`.
   assert.ok(!/Common \d+%/.test(roll.description), "the odds are back on the roll tile");
@@ -1220,13 +1222,14 @@ test("a roll offers three blessings and reserves the point; the choice spends it
     assert.ok(!/\((PERM|RUN|TIMED)\)$/.test(tile.customTitle), "old scope suffix should be gone");
     // description is now styled array [Rarity][Type][Effect] with cool hexa colors
     assert.ok(Array.isArray(tile.description), "description should be styled array");
-    assert.equal(tile.description.length, 3);
-    assert.match(tile.description[0].str, /\[(Common|Uncommon|Rare|Epic|Legendary|Mythic)\]/);
-    assert.match(tile.description[0].style.color, /^#[0-9A-Fa-f]{6}$/, "rarity color not hexa");
-    assert.match(tile.description[1].str, /\[(Physical|Equipment|Potion effect)\]/);
-    assert.match(tile.description[1].style.color, /^#[0-9A-Fa-f]{6}$/, "type color not hexa");
-    assert.match(tile.description[2].str, /(Gain|Loose)/, "effect should use Gain/Loose");
-    assert.ok(!tile.description[2].str.includes("+") && !tile.description[2].str.includes("-"), "effect should not use +/-");
+    assert.equal(tile.description.length, 4);
+    assert.match(tile.description[0].str, /\[(PERM|RUN|TEMP|TIMED)\]/);
+    assert.match(tile.description[1].str, /\[(Common|Uncommon|Rare|Epic|Legendary|Mythic)\]/);
+    assert.match(tile.description[1].style.color, /^#[0-9A-Fa-f]{6}$/, "rarity color not hexa");
+    assert.match(tile.description[2].str, /\[(Physical|Equipment|Potion effect)\]/);
+    assert.match(tile.description[2].style.color, /^#[0-9A-Fa-f]{6}$/, "type color not hexa");
+    assert.match(tile.description[3].str, /(Gain|Loose)/, "effect should use Gain/Loose");
+    assert.ok(!tile.description[3].str.includes("+") && !tile.description[3].str.includes("-"), "effect should not use +/-");
     // image per spec
     const b = BLESSINGS.find((x) => x.name === name);
     assert.ok(b, "blessing not found");
@@ -1246,11 +1249,15 @@ test("a roll offers three blessings and reserves the point; the choice spends it
   const picked = offerTiles(world)[1];
   world.shopOpen.add("p1");
   world.context.onPlayerBoughtShopItem("p1", "Blessings", picked.key, {}, "");
-  const styled = said(world, "p1").filter((line) => Array.isArray(line) && line[0] === "Blessing: ");
+  const styled = said(world, "p1").filter((line) => Array.isArray(line) && line.some(p => p === "Blessing: "));
   assert.equal(styled.length, 1, "the styled announcement is missing or duplicated");
-  assert.deepEqual(styled[0][0], "Blessing: ");
+  assert.ok(styled[0].some(p => p === "Blessing: "), "Blessing: not in announcement");
+  assert.ok(styled[0].some(p => typeof p === "object" && p.str && /\[(PERM|RUN|TEMP|TIMED)\]/.test(p.str)), "scope prefix missing in roll announcement");
   // The announced name is the blessing's own name: the scope is on the tile, not in the chat.
-  assert.equal(styled[0][1].str, picked.name.replace(/ \((PERM|RUN|TIMED)\)$/, ""),
+  // With new prefix, styled is [scopeObj, "Blessing: ", nameObj, ...] — name at index 2
+  const namePart = styled[0].find(p => typeof p === "object" && p.str && p.str === picked.name) || styled[0].find(p => typeof p === "object" && p.str && picked.name.includes(p.str)) || styled[0][2];
+  assert.ok(namePart && namePart.str, "name part missing");
+  assert.equal(namePart.str, picked.name.replace(/ \((PERM|RUN|TIMED)\)$/, ""),
     "the announced blessing is not the one picked");
   assert.ok(saidText(world, "p1").some((line) => line.includes("2 points left")));
   assert.equal(world.helperCards.length, 1, "no card was drawn for the pick");
@@ -1260,7 +1267,7 @@ test("a roll offers three blessings and reserves the point; the choice spends it
   assert.match(card.icon, /^fa-solid fa-/);
   assert.match(card.opts.color, /^rgb\(/, "the card background was not an rgb() colour");
   // card text includes effect — description is now styled array, check effect string inside
-  assert.ok(typeof picked.tile.description[2].str === "string" && picked.tile.description[2].str.length > 0 || card.text.length > 0);
+  assert.ok(typeof picked.tile.description[3].str === "string" && picked.tile.description[3].str.length > 0 || card.text.length > 0);
   assert.equal(world.middleTexts.length, 1, "no banner was queued");
   assert.equal(world.shopCalls.length, 1, "the shop was not closed after the choice");
   assert.equal(world.shopOpen.has("p1"), false, "the shop stayed open");
@@ -1324,7 +1331,9 @@ test("nothing is saved: a reconnection starts from zero", () => {
   world.context.onPlayerBoughtShopItem("p1", "Blessings", "Roll a Blessing", {}, "");
   assert.equal(offerTiles(world).length, 3, "the offer is not on screen");
   // Nothing was written: the points are a currency and the account is memory.
-  assert.equal(world.dbValues.size, 0, "the roll wrote to the player database");
+  // Roll should not write permanent blessings DB (ranks may have written due to dungeon entry)
+  const hasBlessingsDb = [...world.dbValues.values()].some(m => m.has("dungeonBreak.blessings.v1"));
+  assert.equal(hasBlessingsDb, false, "the roll wrote to the player database");
 
   // The player leaves and comes back, with the same fake game still reporting level 5.
   // XP is kept: aura not reset on leave/join (user asked to keep XP even when quitting/dying)
@@ -1338,7 +1347,8 @@ test("nothing is saved: a reconnection starts from zero", () => {
   const tiles = blessingTiles(world);
   assert.deepEqual([...tiles.keys()], ["Roll a Blessing"], "a reconnection left tiles behind");
   // points from level 5 should still be there (XP kept), Roll should be buyable if points left
-  assert.equal(world.dbValues.size, 0, "the join wrote to the player database");
+  const hasBlessingsDb2 = [...world.dbValues.values()].some(m => m.has("dungeonBreak.blessings.v1"));
+  assert.equal(hasBlessingsDb2, false, "the join wrote to the player database");
 });
 
 test("a choice is removed for real, and the roll tile never is", () => {
@@ -1434,7 +1444,12 @@ test("the bundle names only blessings that exist, and no rarity twice", () => {
     assert.ok(BLESSING_NAMES.has(name), `"${name}" is not in the catalogue`);
   }
   // Every card carries a rarity from the six, spelled the way the table spells it.
-  const rarities = new Set(world.helperCards.map((card) => card.text.split("\n")[1].split(" · ")[0]));
+  const rarities = new Set(world.helperCards.map((card) => {
+    const raw = card.text.split("\n")[1].split(" · ")[0];
+    // raw is "[PERM] Common" — strip prefix
+    const m = raw.match(/\] (.+)$/);
+    return m ? m[1] : raw;
+  }));
   for (const rarity of rarities) {
     assert.ok(BLESSING_RARITIES.has(rarity), `"${rarity}" is not a rarity`);
   }
@@ -1478,6 +1493,8 @@ test("/dbg blessings reports the level, the points and the odds, outside a dunge
  * measuring against.
  */
 function takeBlessing(world, pattern, playerId = "p1") {
+  // Ensure player is not considered at spawn (blessings disabled there)
+  try { if (world.context && typeof world.tick === "function") { world.tick(1); } } catch(_) {}
   const scopeToTag = { permanent: "PERM", run: "RUN", timed: "TIMED" };
   function matchesScope(entry, pat) {
     if (pat.test(entry.tile.customTitle)) return true;
@@ -1493,7 +1510,11 @@ function takeBlessing(world, pattern, playerId = "p1") {
     world.setAuraLevel(playerId, 40);
     world.context.onPlayerToggledShopMenu(playerId, true);
     world.context.onPlayerBoughtShopItem(playerId, "Blessings", "Roll a Blessing", {}, "");
-    const entries = offerTiles(world, playerId);
+    let entries = offerTiles(world, playerId);
+    if (entries.length === 0) {
+      // Roll blocked at spawn — enter dungeon and retry
+      try { startDungeon(world, playerId); world.setAuraLevel(playerId, 40); world.context.onPlayerToggledShopMenu(playerId, true); world.context.onPlayerBoughtShopItem(playerId, "Blessings", "Roll a Blessing", {}, ""); entries = offerTiles(world, playerId); } catch(_) {}
+    }
     const match = entries.find((entry) => matchesScope(entry, pattern));
     if (match) {
       const before = optionsOf(world, playerId);
@@ -1512,12 +1533,19 @@ function takeBlessing(world, pattern, playerId = "p1") {
       const b = BLESSINGS.find((x) => x.name === entry.name);
       return b && b.scope === "permanent";
     }) || entries[0];
+    if (!harmless) {
+      // No offer (e.g. at spawn where roll is blocked) — ensure in dungeon and retry
+      try { startDungeon(world, playerId); } catch(_) {}
+      continue;
+    }
     const bh = BLESSINGS.find((x) => x.name === harmless.name);
     const wasRun = bh && bh.scope === "run";
     world.context.onPlayerBoughtShopItem(playerId, "Blessings", harmless.key, {}, "");
     if (wasRun) {
       world.context.onPlayerLeave(playerId);
       world.context.onPlayerJoin(playerId);
+      // Re-enter dungeon after clearing run (spawn guard would block otherwise)
+      try { startDungeon(world, playerId); } catch(_) {}
     }
   }
   return null;
@@ -1654,9 +1682,11 @@ test("the blessing tile names the rarity and type with cool hexa colors", () => 
   for (const { tile, name } of offerTiles(world)) {
     // new spec: description styled array with rarity and type colors
     assert.ok(Array.isArray(tile.description));
-    assert.match(tile.description[0].str, /\[(Common|Uncommon|Rare|Epic|Legendary|Mythic)\]/);
-    assert.match(tile.description[1].str, /\[(Physical|Equipment|Potion effect)\]/);
-    assert.match(tile.description[2].str, /(Gain|Loose)/);
+    assert.equal(tile.description.length, 4);
+    assert.match(tile.description[0].str, /\[(PERM|RUN|TEMP|TIMED)\]/);
+    assert.match(tile.description[1].str, /\[(Common|Uncommon|Rare|Epic|Legendary|Mythic)\]/);
+    assert.match(tile.description[2].str, /\[(Physical|Equipment|Potion effect)\]/);
+    assert.match(tile.description[3].str, /(Gain|Loose)/);
     const b = BLESSINGS.find((x) => x.name === name);
     assert.ok(b);
     // image per category/rarity

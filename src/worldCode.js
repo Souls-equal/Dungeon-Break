@@ -1179,8 +1179,10 @@ function applyBlessingOptions(playerId, base = {}) {
   // Only permanent non-speed effects apply.
   if (spawnMode.get(String(playerId)) === true) {
     let spawnOpts = effects.optionsFrom(blessings().permanentOf(key), [], base);
-    // Force clean navigation speed regardless of permanent blesssings that touch speed
-    spawnOpts = { ...spawnOpts, speedMultiplier: 1, runningSpeed: 7, walkingSpeed: 4 };
+    // At spawn, no slowdown — clamp speed to at least baseline so permanent boosts stay but run/timed slows don't annoy
+    const baseSpeed = 1;
+    const clampSpeed = Math.max(baseSpeed, spawnOpts.speedMultiplier ?? baseSpeed);
+    spawnOpts = { ...spawnOpts, speedMultiplier: clampSpeed, runningSpeed: Math.max(7, spawnOpts.runningSpeed ?? 7), walkingSpeed: Math.max(4, spawnOpts.walkingSpeed ?? 4) };
     try { api.setClientOptions(playerId, spawnOpts); } catch(e) { reportErrorToOwner(e); }
     refreshDamageCache(playerId, spawnOpts);
     try { refreshWeaponStats(api, playerId, spawnOpts.dealingDamageMultiplier ?? 1); } catch(e) { reportErrorToOwner(e); }
