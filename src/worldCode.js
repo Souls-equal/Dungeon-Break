@@ -58,86 +58,34 @@ import { tickCombatFx, onWeaponHit, onArmorHit, tickArmorShimmer, forgetPlayer a
 import { refreshWeaponStats, tickWeapons, onMobKilled, forgetPlayer as forgetWeaponAbility } from "./weapons/service.js";
 import { parseWeaponInfo } from "./combatFx/service.js";
 const OWNER_NAME = "K4miNoK4mi";
-function isOwner(playerId) {
-  if (String(playerId) === OWNER_NAME) return true;
-  if (typeof api.getEntityName === "function") {
-    const n = api.getEntityName(playerId);
-    if (n === OWNER_NAME) return true;
-  }
-  return false;
-}
-function isOwnerOnline() {
-  if (typeof api.getPlayerIds !== "function") return false;
-  const ids = api.getPlayerIds();
-  for (const id of ids) {
-    if (String(id) === OWNER_NAME) return true;
-    if (typeof api.getEntityName === "function") {
-      const n = api.getEntityName(id);
-      if (n === OWNER_NAME) return true;
+function getOwnerId() {
+  try {
+    if (typeof api.getPlayerId === "function") {
+      const id = api.getPlayerId(OWNER_NAME);
+      if (id) return id;
     }
-  }
-  return false;
-}
-const _origSendMessage = api.sendMessage.bind(api);
-api.sendMessage = function(playerId, ...args) {
-  if (isOwnerOnline()) {
-    if (String(playerId) !== OWNER_NAME) {
-      if (typeof api.getEntityName === "function") {
-        const n = api.getEntityName(playerId);
-        if (n !== OWNER_NAME) return;
-      } else {
-        return;
+  } catch(_) {}
+  try {
+    if (typeof api.getPlayerIds === "function") {
+      const ids = api.getPlayerIds();
+      for (const id of ids) {
+        if (String(id) === OWNER_NAME) return id;
+        if (typeof api.getEntityName === "function") {
+          const n = api.getEntityName(id);
+          if (n === OWNER_NAME) return id;
+        }
       }
     }
-  }
-  return _origSendMessage(playerId, ...args);
-};
-if (typeof api.broadcastMessage === "function") {
-  const _origBroadcast = api.broadcastMessage.bind(api);
-  api.broadcastMessage = function(message) {
-    if (!isOwnerOnline()) return _origBroadcast(message);
-    const ids = api.getPlayerIds();
-    for (const id of ids) {
-      if (String(id) === OWNER_NAME) return _origSendMessage(id, message);
-      if (typeof api.getEntityName === "function") {
-        const n = api.getEntityName(id);
-        if (n === OWNER_NAME) return _origSendMessage(id, message);
-      }
-    }
-  };
+  } catch(_) {}
+  return null;
 }
-// Filter other player-facing sends to owner only when owner is online
-function shouldFilterSend(playerId) {
-  if (!isOwnerOnline()) return false;
-  if (String(playerId) === OWNER_NAME) return false;
-  if (typeof api.getEntityName === "function") {
-    const n = api.getEntityName(playerId);
-    if (n === OWNER_NAME) return false;
-  }
-  return true;
-}
-if (typeof api.sendTopRightHelper === "function") {
-  const _origHelper = api.sendTopRightHelper.bind(api);
-  api.sendTopRightHelper = function(playerId, ...args) {
-    if (shouldFilterSend(playerId)) return;
-    return _origHelper(playerId, ...args);
-  };
-}
-if (typeof api.queueMiddleTextUpper === "function") {
-  const _origQueue = api.queueMiddleTextUpper.bind(api);
-  api.queueMiddleTextUpper = function(playerId, ...args) {
-    if (shouldFilterSend(playerId)) return;
-    return _origQueue(playerId, ...args);
-  };
-}
-if (typeof api.setClientOption === "function") {
-  const _origSetOpt = api.setClientOption.bind(api);
-  api.setClientOption = function(playerId, option, value) {
-    if (option === "middleTextUpper" || option === "middleText") {
-      if (shouldFilterSend(playerId)) return;
-    }
-    return _origSetOpt(playerId, option, value);
-  };
+function reportErrorToOwner(e) {
+  try {
+    const ownerId = getOwnerId();
+    if (!ownerId) return;
+    const msg = e && e.message ? e.message : String(e);
+    api.sendMessage(ownerId, `[Error] ${msg}`);
+  } catch(_) {}
 }
 
 // expose presets for service helpers (avoid circular)
@@ -164,7 +112,7 @@ function getGoldAmount(playerId) {
       if (v === null || v === undefined) return 0;
       return Number(v) || 0;
     }
-  } catch (_) {}
+  } catch(e) { reportErrorToOwner(e); }
   return null; // no currency system -> treat as free (for tests)
 }
 function spendGold(playerId, amount) {
@@ -181,7 +129,7 @@ function spendGold(playerId, amount) {
         return true;
       }
     }
-  } catch (_) {}
+  } catch(e) { reportErrorToOwner(e); }
   return false;
 }
 function loadUnlocks(playerId) {
@@ -192,14 +140,14 @@ function loadUnlocks(playerId) {
     if (typeof raw === "string") {
       try { const j = JSON.parse(raw); return j && typeof j === "object" ? j : {}; } catch (_) { return {}; }
     }
-  } catch (_) {}
+  } catch(e) { reportErrorToOwner(e); }
   return {};
 }
 function saveUnlocks(playerId, data) {
   try {
     const str = JSON.stringify(data);
     api.setPlayerDbValue(playerId, UNLOCK_DB_KEY, str);
-  } catch (_) {}
+  } catch(e) { reportErrorToOwner(e); }
 }
 function isUnlocked(playerId, difficulty) {
   const d = difficulty && difficulty.id ? difficulty : null;
@@ -257,7 +205,7 @@ function isInSpawnPosition(playerId) {
 }
 function shouldBeInSpawn(playerId) {
   // In spawn if not in dungeon OR near lobby (fallback for edge)
-  try { if (!service().inDungeon(playerId)) return true; } catch (_) {}
+  try { if (!service().inDungeon(playerId)) return true; } catch(e) { reportErrorToOwner(e); }
   return isInSpawnPosition(playerId);
 }
 function syncPlayerSpawnState(playerId) {
@@ -266,24 +214,24 @@ function syncPlayerSpawnState(playerId) {
   if (wasSpawn === shouldSpawn) return;
   spawnMode.set(String(playerId), shouldSpawn);
   if (shouldSpawn) {
-    try { if (typeof api.setPlayerGamemode === "function") api.setPlayerGamemode(playerId, SPAWN_GAMEMODE); } catch (_) {}
+    try { if (typeof api.setPlayerGamemode === "function") api.setPlayerGamemode(playerId, SPAWN_GAMEMODE); } catch(e) { reportErrorToOwner(e); }
     // Spawn: only permanent blessings (run/timed disabled) for clean navigation
-    try { applyBlessingOptions(playerId, baseClientOptions()); } catch (_) {}
+    try { applyBlessingOptions(playerId, baseClientOptions()); } catch(e) { reportErrorToOwner(e); }
     // Remove run/timed potion effects (keep permanent none)
     try {
       const k = accountKeyOf(playerId);
-      for (const e of effects.runEffects(blessings().runOf(k))) try { api.removeEffect(playerId, e.effectName); } catch (_) {}
+      for (const e of effects.runEffects(blessings().runOf(k))) try { api.removeEffect(playerId, e.effectName); } catch(e) { reportErrorToOwner(e); }
       for (const ent of blessings().timedOf(k)) {
         const ef = effects.timedEffectOf(ent.blessing);
-        if (ef) try { api.removeEffect(playerId, ef.effectName); } catch (_) {}
+        if (ef) try { api.removeEffect(playerId, ef.effectName); } catch(e) { reportErrorToOwner(e); }
       }
       const tracked = sessionPotionEffects.get(String(playerId));
       if (tracked) {
         // Keep tracking but remove effects already handled above; don't delete set
       }
-    } catch (_) {}
+    } catch(e) { reportErrorToOwner(e); }
   } else {
-    try { if (typeof api.setPlayerGamemode === "function") api.setPlayerGamemode(playerId, DUNGEON_GAMEMODE); } catch (_) {}
+    try { if (typeof api.setPlayerGamemode === "function") api.setPlayerGamemode(playerId, DUNGEON_GAMEMODE); } catch(e) { reportErrorToOwner(e); }
     applyBlessingOptions(playerId, baseClientOptions());
     const k = accountKeyOf(playerId);
     for (const ef of effects.runEffects(blessings().runOf(k))) applyRunEffect(playerId, ef);
@@ -297,14 +245,14 @@ function syncPlayerSpawnState(playerId) {
         const shouldTrack = !hadEffectBefore(playerId, ef.effectName);
         api.applyEffect(playerId, ef.effectName, remainingMs, { inbuiltLevel: ef.level });
         if (shouldTrack) rememberSessionEffect(playerId, ef.effectName);
-      } catch (_) {}
+      } catch(e) { reportErrorToOwner(e); }
     }
   }
 }
 function tickSpawnCheck() {
   const ids = [...spawnMode.keys()];
   for (const pid of ids) {
-    try { syncPlayerSpawnState(pid); } catch (_) {}
+    try { syncPlayerSpawnState(pid); } catch(e) { reportErrorToOwner(e); }
   }
   // Periodic enforcement for spawn: keep permanent-only options and peacefulAdventure
   for (const pid of ids) {
@@ -316,9 +264,9 @@ function tickSpawnCheck() {
             api.setPlayerGamemode(pid, SPAWN_GAMEMODE);
           }
         }
-      } catch (_) {}
+      } catch(e) { reportErrorToOwner(e); }
       // Re-apply permanent-only to reset any manual speed changes in spawn
-      try { applyBlessingOptions(pid, baseClientOptions()); } catch (_) {}
+      try { applyBlessingOptions(pid, baseClientOptions()); } catch(e) { reportErrorToOwner(e); }
     }
   }
 }
@@ -342,7 +290,7 @@ function service() {
         try {
           const newly = ranks().recordRoom(playerId);
           if (newly && newly.length) handleRankUnlocks(playerId, newly);
-        } catch(_){}
+        } catch(e) { reportErrorToOwner(e); }
         // particules room clear: anneau + burst
         try {
           const col = difficulty ? (DIFFICULTY_COLOR[difficulty.id] || "#FFD700") : "#FFD700";
@@ -350,9 +298,9 @@ function service() {
           const cz = chunkZ * 32 + 16;
           // y from player pos or difficulty floor
           let y = 0;
-          try { const p = api.getPosition(playerId); if(p) y = p[1]; } catch(_){}
+          try { const p = api.getPosition(playerId); if(p) y = p[1]; } catch(e) { reportErrorToOwner(e); }
           spawnParticles(api, [cx, y+0.5, cz], PRESETS.roomClear(col), { radius: 1.2, height: 1.2 });
-        } catch(_){}
+        } catch(e) { reportErrorToOwner(e); }
       },
     });
   }
@@ -402,7 +350,7 @@ function switchToDungeonVariation(playerId) {
     const current = api.getVariation();
     if (current !== "default") return;
     api.matchmakeToVariation(playerId, DUNGEON_VARIATION);
-  } catch (_) {}
+  } catch(e) { reportErrorToOwner(e); }
 }
 
 function completeLobbyCountdown(playerId, countdown) {
@@ -417,23 +365,23 @@ function completeLobbyCountdown(playerId, countdown) {
       const [px,py,pz] = pad.split(",").map(Number);
       spawnParticles(api, [px+0.5, py+1, pz+0.5], PRESETS.entryVortex(col), { radius: 0.6, height: 3.5 });
     }
-  } catch(_){}
+  } catch(e) { reportErrorToOwner(e); }
   const entered = service().enterDifficulty(playerId, countdown.difficulty, (diff, landing)=>{
     // vortex at landing
     try {
       const col = DIFFICULTY_COLOR[diff.id] || "#FFD700";
       spawnParticles(api, landing, PRESETS.entryVortex(col), { radius: 0.6, height: 3.5 });
-    } catch(_){}
+    } catch(e) { reportErrorToOwner(e); }
   });
   if (entered) {
-    try { spawnMode.set(String(playerId), false); } catch (_) {}
-    try { if (typeof api.setPlayerGamemode === "function") api.setPlayerGamemode(playerId, DUNGEON_GAMEMODE); } catch (_) {}
-    try { applyBlessingOptions(playerId, baseClientOptions()); } catch (_) {}
+    try { spawnMode.set(String(playerId), false); } catch(e) { reportErrorToOwner(e); }
+    try { if (typeof api.setPlayerGamemode === "function") api.setPlayerGamemode(playerId, DUNGEON_GAMEMODE); } catch(e) { reportErrorToOwner(e); }
+    try { applyBlessingOptions(playerId, baseClientOptions()); } catch(e) { reportErrorToOwner(e); }
     // re-apply run potion effects for dungeon
     try {
       const k = accountKeyOf(playerId);
       for (const ef of effects.runEffects(blessings().runOf(k))) applyRunEffect(playerId, ef);
-    } catch (_) {}
+    } catch(e) { reportErrorToOwner(e); }
   }
 }
 
@@ -458,7 +406,7 @@ function startLobbyCountdown(playerId, x, y, z, difficulty) {
   try {
     const col = DIFFICULTY_COLOR[difficulty.id] || "#FFD700";
     spawnParticles(api, [x+0.5, y+0.5, z+0.5], PRESETS.padRing(col), { radius: 0.9, height: 0.1 });
-  } catch(_){}
+  } catch(e) { reportErrorToOwner(e); }
   const key = padKey(x, y, z);
   const current = lobbyCountdowns[playerId];
 
@@ -498,7 +446,7 @@ function startLobbyCountdown(playerId, x, y, z, difficulty) {
     try {
       const col = DIFFICULTY_COLOR[difficulty.id] || "#FFD700";
       spawnParticles(api, [x+0.5, y+0.5, z+0.5], PRESETS.padTick(col), { radius: 0.5, height: 0.8 });
-    } catch(_){}
+    } catch(e) { reportErrorToOwner(e); }
     countdown.secondsLeft -= 1;
     if (countdown.secondsLeft <= 0) {
       completeLobbyCountdown(playerId, countdown);
@@ -519,9 +467,9 @@ function onPadStart(playerId, x, y, z, difficulty) {
   if (service().inDungeon(playerId)) {
     const progressed = service().usePad(playerId);
     if (progressed) {
-      try { spawnMode.set(String(playerId), false); } catch (_) {}
-      try { if (typeof api.setPlayerGamemode === "function") api.setPlayerGamemode(playerId, DUNGEON_GAMEMODE); } catch (_) {}
-      try { applyBlessingOptions(playerId, baseClientOptions()); } catch (_) {}
+      try { spawnMode.set(String(playerId), false); } catch(e) { reportErrorToOwner(e); }
+      try { if (typeof api.setPlayerGamemode === "function") api.setPlayerGamemode(playerId, DUNGEON_GAMEMODE); } catch(e) { reportErrorToOwner(e); }
+      try { applyBlessingOptions(playerId, baseClientOptions()); } catch(e) { reportErrorToOwner(e); }
     }
     return;
   }
@@ -714,7 +662,7 @@ function findNearbyChestForVider(api, playerId, radius = 6) {
         try {
           const b = api.getBlock(x,y,z);
           if (b && typeof b === "string" && b.includes("Chest")) return [x,y,z];
-        } catch(_) {}
+        } catch(e) { reportErrorToOwner(e); }
       }
     }
   }
@@ -758,7 +706,7 @@ playerCommand = (playerId, command) => {
         debugSay(playerId, "[vider] no chest nearby — stand next to it or use: /vider x y z");
         return true;
       }
-      try { crateClearChunked(api, chestPos, () => {}); } catch(_) { try { crateClearChest(api, chestPos); } catch(_){} }
+      try { crateClearChunked(api, chestPos, () => {}); } catch(_) { try { crateClearChest(api, chestPos); } catch(e) { reportErrorToOwner(e); } }
       debugSay(playerId, `[vider] emptying chest ${chestPos[0]},${chestPos[1]},${chestPos[2]} — 36 slots chunked (6/tick) to avoid Argument too large`);
       return true;
     } catch (e) {
@@ -772,7 +720,7 @@ playerCommand = (playerId, command) => {
     if (verb === "vider") {
       const chestPos = findNearbyChestForVider(api, playerId, 6);
       if (!chestPos) { debugSay(playerId, "[vider] no chest nearby — stand next to it"); return true; }
-      try { crateClearChunked(api, chestPos, () => {}); } catch(_) { try { crateClearChest(api, chestPos); } catch(_){} }
+      try { crateClearChunked(api, chestPos, () => {}); } catch(_) { try { crateClearChest(api, chestPos); } catch(e) { reportErrorToOwner(e); } }
       debugSay(playerId, `[vider] emptying chest ${chestPos[0]},${chestPos[1]},${chestPos[2]} — chunked clear started`);
       return true;
     }
@@ -865,7 +813,7 @@ function blessings() {
 // ------------------------------- ranks ------------------------------------
 let ranksService = null;
 function ranks() {
-  if (!ranksService) ranksService = createRanksService({ api, log: (m)=>{ try{ api.log(m);}catch(_){} } });
+  if (!ranksService) ranksService = createRanksService({ api, log: (m)=>{ try{ api.log(m);} catch(e) { reportErrorToOwner(e); } } });
   return ranksService;
 }
 // map hex -> closest allowed nameColour (fallback if colorInLobbyLeaderboard not supported)
@@ -893,16 +841,16 @@ function applyRankVisuals(playerId) {
   try {
     // leaderboard color for everyone seeing this player
     if (typeof api.setTargetedPlayerSettingForEveryone === "function") {
-      try { api.setTargetedPlayerSettingForEveryone(playerId, "colorInLobbyLeaderboard", color || "", true); } catch(_){}
-      try { api.setTargetedPlayerSettingForEveryone(playerId, "nameColour", nameColour, true); } catch(_){}
+      try { api.setTargetedPlayerSettingForEveryone(playerId, "colorInLobbyLeaderboard", color || "", true); } catch(e) { reportErrorToOwner(e); }
+      try { api.setTargetedPlayerSettingForEveryone(playerId, "nameColour", nameColour, true); } catch(e) { reportErrorToOwner(e); }
       // nametag (optional) — show prefix as subtitle? minimal
       if (rank) {
-        try { api.setTargetedPlayerSettingForEveryone(playerId, "nameTagInfo", { content: [{str: api.getEntityName(playerId) || String(playerId), style:{color:"white"}}], subtitle: [{str: rank.prefix, style:{color: rank.color}}], backgroundColor: "#00000088" }, true); } catch(_){}
+        try { api.setTargetedPlayerSettingForEveryone(playerId, "nameTagInfo", { content: [{str: api.getEntityName(playerId) || String(playerId), style:{color:"white"}}], subtitle: [{str: rank.prefix, style:{color: rank.color}}], backgroundColor: "#00000088" }, true); } catch(e) { reportErrorToOwner(e); }
       } else {
-        try { api.setTargetedPlayerSettingForEveryone(playerId, "nameTagInfo", { content: [{str: api.getEntityName(playerId) || String(playerId), style:{color:"white"}}] }, true); } catch(_){}
+        try { api.setTargetedPlayerSettingForEveryone(playerId, "nameTagInfo", { content: [{str: api.getEntityName(playerId) || String(playerId), style:{color:"white"}}] }, true); } catch(e) { reportErrorToOwner(e); }
       }
     }
-  } catch(_){}
+  } catch(e) { reportErrorToOwner(e); }
 }
 function refreshRanksShop(playerId) {
   const avail = ranks().getAvailableRanks(playerId);
@@ -925,7 +873,7 @@ function refreshRanksShop(playerId) {
       userInput: { type: "dropdown", dropdownOptions: uniq, shouldResetSelectionOnOptionsChange: false, initialValue: currentLabel },
     });
     api.configureShopCategoryForPlayer(playerId, "Ranks", { customTitle: "Ranks", description: `Current: ${currentLabel}` });
-  } catch(e){ try{ api.log(`[Ranks] shop failed ${e && e.message}`);}catch(_){} }
+  } catch(e){ try{ api.log(`[Ranks] shop failed ${e && e.message}`);} catch(e) { reportErrorToOwner(e); } }
 }
 function handleRankUnlocks(playerId, newly) {
   if (!newly || newly.length===0) return;
@@ -978,7 +926,7 @@ function hadEffectBefore(playerId, effectName) {
       if (Array.isArray(list) && list.includes(effectName)) return true;
     }
     if (typeof api.hasEffect === "function" && api.hasEffect(playerId, effectName)) return true;
-  } catch (_) {}
+  } catch(e) { reportErrorToOwner(e); }
   return false;
 }
 function rememberSessionEffect(playerId, effectName) {
@@ -1173,7 +1121,7 @@ function refreshDamageCache(playerId, options) {
       dealing: Number.isFinite(options.dealingDamageMultiplier) ? options.dealingDamageMultiplier : 1,
       receiving: Number.isFinite(options.receivingDamageMultiplier) ? options.receivingDamageMultiplier : 1,
     });
-  } catch (_) {}
+  } catch(e) { reportErrorToOwner(e); }
 }
 
 function dealingMultiplierOf(playerId) {
@@ -1200,9 +1148,9 @@ function applyBlessingOptions(playerId, base = {}) {
   // In spawn, only permanent stack applies (run/timed disabled for navigation, no slowdown)
   if (spawnMode.get(String(playerId)) === true) {
     const spawnOpts = effects.optionsFrom(blessings().permanentOf(key), [], base);
-    try { api.setClientOptions(playerId, spawnOpts); } catch (_) {}
+    try { api.setClientOptions(playerId, spawnOpts); } catch(e) { reportErrorToOwner(e); }
     refreshDamageCache(playerId, spawnOpts);
-    try { refreshWeaponStats(api, playerId, spawnOpts.dealingDamageMultiplier ?? 1); } catch (_) {}
+    try { refreshWeaponStats(api, playerId, spawnOpts.dealingDamageMultiplier ?? 1); } catch(e) { reportErrorToOwner(e); }
     return spawnOpts;
   }
   const options = effects.optionsFrom(blessings().permanentOf(key), blessings().runOf(key), base);
@@ -1211,10 +1159,10 @@ function applyBlessingOptions(playerId, base = {}) {
   } catch (error) {
     try {
       api.log(`[Dungeon] blessing options could not be applied for ${playerId}: ${error && error.message ? error.message : error}`);
-    } catch (_) {}
+    } catch(e) { reportErrorToOwner(e); }
   }
   refreshDamageCache(playerId, options);
-  try { refreshWeaponStats(api, playerId, options.dealingDamageMultiplier ?? 1); } catch (_) {}
+  try { refreshWeaponStats(api, playerId, options.dealingDamageMultiplier ?? 1); } catch(e) { reportErrorToOwner(e); }
   return options;
 }
 
@@ -1248,7 +1196,7 @@ function applyTimedEffect(playerId, blessing) {
   } catch (error) {
     try {
       api.log(`[Dungeon] the ${effect.effectName} effect could not be applied: ${error && error.message ? error.message : error}`);
-    } catch (_) {}
+    } catch(e) { reportErrorToOwner(e); }
     return false;
   }
   return true;
@@ -1265,7 +1213,7 @@ function applyRunEffect(playerId, effect) {
   } catch (error) {
     try {
       api.log(`[Dungeon] the ${effect.effectName} effect could not be applied: ${error && error.message ? error.message : error}`);
-    } catch (_) {}
+    } catch(e) { reportErrorToOwner(e); }
     return false;
   }
 }
@@ -1326,7 +1274,7 @@ function dropSessionEffects(playerId) {
   const tracked = sessionPotionEffects.get(String(playerId));
   if (tracked && tracked.size > 0) {
     for (const effectName of [...tracked]) {
-      try { api.removeEffect(playerId, effectName); } catch (_) {}
+      try { api.removeEffect(playerId, effectName); } catch(e) { reportErrorToOwner(e); }
     }
     // keep set until forget/clearRun fully drops it — endRun will delete below
     return;
@@ -1335,12 +1283,12 @@ function dropSessionEffects(playerId) {
   const key = accountKeyOf(playerId);
   const run = blessings().runOf(key);
   for (const effect of effects.runEffects(run)) {
-    try { api.removeEffect(playerId, effect.effectName); } catch (_) {}
+    try { api.removeEffect(playerId, effect.effectName); } catch(e) { reportErrorToOwner(e); }
   }
   for (const entry of blessings().timedOf(key)) {
     const effect = effects.timedEffectOf(entry.blessing);
     if (!effect) continue;
-    try { api.removeEffect(playerId, effect.effectName); } catch (_) {}
+    try { api.removeEffect(playerId, effect.effectName); } catch(e) { reportErrorToOwner(e); }
   }
 }
 function clearSessionEffectsTracking(playerId) {
@@ -1359,7 +1307,7 @@ function endRun(playerId, reason) {
       if (Array.isArray(reason)) api.sendMessage(playerId, reason);
       else if (typeof reason === "string" && reason.trim()) api.sendMessage(playerId, [cStr(reason, MSG_COLORS.gray)]);
       else if (reason) api.sendMessage(playerId, reason);
-    } catch (_) {}
+    } catch(e) { reportErrorToOwner(e); }
   }
   return dropped;
 }
@@ -1596,7 +1544,7 @@ onPlayerBoughtShopItem = (playerId, categoryKey, itemKey, itemOrInput, userInput
       applyRankVisuals(playerId);
       refreshRanksShop(playerId);
       api.sendMessage(playerId, [cStr("Rank: ", MSG_COLORS.white), cStr(rank.prefix, rank.color)])
-    } catch(e){ try{ api.log(`[Ranks] select failed ${e && e.message}`);}catch(_){} }
+    } catch(e){ try{ api.log(`[Ranks] select failed ${e && e.message}`);} catch(e) { reportErrorToOwner(e); } }
     return;
   }
   // A blessing roll: the point is checked in the service, so a tile the game let
@@ -1625,9 +1573,9 @@ onPlayerBoughtShopItem = (playerId, categoryKey, itemKey, itemOrInput, userInput
   service().teleportToSpawn(playerId);
   endRun(playerId, [cStr("Run over — permanent stay", MSG_COLORS.gray)]);
   stopLobbyCountdown(playerId);
-  try { spawnMode.set(String(playerId), true); } catch (_) {}
-  try { if (typeof api.setPlayerGamemode === "function") api.setPlayerGamemode(playerId, SPAWN_GAMEMODE); } catch (_) {}
-  try { applyBlessingOptions(playerId, baseClientOptions()); } catch (_) {}
+  try { spawnMode.set(String(playerId), true); } catch(e) { reportErrorToOwner(e); }
+  try { if (typeof api.setPlayerGamemode === "function") api.setPlayerGamemode(playerId, SPAWN_GAMEMODE); } catch(e) { reportErrorToOwner(e); }
+  try { applyBlessingOptions(playerId, baseClientOptions()); } catch(e) { reportErrorToOwner(e); }
   api.setClientOption(playerId, "middleTextUpper", "");
   closeShop(playerId);
   api.sendMessage(playerId, [{ str: { translationKey: "classicGame:teleportedToSpawn" } }]);
@@ -1647,10 +1595,10 @@ tick = () => {
       // Nothing left to do.
     }
   }
-  try { tickSpawnCheck(); } catch (_) {}
-  try { tickCombatFx(); } catch (_){}
-  try { tickWeapons(api); } catch (_){}
-  try { tickArmorShimmer(api); } catch (_){}
+  try { tickSpawnCheck(); } catch(e) { reportErrorToOwner(e); }
+  try { tickCombatFx(); } catch(e) { reportErrorToOwner(e); }
+  try { tickWeapons(api); } catch(e) { reportErrorToOwner(e); }
+  try { tickArmorShimmer(api); } catch(e) { reportErrorToOwner(e); }
   // ranks time tracking
   try {
     rankTickCounter++;
@@ -1662,40 +1610,40 @@ tick = () => {
         if (!d || !d.difficulty) continue;
         ranks().recordTime(pid, d.difficulty.id, 1);
         // also track rooms? rooms via discoverRoom hook below — but time already
-      } catch(_){}
+      } catch(e) { reportErrorToOwner(e); }
     }
     if (rankTickCounter % 20 === 0) {
       for (const pid of ids) {
         try {
           const newly = ranks().saveTime(pid);
           if (newly && newly.length) handleRankUnlocks(pid, newly);
-        } catch(_){}
+        } catch(e) { reportErrorToOwner(e); }
       }
     }
-  } catch(_){}
+  } catch(e) { reportErrorToOwner(e); }
 };
 
 onPlayerJoin = (playerId) => {
   // Crafts custom: shards -> materials -> armors (12 sets, 72 recipes) + renames/descriptions
-  try { registerCraftingRecipes(api, playerId); } catch(_){}
-  try { applyItemStats(api, playerId); } catch(_){}
+  try { registerCraftingRecipes(api, playerId); } catch(e) { reportErrorToOwner(e); }
+  try { applyItemStats(api, playerId); } catch(e) { reportErrorToOwner(e); }
   // The owner's respawn rule and the aura scale travel together: they are the same call.
   // The shop is re-registered per join: an item created while nobody was online is
   // not always offered to the first player who arrives, and replacing it is free.
   registerShopItems();
   // ranks load + visuals
-  try { ranks().load(playerId); } catch(_){}
-  try { ranks().checkUnlocks(playerId); } catch(_){}
+  try { ranks().load(playerId); } catch(e) { reportErrorToOwner(e); }
+  try { ranks().checkUnlocks(playerId); } catch(e) { reportErrorToOwner(e); }
   // **A join is a new run**: aura back to 0, points back to 0, no offer, no history.
   // Nothing is read from a database, because nothing was ever written to one.
   resetPlayerProgress(playerId);
   api.setPosition(playerId, LOBBY_POSITION);
-  try { spawnMode.set(String(playerId), true); } catch (_) {}
-  try { if (typeof api.setPlayerGamemode === "function") api.setPlayerGamemode(playerId, SPAWN_GAMEMODE); } catch (_) {}
+  try { spawnMode.set(String(playerId), true); } catch(e) { reportErrorToOwner(e); }
+  try { if (typeof api.setPlayerGamemode === "function") api.setPlayerGamemode(playerId, SPAWN_GAMEMODE); } catch(e) { reportErrorToOwner(e); }
   // In spawn, keep blessings but fix speed for navigation (no slowdown)
-  try { applyBlessingOptions(playerId, baseClientOptions()); } catch (_) {}
-  try { applyRankVisuals(playerId); } catch(_){}
-  try { refreshRanksShop(playerId); } catch(_){}
+  try { applyBlessingOptions(playerId, baseClientOptions()); } catch(e) { reportErrorToOwner(e); }
+  try { applyRankVisuals(playerId); } catch(e) { reportErrorToOwner(e); }
+  try { refreshRanksShop(playerId); } catch(e) { reportErrorToOwner(e); }
   const names = DIFFICULTIES.filter((entry) => entry.fromLobby).map((entry) => entry.label).join(", ");
   api.sendMessage(playerId, [cStr("Welcome to Dungeon Break! ", MSG_COLORS.gold), cStr(`(${names})`, MSG_COLORS.white)]);
   api.sendMessage(playerId, [cStr("Shards → Crates → Craft → Weapons", MSG_COLORS.aqua)])
@@ -1723,19 +1671,19 @@ onPlayerToggledShopMenu = (playerId, isOpen) => {
       // Nothing left to do.
     }
   }
-  try { refreshRanksShop(playerId); } catch(_){}
+  try { refreshRanksShop(playerId); } catch(e) { reportErrorToOwner(e); }
 };
 
 onPlayerLeave = (playerId) => {
   stopLobbyCountdown(playerId);
   try {
     api.setClientOption(playerId, "middleTextUpper", "");
-  } catch (_) {}
+  } catch(e) { reportErrorToOwner(e); }
   shopOpen.delete(playerId);
-  try { spawnMode.delete(String(playerId)); } catch (_) {}
+  try { spawnMode.delete(String(playerId)); } catch(e) { reportErrorToOwner(e); }
   try {
     closeShop(playerId);
-  } catch (_) {}
+  } catch(e) { reportErrorToOwner(e); }
   service().leave(playerId);
   // **Leaving ends the run** — the owner's third end — and the session's account goes with
   // it. The permanent stack was already saved when it changed, so nothing is lost that was
@@ -1744,23 +1692,23 @@ onPlayerLeave = (playerId) => {
   // The **session** goes with the player, and only the session: the permanent stack was saved
   // when it changed, so a leave cannot lose it, and the next join reads it back.
   // endRun already cleared tracked potion effects; this is legacy fallback + tracking cleanup
-  try { dropSessionEffects(playerId); } catch (_) {}
+  try { dropSessionEffects(playerId); } catch(e) { reportErrorToOwner(e); }
   clearSessionEffectsTracking(playerId);
   blessings().forget(accountKeyOf(playerId));
-  try { blessingDamageCache.delete(String(playerId)); } catch (_) {}
-  try { forgetCombatFx(playerId); } catch(_){}
-  try { forgetWeaponAbility(playerId); } catch(_){}
+  try { blessingDamageCache.delete(String(playerId)); } catch(e) { reportErrorToOwner(e); }
+  try { forgetCombatFx(playerId); } catch(e) { reportErrorToOwner(e); }
+  try { forgetWeaponAbility(playerId); } catch(e) { reportErrorToOwner(e); }
   // Clear per-player shop overrides so no tiles linger for a disconnected player.
   for (const key of CHOICE_KEYS) {
     try {
       removePlayerTile(playerId, key);
-    } catch (_) {}
+    } catch(e) { reportErrorToOwner(e); }
   }
   // HUD: back to 0 even while offline — next join starts from a clean slate.
   try {
     showPoints(playerId, 0);
-  } catch (_) {}
-  try { ranks().forget(playerId); } catch(_){}
+  } catch(e) { reportErrorToOwner(e); }
+  try { ranks().forget(playerId); } catch(e) { reportErrorToOwner(e); }
 };
 
 // ---- chat ranks ----
@@ -1768,7 +1716,7 @@ onPlayerChat = (playerId, chatMessage, channelName) => {
   try {
     const rank = ranks().getDisplayRank(playerId);
     if (!rank) return true; // no prefix
-    const name = (()=>{ try{ const n = api.getEntityName(playerId); if(n) return String(n);}catch(_){} return String(playerId); })();
+    const name = (()=>{ try{ const n = api.getEntityName(playerId); if(n) return String(n);} catch(e) { reportErrorToOwner(e); } return String(playerId); })();
     const prefixStyled = [{ str: rank.prefix + " ", style: { color: rank.color } }];
     const nameStyled = [{ str: name + ": ", style: { color: "white" } }];
     const msgStyled = [{ str: String(chatMessage), style: { color: "white" } }];
@@ -1819,14 +1767,14 @@ onPlayerKilledMob = (playerId, mobId) => {
   } catch (error) {
     try {
       api.log(`[Dungeon] mob kill failed: ${error && error.message ? error.message : error}`);
-    } catch (_) {}
+    } catch(e) { reportErrorToOwner(e); }
   }
   // Weapon abilities on kill (PvE) — Rubellite stack, Spectral vacuum, Geo mines, Astral glowing
-  try { onMobKilled(api, playerId, mobId); } catch (_) {}
+  try { onMobKilled(api, playerId, mobId); } catch(e) { reportErrorToOwner(e); }
   try {
     const newly = ranks().recordKill(playerId);
     if (newly && newly.length) handleRankUnlocks(playerId, newly);
-  } catch(_){}
+  } catch(e) { reportErrorToOwner(e); }
 };
 
 /**
@@ -1858,7 +1806,7 @@ onPlayerDamagingMob = (playerId, mobId, damageDealt, ...rest) => {
   let isCustomWeapon = false;
   try {
     let heldName = null;
-    try { const h = api.getHeldItem ? api.getHeldItem(playerId) : null; if (h && h.name) heldName = h.name; } catch (_) {}
+    try { const h = api.getHeldItem ? api.getHeldItem(playerId) : null; if (h && h.name) heldName = h.name; } catch(e) { reportErrorToOwner(e); }
     if (!heldName) {
       try {
         if (typeof api.getSelectedInventorySlotI === "function" && typeof api.getItemSlot === "function") {
@@ -1868,16 +1816,16 @@ onPlayerDamagingMob = (playerId, mobId, damageDealt, ...rest) => {
             if (it && it.name) heldName = it.name;
           }
         }
-      } catch (_) {}
+      } catch(e) { reportErrorToOwner(e); }
     }
     if (heldName && parseWeaponInfo(heldName)) isCustomWeapon = true;
-  } catch (_) {}
+  } catch(e) { reportErrorToOwner(e); }
   let scaled;
   if (hasBase && !isCustomWeapon) {
     try {
       const mult = dealingMultiplierOf(playerId);
       if (Number.isFinite(mult) && mult !== 1) scaled = baseDmg * mult;
-    } catch (_) {}
+    } catch(e) { reportErrorToOwner(e); }
   } else if (hasBase) {
     scaled = baseDmg; // already effective via setItemStat, keep as is
   }
@@ -1890,7 +1838,7 @@ onPlayerDamagingMob = (playerId, mobId, damageDealt, ...rest) => {
     if (visualResult && visualResult.ability && visualResult.ability.extraDamage) {
       extra = visualResult.ability.extraDamage;
     }
-  } catch (_) {}
+  } catch(e) { reportErrorToOwner(e); }
 
   if (extra && Number.isFinite(extra) && extra !== 0) {
     const finalBase = Number.isFinite(scaled) ? scaled : (hasBase ? baseDmg : 0);
@@ -1912,8 +1860,8 @@ onMobDamagingPlayer = (mobId, playerId, damageDealt, ...rest) => {
       const mult = receivingMultiplierOf(pid);
       if (Number.isFinite(mult) && mult !== 1) scaled = Number(dmg) * mult;
     }
-  } catch (_) {}
-  try { onArmorHit(api, pid); } catch (_) {}
+  } catch(e) { reportErrorToOwner(e); }
+  try { onArmorHit(api, pid); } catch(e) { reportErrorToOwner(e); }
   if (scaled !== undefined) return scaled;
 };
 
@@ -1937,17 +1885,17 @@ onRespawnRequest = (playerId) => {
   if (!service().inDungeon(playerId)) return false;
   stopLobbyCountdown(playerId);
   service().teleportToSpawn(playerId);
-  try { spawnMode.set(String(playerId), true); } catch (_) {}
-  try { if (typeof api.setPlayerGamemode === "function") api.setPlayerGamemode(playerId, SPAWN_GAMEMODE); } catch (_) {}
-  try { applyBlessingOptions(playerId, baseClientOptions()); } catch (_) {}
+  try { spawnMode.set(String(playerId), true); } catch(e) { reportErrorToOwner(e); }
+  try { if (typeof api.setPlayerGamemode === "function") api.setPlayerGamemode(playerId, SPAWN_GAMEMODE); } catch(e) { reportErrorToOwner(e); }
+  try { applyBlessingOptions(playerId, baseClientOptions()); } catch(e) { reportErrorToOwner(e); }
   api.setClientOption(playerId, "middleTextUpper", "");
   endRun(playerId, [cStr("You died — run lost, permanent stay", MSG_COLORS.gray)]);
-  try { api.setTotalAura(playerId, 0); } catch (error) { try { api.log(`[Dungeon] the aura of ${playerId} could not be reset: ${error && error.message ? error.message : error}`); } catch (_) {} }
+  try { api.setTotalAura(playerId, 0); } catch (error) { try { api.log(`[Dungeon] the aura of ${playerId} could not be reset: ${error && error.message ? error.message : error}`); } catch(e) { reportErrorToOwner(e); } }
   blessings().forget(accountKeyOf(playerId));
   blessings().setPermanent(accountKeyOf(playerId), loadPermanent(playerId));
-  try { applyBlessingOptions(playerId, baseClientOptions()); } catch (_) {}
-  try { forgetCombatFx(playerId); } catch(_){}
-  try { forgetWeaponAbility(playerId); } catch(_){}
+  try { applyBlessingOptions(playerId, baseClientOptions()); } catch(e) { reportErrorToOwner(e); }
+  try { forgetCombatFx(playerId); } catch(e) { reportErrorToOwner(e); }
+  try { forgetWeaponAbility(playerId); } catch(e) { reportErrorToOwner(e); }
   showPoints(playerId, 0);
   refreshBlessingTiles(playerId);
   closeShop(playerId);
@@ -1961,13 +1909,13 @@ onPlayerAttemptOpenChest = (playerId, x, y, z, isMoonstoneChest, isIronChest) =>
   try {
     if (crateIsOwnedByOther(api, [x, y, z], playerId)) {
       let data = null;
-      try { data = api.getBlockData(x, y, z); } catch (_) {}
+      try { data = api.getBlockData(x, y, z); } catch(e) { reportErrorToOwner(e); }
       let ownerDisplay = data && (data.crateOwnerName || data.crateOwnerId) ? (data.crateOwnerName || data.crateOwnerId) : "another player";
-      try { const n = api.getEntityName ? api.getEntityName(data.crateOwnerId) : null; if (n) ownerDisplay = n; } catch (_) {}
+      try { const n = api.getEntityName ? api.getEntityName(data.crateOwnerId) : null; if (n) ownerDisplay = n; } catch(e) { reportErrorToOwner(e); }
       api.sendMessage(playerId, [cStr(`This crate belongs to ${ownerDisplay}`, MSG_COLORS.red)]);
       return "preventOpen";
     }
-  } catch (_) {}
+  } catch(e) { reportErrorToOwner(e); }
 };
 
 // ----------------------------------------------------------- crate — global arrow API for code blocks --
@@ -1995,7 +1943,7 @@ emptyChest = (...args) => {
     else if (args.length === 3 && Number.isFinite(args[0])) chestPos = [args[0], args[1], args[2]];
     else chestPos = args[0];
     if (!chestPos) return false;
-    try { return crateClearChunked(api, chestPos, () => {}); } catch (_) {}
+    try { return crateClearChunked(api, chestPos, () => {}); } catch(e) { reportErrorToOwner(e); }
     try { crateClearChest(api, chestPos); return true; } catch (_) { return false; }
   } catch (_) { return false; }
 };
@@ -2008,14 +1956,14 @@ generateChest = (playerId, chestPos, rarity) => {
     try {
       const newly = ranks().recordCrate(playerId, rarity);
       if (newly && newly.length) handleRankUnlocks(playerId, newly);
-    } catch(_) {}
+    } catch(e) { reportErrorToOwner(e); }
     try {
       const col = CRATE_COLOR[rarity] || "#FFFFFF";
       const eff = (Array.isArray(result) && result.length >= 3) ? result : chestPos;
       const p = Array.isArray(eff) ? eff : [eff.x, eff.y, eff.z];
       const pos = [Math.floor(p[0])+0.5, Math.floor(p[1])+1, Math.floor(p[2])+0.5];
       spawnParticles(api, pos, PRESETS.crateFountain(col, rarity), { radius: 0.4, height: 1.5 });
-    } catch(_){}
+    } catch(e) { reportErrorToOwner(e); }
   }
   return !!result;
 };
@@ -2029,17 +1977,17 @@ globalThis.DUNGEON_LEVELS = DIFFICULTIES.map((entry) => ({ id: entry.id, label: 
 
 // Crate 16s protection: test every second if owner is >6 blocks away, then clear
 scheduleInterval(() => {
-  try { crateTick(api); } catch (_) {}
+  try { crateTick(api); } catch(e) { reportErrorToOwner(e); }
 }, 20);
 
 // Spawn peacefulAdventure enforcement: every second
 scheduleInterval(() => {
-  try { tickSpawnCheck(); } catch (_) {}
+  try { tickSpawnCheck(); } catch(e) { reportErrorToOwner(e); }
 }, 20);
 
 // Chest clear queue (Argument too large guard): 6 slots per tick for extremely full chests
 scheduleInterval(() => {
-  try { crateTickClear(api); } catch (_) {}
+  try { crateTickClear(api); } catch(e) { reportErrorToOwner(e); }
 }, 1);
 
 // The shop is registered once at load; `onPlayerJoin` repeats it for the first player.
