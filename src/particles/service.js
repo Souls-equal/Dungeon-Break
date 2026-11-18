@@ -49,3 +49,62 @@ export function crateFountain(api, chestPos, rarity, colorHex) {
   if (!PRESETS) return null;
   return spawn(api, [chestPos[0]+0.5, chestPos[1]+1, chestPos[2]+0.5], PRESETS.crateFountain(colorHex, rarity), { radius: 0.4, height: 1.5 });
 }
+
+// ── Combat FX helpers ────────────────────────────────────────────────
+// hit visuel à chaque coup + proc tous les X coups selon type
+// spawn position helpers adaptés au type (slash plat, thrust ligne, etc.)
+
+function weaponSpawn(api, pos, presetFn, colorHex, tierScale, spawnOpts) {
+  const { PRESETS } = globalThis.__PARTICLE_PRESETS || {};
+  if (!PRESETS) return null;
+  const preset = presetFn ? presetFn(colorHex, tierScale) : null;
+  if (!preset) return null;
+  return spawn(api, pos, preset, spawnOpts);
+}
+
+// presets par type d'arme: { presetKey, every, spawnOpts }
+const WEAPON_SPAWN = {
+  Sword:     (tierScale) => ({ preset: (c,s)=> globalThis.__PARTICLE_PRESETS.PRESETS.weaponSlash(c,s), every: 3, opts: { radius: 1.0, height: 0.3, dir1: [-1.2,0.2,-1.2], dir2: [1.2,0.6,1.2] }, tierScale }),
+  Dagger:    (ts)=> ({ preset: (c,s)=> globalThis.__PARTICLE_PRESETS.PRESETS.weaponDagger(c,s), every: 2, opts: { radius: 0.6, height: 0.4, dir1: [-0.8,0.3,-0.8], dir2: [0.8,1.0,0.8] }, tierScale: ts }),
+  Spear:     (ts)=> ({ preset: (c,s)=> globalThis.__PARTICLE_PRESETS.PRESETS.weaponSpear(c,s), every: 3, opts: { radius: 0.35, height: 0.35, dir1: [-0.4, -0.1, -0.4], dir2: [0.4, 0.4, 0.4] }, tierScale: ts }),
+  Club:      (ts)=> ({ preset: (c,s)=> globalThis.__PARTICLE_PRESETS.PRESETS.weaponClub(c,s), every: 4, opts: { radius: 1.1, height: 0.5, dir1: [-1.0,-0.2,-1.0], dir2: [1.0,1.0,1.0] }, tierScale: ts }),
+  Mace:      (ts)=> ({ preset: (c,s)=> globalThis.__PARTICLE_PRESETS.PRESETS.weaponMace(c,s), every: 3, opts: { radius: 0.7, height: 0.6, dir1: [-0.6,-0.5,-0.6], dir2: [0.6,1.2,0.6] }, tierScale: ts }),
+  Whip:      (ts)=> ({ preset: (c,s)=> globalThis.__PARTICLE_PRESETS.PRESETS.weaponWhip(c,s), every: 2, opts: { radius: 0.9, height: 0.4, dir1: [-1.0,0,-1.0], dir2: [1.0,0.5,1.0] }, tierScale: ts }),
+  Bow:       (ts)=> ({ preset: (c,s)=> globalThis.__PARTICLE_PRESETS.PRESETS.weaponBow(c,s), every: 1, opts: { radius: 0.5, height: 0.8, dir1: [-0.5,0.3,-0.5], dir2: [0.5,1.2,0.5] }, tierScale: ts }),
+  Crossbow:  (ts)=> ({ preset: (c,s)=> globalThis.__PARTICLE_PRESETS.PRESETS.weaponCrossbow(c,s), every: 1, opts: { radius: 0.6, height: 0.5, dir1: [-0.7,0,-0.7], dir2: [0.7,0.6,0.7] }, tierScale: ts }),
+  Boomerang: (ts)=> ({ preset: (c,s)=> globalThis.__PARTICLE_PRESETS.PRESETS.weaponBoomerang(c,s), every: 1, opts: { radius: 0.8, height: 0.7, dir1: [-0.8,0,-0.8], dir2: [0.8,1.0,0.8] }, tierScale: ts }),
+  Staff:     (ts)=> ({ preset: (c,s)=> globalThis.__PARTICLE_PRESETS.PRESETS.weaponStaff(c,s), every: 2, opts: { radius: 0.6, height: 2.0, dir1: [-0.5,0.8,-0.5], dir2: [0.5,2.0,0.5] }, tierScale: ts }),
+};
+
+export function weaponFx(api, pos, weaponType, colorHex, tierScale = 1) {
+  const { PRESETS } = globalThis.__PARTICLE_PRESETS || {};
+  if (!PRESETS) return null;
+  // petit hit commun à chaque coup (toujours visible)
+  try {
+    const hit = PRESETS.weaponHit(colorHex, tierScale);
+    spawn(api, [pos[0], pos[1]+0.8, pos[2]], hit, { radius: 0.35, height: 0.35, dir1: [-0.6,0,-0.6], dir2: [0.6,0.8,0.6] });
+  } catch(_){}
+  // gros proc si c'est le bon coup est géré côté compteur (service combatFx) via weaponProcFx
+  return true;
+}
+
+export function weaponProcFx(api, pos, weaponType, colorHex, tierScale = 1) {
+  const { PRESETS } = globalThis.__PARTICLE_PRESETS || {};
+  if (!PRESETS) return null;
+  const cfgFn = WEAPON_SPAWN[weaponType];
+  if (!cfgFn) return null;
+  const spawnCfg = cfgFn(tierScale);
+  const preset = spawnCfg.preset(colorHex, tierScale);
+  return spawn(api, [pos[0], pos[1]+0.9, pos[2]], preset, spawnCfg.opts);
+}
+
+export function armorFx(api, pos, colorHex, tierScale = 1) {
+  const { PRESETS } = globalThis.__PARTICLE_PRESETS || {};
+  if (!PRESETS) return null;
+  return spawn(api, [pos[0], pos[1]+0.7, pos[2]], PRESETS.armorShield(colorHex, tierScale), { radius: 0.7, height: 1.4, dir1: [-0.5,0.2,-0.5], dir2: [0.5,1.2,0.5] });
+}
+export function armorShimmer(api, pos, colorHex, tierScale = 1) {
+  const { PRESETS } = globalThis.__PARTICLE_PRESETS || {};
+  if (!PRESETS) return null;
+  return spawn(api, [pos[0], pos[1]+0.2, pos[2]], PRESETS.armorShimmer(colorHex, tierScale), { radius: 0.5, height: 1.2, dir1: [-0.3,0.2,-0.3], dir2: [0.3,0.8,0.3] });
+}

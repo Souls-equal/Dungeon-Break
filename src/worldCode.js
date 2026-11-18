@@ -51,6 +51,7 @@ import { spawn as spawnParticles } from "./particles/service.js";
 import { CRAFTS, ARMOR_SETS, WEAPON_SETS, SHARD_TO_MATERIAL } from "./crafting/config.js";
 import { registerCraftingRecipes } from "./crafting/service.js";
 import { applyItemStats } from "./crafting/itemStats.js";
+import { tickCombatFx, onWeaponHit, onArmorHit, tickArmorShimmer, forgetPlayer as forgetCombatFx } from "./combatFx/service.js";
 // expose presets for service helpers (avoid circular)
 globalThis.__PARTICLE_PRESETS = { PRESETS };
 
@@ -1503,6 +1504,8 @@ tick = () => {
     }
   }
   try { tickSpawnCheck(); } catch (_) {}
+  try { tickCombatFx(); } catch (_){}
+  try { tickArmorShimmer(api); } catch (_){}
   // ranks time tracking
   try {
     rankTickCounter++;
@@ -1600,6 +1603,7 @@ onPlayerLeave = (playerId) => {
   clearSessionEffectsTracking(playerId);
   blessings().forget(accountKeyOf(playerId));
   try { blessingDamageCache.delete(String(playerId)); } catch (_) {}
+  try { forgetCombatFx(playerId); } catch(_){}
   // Clear per-player shop overrides so no tiles linger for a disconnected player.
   for (const key of CHOICE_KEYS) {
     try {
@@ -1701,35 +1705,35 @@ onPlayerDamagingOtherPlayer = (attackingPlayer, damagedPlayer, damageDealt, with
 
 // Les dégâts doivent être affectés par le multiplicateur de dégâts (blessings)
 onPlayerDamagingMob = (playerId, mobId, damageDealt, ...rest) => {
+  let scaled = undefined;
   try {
-    // signatures variées: (playerId, mobId, damageDealt) ou (playerId, mobId, damageDealt, withItem, ...)
     const dmg = Number(damageDealt);
-    if (!Number.isFinite(dmg)) return;
-    const mult = dealingMultiplierOf(playerId);
-    if (!Number.isFinite(mult) || mult === 1) return;
-    const scaled = dmg * mult;
-    // éviter de casser le test qui vérifie que l’attaque passe: on retourne le nouveau montant
-    return scaled;
+    if (Number.isFinite(dmg)) {
+      const mult = dealingMultiplierOf(playerId);
+      if (Number.isFinite(mult) && mult !== 1) scaled = dmg * mult;
+    }
   } catch (_) {}
+  // Effet visuel arme: slash/particules couleur par set + cooldown visuel (toujours, même si mult=1)
+  try { onWeaponHit(api, playerId); } catch (_) {}
+  if (scaled !== undefined) return scaled;
 };
 
 onMobDamagingPlayer = (mobId, playerId, damageDealt, ...rest) => {
+  let scaled = undefined;
+  let pid = playerId;
+  let dmg = damageDealt;
   try {
-    // signature: (mobId, playerId, damageDealt) — parfois (attackingMob, killedPlayer, damageDealt)
-    // on normalise: le playerId est le 2e arg qui ressemble à un playerId
-    let pid = playerId;
-    let dmg = damageDealt;
-    // si l’API envoie (mobId, playerId, damageDealt) on est bon, sinon fallback
     if (!Number.isFinite(Number(dmg)) && Number.isFinite(Number(playerId))) {
-      // cas (mobId, damageDealt) rare
       dmg = Number(playerId);
       pid = mobId;
     }
-    if (!Number.isFinite(Number(dmg))) return;
-    const mult = receivingMultiplierOf(pid);
-    if (!Number.isFinite(mult) || mult === 1) return;
-    return Number(dmg) * mult;
+    if (Number.isFinite(Number(dmg))) {
+      const mult = receivingMultiplierOf(pid);
+      if (Number.isFinite(mult) && mult !== 1) scaled = Number(dmg) * mult;
+    }
   } catch (_) {}
+  try { onArmorHit(api, pid); } catch (_) {}
+  if (scaled !== undefined) return scaled;
 };
 
 /**
@@ -1761,6 +1765,7 @@ onRespawnRequest = (playerId) => {
   blessings().forget(accountKeyOf(playerId));
   blessings().setPermanent(accountKeyOf(playerId), loadPermanent(playerId));
   try { applyBlessingOptions(playerId, baseClientOptions()); } catch (_) {}
+  try { forgetCombatFx(playerId); } catch(_){}
   showPoints(playerId, 0);
   refreshBlessingTiles(playerId);
   closeShop(playerId);
