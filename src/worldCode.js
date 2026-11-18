@@ -187,8 +187,8 @@ function ensureUnlockedOrPay(playerId, difficulty) {
 }
 
 // Spawn handling: peaceful adventure + blessing reset while in spawn
-const SPAWN_GAMEMODE = "PeacefulAdventure";
-const DUNGEON_GAMEMODE = "SurvivalAdventure";
+const SPAWN_GAMEMODE = "peacefuladventure";
+const DUNGEON_GAMEMODE = "survivaladventure";
 const SPAWN_CENTER = LOBBY_POSITION;
 const SPAWN_RADIUS = 80;
 const spawnMode = new Map(); // playerId -> boolean true=spawn
@@ -260,7 +260,7 @@ function tickSpawnCheck() {
       try {
         if (typeof api.getPlayerGamemode === "function") {
           const gm = api.getPlayerGamemode(pid);
-          if (gm !== SPAWN_GAMEMODE && gm !== "PeacefulAdventure" && gm !== 4 && gm !== "pa") {
+          if (gm !== SPAWN_GAMEMODE && gm !== "peacefuladventure" && gm !== "PeacefulAdventure" && gm !== 4 && gm !== "pa") {
             api.setPlayerGamemode(pid, SPAWN_GAMEMODE);
           }
         }
