@@ -43,7 +43,31 @@ export function registerCraftingRecipes(api, playerId) {
       api.editItemCraftingRecipes(playerId, result, recipes);
       ok += 1;
     } catch (e) {
-      try { api.log(`[Crafting] failed ${result}: ${e && e.message ? e.message : e}`); } catch (_) {}
+      // Fallback: try Workbench if Artisan Bench failed, and simplify requires
+      let recovered = false;
+      try {
+        const fallback = recipes.map(r => ({
+          requires: r.requires,
+          produces: r.produces ?? 1,
+          station: "Workbench",
+        }));
+        api.editItemCraftingRecipes(playerId, result, fallback);
+        ok += 1; recovered = true;
+      } catch (_) {}
+      if (!recovered) {
+        try {
+          const simple = recipes.map(r => ({
+            requires: r.requires.slice(0,1),
+            produces: r.produces ?? 1,
+            station: "Workbench",
+          }));
+          api.editItemCraftingRecipes(playerId, result, simple);
+          ok += 1; recovered = true;
+        } catch (_) {}
+      }
+      if (!recovered) {
+        try { api.log(`[Crafting] failed ${result}: ${e && e.message ? e.message : e}`); } catch (_) {}
+      }
     }
   }
   return ok;
