@@ -160,6 +160,14 @@ function nearbyMobs(api, centerPos, radius) {
   } catch (_) {}
   return out;
 }
+function isMobAlive(api, mobId) {
+  if (!api || !mobId) return false;
+  try { if (typeof api.isAlive === "function") return !!api.isAlive(mobId); } catch(_) {}
+  try { if (typeof api.getHealth === "function") { const h = api.getHealth(mobId); if (Number.isFinite(h)) return h > 0; } } catch(_) {}
+  try { if (typeof api.getEntityType === "function") { const t = api.getEntityType(mobId); if (t === null || t === undefined) return false; if (t === "Player") return true; } } catch(_) {}
+  // si pas d'API de vie, on considère vivant (ne pas bloquer les dégâts)
+  return true;
+}
 function applyEffectSafe(api, eid, name, durationMs, level=1) {
   // api.applyEffect(lifeformId, effectName, duration, customEffectInfo) -> 4 args obligatoires
   // ex: api.applyEffect(playerId, "Invisible", 5000, {})  -> Invisible = bon nom Bloxd (pas "Invisibility")
@@ -173,6 +181,7 @@ function applyEffectSafe(api, eid, name, durationMs, level=1) {
   }
 }
 function damageMob(api, mobId, amount, attackerId) {
+  if (!isMobAlive(api, mobId)) return false;
   if (!api || !mobId || !Number.isFinite(amount) || amount <=0) return false;
   const dmg = Math.max(1, Math.round(amount));
   // api.applyHealthChange(lifeformId, changeAmount:int, whoDidDamage?: LifeformId|{lifeformId,withItem}, broadcastLifeformHurt:boolean)
@@ -356,11 +365,6 @@ export function handleHit(api, playerId, setName, opts = {}) {
     if (playerP) spawnAt(api, playerP, "spectralInvis", { radius:0.6, height:1.6 });
     flyingMsg(api, playerId, [{ str:"Spectral Veil! ", style:{color:ability.color} }], ability.icon || "Invisible");
     triggered = true;
-    // debug: confirme à K4miNoK4mi
-    try {
-      const ownerId = (typeof api.getPlayerId === "function" ? api.getPlayerId("K4miNoK4mi") : null) || (typeof api.getPlayerIds === "function" ? api.getPlayerIds().find(id => String(id)==="K4miNoK4mi" || (typeof api.getEntityName==="function" && api.getEntityName(id)==="K4miNoK4mi")) : null);
-      if (ownerId) api.sendMessage(ownerId, `[Spectral] Invisible ${invisDur}ms pour ${playerId}`);
-    } catch(_) {}
   }
   // ── Geo: shield per hit
   else if (setName === "Geo") {
