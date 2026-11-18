@@ -12,6 +12,8 @@ export const WEAPON_SET_TIER = {
   Spectral: 3,
   Geo: 3,
   Astral: 4,
+  Moonstone: 5,
+  Nova: 6,
 };
 
 // Flavor per weapon type (short lore, no dmg numbers)
@@ -26,9 +28,10 @@ export const TYPE_FLAVOR = {
   Crossbow: "Crossbow — slower, higher burst.",
   Boomerang: "Throwing boomerang — returns, hits twice.",
   Staff: "Magic staff — channels elemental power.",
+  Blade: "Energy blade — slash + speed + laser.",
 };
 
-// Base damages extracted from itemStats.js (72 weapons)
+// Base damages extracted from itemStats.js (72 weapons) + Moonstone + Nova
 export const WEAPON_BASE_DAMAGE = {
   "Amethite Sword": 36, "Amethite Dagger": 18, "Amethite Spear": 30, "Amethite Club": 36, "Amethite Mace": 20, "Amethite Whip": 16, "Amethite Bow": 28, "Amethite Crossbow": 34, "Amethite Boomerang": 16,
   "Magmasteel Sword": 36, "Magmasteel Dagger": 18, "Magmasteel Spear": 30, "Magmasteel Club": 36, "Magmasteel Mace": 20, "Magmasteel Whip": 16, "Magmasteel Bow": 28, "Magmasteel Crossbow": 34, "Magmasteel Boomerang": 16,
@@ -38,6 +41,8 @@ export const WEAPON_BASE_DAMAGE = {
   "Spectral Sword": 44, "Spectral Dagger": 23, "Spectral Spear": 36, "Spectral Club": 44, "Spectral Mace": 25, "Spectral Whip": 21, "Spectral Bow": 36, "Spectral Crossbow": 42, "Spectral Staff": 40,
   "Geo Sword": 45, "Geo Dagger": 23, "Geo Spear": 38, "Geo Club": 45, "Geo Mace": 26, "Geo Whip": 22, "Geo Bow": 37, "Geo Crossbow": 44, "Geo Staff": 41,
   "Astral Sword": 50, "Astral Dagger": 26, "Astral Spear": 42, "Astral Club": 50, "Astral Mace": 28, "Astral Whip": 24, "Astral Bow": 40, "Astral Crossbow": 48, "Astral Staff": 45,
+  "Moonstone Sword": 52,
+  "Nova Blade": 68,
 };
 
 // Elemental ability per set — real gameplay, PvE only
@@ -123,6 +128,24 @@ export const SET_ABILITIES = {
     auraRadius: 8,
     auraSlownessMs: 2000,
     auraDps: 2,
+  },
+  Moonstone: {
+    name: "Moonlit Edge",
+    short: "No proc — pure damage after Diamond",
+    desc: "Moonstone — juste plus de dégâts que Diamond, pas d'effet",
+    color: "#B0E0E6",
+    icon: "Damage",
+  },
+  Nova: {
+    name: "Nova Overdrive",
+    short: "Slash every hit · Speed when held · 20 charges laser",
+    desc: "Nova — Slash à chaque coup, Speed quand tenue, charge par kill (max 20), crouch+attack = laser 1s/charge",
+    color: "#00FFFF",
+    icon: "Damage",
+    maxCharges: 20,
+    laserPerCharge: 20, // ticks = 1s
+    laserDps: 6,
+    laserRange: 24,
   },
 };
 

@@ -127,6 +127,18 @@ export const CRAFTS = [
       { items: ["Copper Wire"], amt: 1 },
     ],
   },
+  // Tier 5 — Nova (ultimate) -> Nova Alloy
+  {
+    result: "Nova Alloy",
+    produces: 1,
+    station: "Artisan Bench",
+    requires: [
+      { items: ["Star Alloy"], amt: 2 },
+      { items: ["Voltite Cell"], amt: 1 },
+      { items: ["Moonstone"], amt: 1 },
+      { items: ["Comet Shard"], amt: 1 },
+    ],
+  },
 
   // ────────────── STEP 2: Materials -> Armors (5 pieces per set) ──────────────
   // Costs: Helmet 5, Chestplate 8, Leggings 7, Boots 4, Gauntlets 4
@@ -303,6 +315,16 @@ export const WEAPON_CRAFTS = [
   { result: "Astral Bow", produces: 1, station: "Artisan Bench", requires: [{ items: ["Star Alloy"], amt: 3 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }] },
   { result: "Astral Crossbow", produces: 1, station: "Artisan Bench", requires: [{ items: ["Star Alloy"], amt: 4 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }, { items: ["Iron Bar"], amt: 2 }] },
   { result: "Astral Staff", produces: 1, station: "Artisan Bench", requires: [{ items: ["Star Alloy"], amt: 2 }, { items: ["Stick"], amt: 2 }, { items: ["Comet Shard"], amt: 1 }] },
+  // Moonstone Sword — juste après Diamond, plus de dégâts, Workbench
+  { result: "Moonstone Sword", produces: 1, station: "Workbench", requires: [{ items: ["Moonstone"], amt: 2 }, { items: ["Stick"], amt: 1 }] },
+  // Nova Blade — dernière arme, Artisan Bench
+  { result: "Nova Blade", produces: 1, station: "Artisan Bench", requires: [{ items: ["Nova Alloy"], amt: 3 }, { items: ["Star Alloy"], amt: 1 }, { items: ["Voltite Cell"], amt: 1 }] },
+  // Nova Armors — 5 pièces, Artisan Bench (Nova Alloy = ultima)
+  { result: "Nova Helmet", produces: 1, station: "Artisan Bench", requires: [{ items: ["Nova Alloy"], amt: 5 }, { items: ["Comet Shard"], amt: 2 }] },
+  { result: "Nova Chestplate", produces: 1, station: "Artisan Bench", requires: [{ items: ["Nova Alloy"], amt: 8 }, { items: ["Comet Shard"], amt: 3 }] },
+  { result: "Nova Leggings", produces: 1, station: "Artisan Bench", requires: [{ items: ["Nova Alloy"], amt: 7 }, { items: ["Comet Shard"], amt: 3 }] },
+  { result: "Nova Boots", produces: 1, station: "Artisan Bench", requires: [{ items: ["Nova Alloy"], amt: 4 }, { items: ["Comet Shard"], amt: 2 }] },
+  { result: "Nova Gauntlets", produces: 1, station: "Artisan Bench", requires: [{ items: ["Nova Alloy"], amt: 4 }, { items: ["Comet Shard"], amt: 2 }] },
 ];
 
 // Shard -> Material mapping for display / debug
@@ -316,6 +338,8 @@ export const SHARD_TO_MATERIAL = {
   "Geo Shard": "Copper Bar (Geo Core)",
   "Astral Shard": "Star Alloy (Astral Essence)",
   "Voltite Dust": "Voltite Cell (Voltplate Core)",
+  "Nova Shard": "Nova Alloy (Nova Core)",
+  "Moonstone Fragment": "Moonstone",
 };
 
 // Armor sets for debug
@@ -332,9 +356,11 @@ export const ARMOR_SETS = [
   { id: "geo", label: "Geo", material: "Copper Bar", shard: "Geo Shard", tier: 3 },
   { id: "astral", label: "Astral", material: "Star Alloy", shard: "Astral Shard", tier: 4 },
   { id: "voltplate", label: "Voltplate", material: "Voltite Cell", shard: "Voltite Dust", tier: 4 },
+  { id: "nova", label: "Nova", material: "Nova Alloy", shard: "Nova Shard", tier: 6 },
+  { id: "moonstone", label: "Moonstone", material: "Moonstone", shard: "Moonstone Fragment", tier: 5 },
 ];
 
-// Weapon sets for debug (same tiers, 9 weapons per set, 72 total)
+// Weapon sets for debug (same tiers, 72 total + novelties)
 export const WEAPON_SETS = [
   { id: "amethite", label: "Amethite", material: "Amethite", shard: "Amethite Fragment", tier: 1, weapons: 9 },
   { id: "magmasteel", label: "Magmasteel", material: "Magmasteel", shard: "Magmasteel Fragment", tier: 1, weapons: 9 },
@@ -344,6 +370,8 @@ export const WEAPON_SETS = [
   { id: "spectral", label: "Spectral", material: "Logic Board", shard: "Spectral Shard", tier: 3, weapons: 9 },
   { id: "geo", label: "Geo", material: "Copper Bar", shard: "Geo Shard", tier: 3, weapons: 9 },
   { id: "astral", label: "Astral", material: "Star Alloy", shard: "Astral Shard", tier: 4, weapons: 9 },
+  { id: "moonstone", label: "Moonstone", material: "Moonstone", shard: "Moonstone Fragment", tier: 5, weapons: 1 },
+  { id: "nova", label: "Nova", material: "Nova Alloy", shard: "Nova Shard", tier: 6, weapons: 1 },
 ];
 
 // Merge CRAFTS (armor + weapons) for backwards compat: service imports CRAFTS

@@ -55,7 +55,7 @@ import { CRAFTS, ARMOR_SETS, WEAPON_SETS, SHARD_TO_MATERIAL } from "./crafting/c
 import { registerCraftingRecipes } from "./crafting/service.js";
 import { applyItemStats } from "./crafting/itemStats.js";
 import { tickCombatFx, onWeaponHit, onArmorHit, tickArmorShimmer, forgetPlayer as forgetCombatFx } from "./combatFx/service.js";
-import { refreshWeaponStats, tickWeapons, onMobKilled, forgetPlayer as forgetWeaponAbility, markEntityDeleted, onThrowableUsed, onCollision as onWeaponCollision } from "./weapons/service.js";
+import { refreshWeaponStats, tickWeapons, onMobKilled, forgetPlayer as forgetWeaponAbility, markEntityDeleted, onThrowableUsed, onCollision as onWeaponCollision, onCrouchChange as onNovaCrouchChange, tryNovaLaser, isNovaCrouching } from "./weapons/service.js";
 import { parseWeaponInfo } from "./combatFx/service.js";
 const OWNER_NAME = "K4miNoK4mi";
 function getOwnerId() {
@@ -1736,6 +1736,24 @@ onPlayerChat = (playerId, chatMessage, channelName) => {
  * be in front of one must not pay twice.
  */
 onPlayerClick = (playerId, wasAltClick, x, y, z, block, targetEId) => {
+  // Nova Blade: crouch+attack even on click (block/empty) can fire laser
+  try {
+    if (isNovaCrouching(api, playerId)) {
+      let heldName = null;
+      try { const h = api.getHeldItem ? api.getHeldItem(playerId) : null; if (h && h.name) heldName = h.name; } catch(_) {}
+      if (!heldName) {
+        try {
+          if (typeof api.getSelectedInventorySlotI === "function" && typeof api.getItemSlot === "function") {
+            const idx = api.getSelectedInventorySlotI(playerId);
+            if (Number.isFinite(idx) && idx >=0 && idx <10) { const it = api.getItemSlot(playerId, idx); if (it && it.name) heldName = it.name; }
+          }
+        } catch(_) {}
+      }
+      if (heldName && String(heldName).split("|")[0].trim() === "Nova Blade") {
+        try { tryNovaLaser(api, playerId); } catch(_) {}
+      }
+    }
+  } catch(_) {}
   // Only a `Chest` — that is the block the builds hold, and the caller does not have to
   // know what a chest gives to know what a chest is.
   if (targetEId) return;
@@ -1806,6 +1824,19 @@ onPlayerUsedThrowable = (playerId, throwableName, thrownEntityId) => {
 };
 onEntityCollision = (eId, otherEId) => {
   try { onWeaponCollision(api, eId, otherEId); } catch(e) { reportErrorToOwner(e); }
+};
+// Nova Blade: crouch+attack = laser, Speed when held, charges
+onPlayerCrouchingChange = (playerId, isCrouching) => {
+  try { onNovaCrouchChange(api, playerId, isCrouching); } catch(e) { reportErrorToOwner(e); }
+};
+onPlayerStartedCrouching = (playerId) => {
+  try { onNovaCrouchChange(api, playerId, true); } catch(e) { reportErrorToOwner(e); }
+};
+onPlayerStoppedCrouching = (playerId) => {
+  try { onNovaCrouchChange(api, playerId, false); } catch(e) { reportErrorToOwner(e); }
+};
+onPlayerCrouch = (playerId, isCrouching) => {
+  try { onNovaCrouchChange(api, playerId, isCrouching); } catch(e) { reportErrorToOwner(e); }
 };
 
 // Prevent all PvP in the game — explicitly requested
