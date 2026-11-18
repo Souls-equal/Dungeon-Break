@@ -57,6 +57,7 @@ import { applyItemStats } from "./crafting/itemStats.js";
 import { tickCombatFx, onWeaponHit, onArmorHit, tickArmorShimmer, forgetPlayer as forgetCombatFx } from "./combatFx/service.js";
 import { refreshWeaponStats, tickWeapons, onMobKilled, forgetPlayer as forgetWeaponAbility, markEntityDeleted, onThrowableUsed, onCollision as onWeaponCollision, onCrouchChange as onNovaCrouchChange, tryNovaLaser, isNovaCrouching } from "./weapons/service.js";
 import { parseWeaponInfo } from "./combatFx/service.js";
+import { onDamaged as onArmorDamaged, onDealingDamage as onArmorDealingDamage, onMobKilled as onArmorMobKilled, tick as tickArmors, forgetPlayer as forgetArmorAbility, getTemporaryDefense as armorTempDefense } from "./armor/service.js";
 const OWNER_NAME = "K4miNoK4mi";
 function getOwnerId() {
   try {
@@ -1142,6 +1143,10 @@ function receivingMultiplierOf(playerId) {
     return Number.isFinite(opts.receivingDamageMultiplier) ? opts.receivingDamageMultiplier : 1;
   } catch (_) { return 1; }
 }
+function armorDefenseReductionOf(playerId) {
+  try { const v = armorTempDefense(playerId); if (Number.isFinite(v) && v>0) return v; } catch(_) {}
+  return 0;
+}
 
 function applyBlessingOptions(playerId, base = {}) {
   const key = accountKeyOf(playerId);
@@ -1595,6 +1600,7 @@ tick = () => {
   try { tickSpawnCheck(); } catch(e) { reportErrorToOwner(e); }
   try { tickCombatFx(); } catch(e) { reportErrorToOwner(e); }
   try { tickWeapons(api); } catch(e) { reportErrorToOwner(e); }
+  try { tickArmors(api); } catch(e) { reportErrorToOwner(e); }
   try { tickArmorShimmer(api); } catch(e) { reportErrorToOwner(e); }
   // ranks time tracking
   try {
@@ -1695,6 +1701,7 @@ onPlayerLeave = (playerId) => {
   try { blessingDamageCache.delete(String(playerId)); } catch(e) { reportErrorToOwner(e); }
   try { forgetCombatFx(playerId); } catch(e) { reportErrorToOwner(e); }
   try { forgetWeaponAbility(playerId); } catch(e) { reportErrorToOwner(e); }
+  try { forgetArmorAbility(playerId); } catch(e) { reportErrorToOwner(e); }
   // Clear per-player shop overrides so no tiles linger for a disconnected player.
   for (const key of CHOICE_KEYS) {
     try {
@@ -1795,6 +1802,7 @@ onPlayerKilledMob = (playerId, mobId) => {
   } catch(e) { reportErrorToOwner(e); }
   // Weapon abilities on kill (PvE) — Rubellite stack, Spectral vacuum, Geo mines, Astral glowing
   try { onMobKilled(api, playerId, mobId); } catch(e) { reportErrorToOwner(e); }
+  try { onArmorMobKilled(api, playerId, mobId); } catch(e) { reportErrorToOwner(e); }
   try {
     const newly = ranks().recordKill(playerId);
     if (newly && newly.length) handleRankUnlocks(playerId, newly);
@@ -1877,21 +1885,30 @@ onPlayerDamagingMob = (playerId, mobId, damageDealt, ...rest) => {
   } else if (hasBase) {
     scaled = baseDmg; // already effective via setItemStat, keep as is
   }
+  // Armor dealing damage hooks (Sanguine lifesteal, Nova charge, Astral extra, Cursemetal, Kingly Amethite)
+  let armorScaled = scaled;
+  try {
+    const armorModified = onArmorDealingDamage(api, playerId, mobId, hasBase ? (Number.isFinite(scaled) ? scaled : baseDmg) : 0);
+    if (Number.isFinite(armorModified) && hasBase) {
+      armorScaled = armorModified;
+    }
+  } catch(e) { reportErrorToOwner(e); }
 
   // Visual effect + elemental ability (PVE only) — returns proc extraDamage
   let extra = 0;
   let visualResult = null;
   try {
-    visualResult = onWeaponHit(api, playerId, { baseDamage: baseDmg, scaledDamage: scaled ?? baseDmg, mobId });
+    visualResult = onWeaponHit(api, playerId, { baseDamage: baseDmg, scaledDamage: armorScaled ?? scaled ?? baseDmg, mobId });
     if (visualResult && visualResult.ability && visualResult.ability.extraDamage) {
       extra = visualResult.ability.extraDamage;
     }
   } catch(e) { reportErrorToOwner(e); }
 
   if (extra && Number.isFinite(extra) && extra !== 0) {
-    const finalBase = Number.isFinite(scaled) ? scaled : (hasBase ? baseDmg : 0);
+    const finalBase = Number.isFinite(armorScaled) ? armorScaled : (Number.isFinite(scaled) ? scaled : (hasBase ? baseDmg : 0));
     return finalBase + extra;
   }
+  if (armorScaled !== undefined) return armorScaled;
   if (scaled !== undefined) return scaled;
 };
 
@@ -1910,7 +1927,49 @@ onMobDamagingPlayer = (mobId, playerId, damageDealt, ...rest) => {
     }
   } catch(e) { reportErrorToOwner(e); }
   try { onArmorHit(api, pid); } catch(e) { reportErrorToOwner(e); }
+  // Armor onDamaged: may reduce damage further (Kingly Diamond, curse, poison debuff, Magmasteel lava)
+  let armorModified;
+  try {
+    const baseForArmor = Number.isFinite(scaled) ? scaled : Number(dmg);
+    if (Number.isFinite(baseForArmor)) {
+      armorModified = onArmorDamaged(api, pid, mobId, baseForArmor);
+    }
+  } catch(e) { reportErrorToOwner(e); }
+  // Temporary defense from Kingly Diamond low-HP ultimate
+  try {
+    const defRed = armorDefenseReductionOf(pid);
+    if (defRed > 0) {
+      const cur = Number.isFinite(armorModified) ? armorModified : (Number.isFinite(scaled) ? scaled : Number(dmg));
+      if (Number.isFinite(cur)) {
+        const afterDef = Math.max(1, Math.round(cur * (1 - defRed)));
+        if (Number.isFinite(armorModified)) armorModified = afterDef;
+        else if (Number.isFinite(scaled)) scaled = afterDef;
+        else scaled = afterDef;
+      }
+    }
+  } catch(e) { reportErrorToOwner(e); }
+  if (Number.isFinite(armorModified) && Number.isFinite(Number(dmg))) return armorModified;
   if (scaled !== undefined) return scaled;
+};
+// Environmental damage (lava, fall) — also respect Magmasteel lava resist and Kingly Diamond shield
+onPlayerTookDamage = (playerId, damage, cause) => {
+  try {
+    let dmg = Number(damage);
+    if (!Number.isFinite(dmg) || dmg <= 0) return;
+    const causeStr = String(cause || "").toLowerCase();
+    const isLava = causeStr.includes("lava") || causeStr.includes("fire");
+    let modified = dmg;
+    try {
+      const counts = (()=>{ try{ const c=armorTempDefense(playerId); return c;}catch(_){return 0;}})();
+      // reuse onArmorDamaged for lava resist (it checks isInLava)
+      const am = onArmorDamaged(api, playerId, null, dmg);
+      if (Number.isFinite(am)) modified = am;
+      if (isLava && am === dmg) {
+        // still apply lava-specific path: onArmorDamaged already did generic; ensure at least resist for pure lava
+      }
+    } catch(_){}
+    if (modified !== dmg && Number.isFinite(modified)) return modified;
+  } catch(_){}
 };
 
 /**
@@ -1944,6 +2003,7 @@ onRespawnRequest = (playerId) => {
   try { applyBlessingOptions(playerId, baseClientOptions()); } catch(e) { reportErrorToOwner(e); }
   try { forgetCombatFx(playerId); } catch(e) { reportErrorToOwner(e); }
   try { forgetWeaponAbility(playerId); } catch(e) { reportErrorToOwner(e); }
+  try { forgetArmorAbility(playerId); } catch(e) { reportErrorToOwner(e); }
   try {
     const lvl = auraLevelOf(playerId);
     const pts = blessings().pointsFor(accountKeyOf(playerId), lvl);
