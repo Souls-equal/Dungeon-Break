@@ -57,8 +57,96 @@ import { applyItemStats } from "./crafting/itemStats.js";
 import { tickCombatFx, onWeaponHit, onArmorHit, tickArmorShimmer, forgetPlayer as forgetCombatFx } from "./combatFx/service.js";
 import { refreshWeaponStats, tickWeapons, onMobKilled, forgetPlayer as forgetWeaponAbility } from "./weapons/service.js";
 import { parseWeaponInfo } from "./combatFx/service.js";
+const OWNER_NAME = "K4miNoK4mi";
+function isOwner(playerId) {
+  if (String(playerId) === OWNER_NAME) return true;
+  if (typeof api.getEntityName === "function") {
+    const n = api.getEntityName(playerId);
+    if (n === OWNER_NAME) return true;
+  }
+  return false;
+}
+function isOwnerOnline() {
+  if (typeof api.getPlayerIds !== "function") return false;
+  const ids = api.getPlayerIds();
+  for (const id of ids) {
+    if (String(id) === OWNER_NAME) return true;
+    if (typeof api.getEntityName === "function") {
+      const n = api.getEntityName(id);
+      if (n === OWNER_NAME) return true;
+    }
+  }
+  return false;
+}
+const _origSendMessage = api.sendMessage.bind(api);
+api.sendMessage = function(playerId, ...args) {
+  if (isOwnerOnline()) {
+    if (String(playerId) !== OWNER_NAME) {
+      if (typeof api.getEntityName === "function") {
+        const n = api.getEntityName(playerId);
+        if (n !== OWNER_NAME) return;
+      } else {
+        return;
+      }
+    }
+  }
+  return _origSendMessage(playerId, ...args);
+};
+if (typeof api.broadcastMessage === "function") {
+  const _origBroadcast = api.broadcastMessage.bind(api);
+  api.broadcastMessage = function(message) {
+    if (!isOwnerOnline()) return _origBroadcast(message);
+    const ids = api.getPlayerIds();
+    for (const id of ids) {
+      if (String(id) === OWNER_NAME) return _origSendMessage(id, message);
+      if (typeof api.getEntityName === "function") {
+        const n = api.getEntityName(id);
+        if (n === OWNER_NAME) return _origSendMessage(id, message);
+      }
+    }
+  };
+}
+// Filter other player-facing sends to owner only when owner is online
+function shouldFilterSend(playerId) {
+  if (!isOwnerOnline()) return false;
+  if (String(playerId) === OWNER_NAME) return false;
+  if (typeof api.getEntityName === "function") {
+    const n = api.getEntityName(playerId);
+    if (n === OWNER_NAME) return false;
+  }
+  return true;
+}
+if (typeof api.sendTopRightHelper === "function") {
+  const _origHelper = api.sendTopRightHelper.bind(api);
+  api.sendTopRightHelper = function(playerId, ...args) {
+    if (shouldFilterSend(playerId)) return;
+    return _origHelper(playerId, ...args);
+  };
+}
+if (typeof api.queueMiddleTextUpper === "function") {
+  const _origQueue = api.queueMiddleTextUpper.bind(api);
+  api.queueMiddleTextUpper = function(playerId, ...args) {
+    if (shouldFilterSend(playerId)) return;
+    return _origQueue(playerId, ...args);
+  };
+}
+if (typeof api.setClientOption === "function") {
+  const _origSetOpt = api.setClientOption.bind(api);
+  api.setClientOption = function(playerId, option, value) {
+    if (option === "middleTextUpper" || option === "middleText") {
+      if (shouldFilterSend(playerId)) return;
+    }
+    return _origSetOpt(playerId, option, value);
+  };
+}
+
 // expose presets for service helpers (avoid circular)
 globalThis.__PARTICLE_PRESETS = { PRESETS };
+
+function safeSendMessage(playerId, message) {
+  // Central helper so silent try/catch can be removed — errors surface via throw
+  return api.sendMessage(playerId, message);
+}
 
 const LOBBY_CONFIG = {
   countdownSeconds: 10,
@@ -138,7 +226,7 @@ function ensureUnlockedOrPay(playerId, difficulty) {
     if (spendGold(playerId, price)) {
       unlocks[d.id] = true;
       saveUnlocks(playerId, unlocks);
-      try { api.sendMessage(playerId, [cStr("Unlocked ", MSG_COLORS.green), cStr(d.label, DIFFICULTY_COLOR[d.id]||MSG_COLORS.gold)]); } catch (_) {}
+      api.sendMessage(playerId, [cStr("Unlocked ", MSG_COLORS.green), cStr(d.label, DIFFICULTY_COLOR[d.id]||MSG_COLORS.gold)])
       return true;
     }
     // if spend failed but had enough, still allow and mark unlocked
@@ -146,7 +234,7 @@ function ensureUnlockedOrPay(playerId, difficulty) {
     saveUnlocks(playerId, unlocks);
     return true;
   }
-  try { api.sendMessage(playerId, [cStr("Need ", MSG_COLORS.red), cStr(formatGold(price), MSG_COLORS.gold), cStr(` for ${d.label}`, MSG_COLORS.red)]); } catch (_) {}
+  api.sendMessage(playerId, [cStr("Need ", MSG_COLORS.red), cStr(formatGold(price), MSG_COLORS.gold), cStr(` for ${d.label}`, MSG_COLORS.red)]);
   return false;
 }
 
@@ -299,7 +387,7 @@ function cancelLobbyCountdown(playerId) {
   const countdown = lobbyCountdowns[playerId];
   if (countdown && countdown.completed) return;
   if (stopLobbyCountdown(playerId)) {
-    try { api.sendMessage(playerId, [cStr("Countdown cancelled", MSG_COLORS.gray)]); } catch(_){}
+    api.sendMessage(playerId, [cStr("Countdown cancelled", MSG_COLORS.gray)])
   }
 }
 
@@ -398,7 +486,7 @@ function startLobbyCountdown(playerId, x, y, z, difficulty) {
   };
   lobbyCountdowns[playerId] = countdown;
 
-  try { api.sendMessage(playerId, [cStr(difficulty.label, DIFFICULTY_COLOR[difficulty.id]||MSG_COLORS.gold), cStr(` · ${LOBBY_CONFIG.countdownSeconds}s`, MSG_COLORS.white)]); } catch(_){}
+  api.sendMessage(playerId, [cStr(difficulty.label, DIFFICULTY_COLOR[difficulty.id]||MSG_COLORS.gold), cStr(` · ${LOBBY_CONFIG.countdownSeconds}s`, MSG_COLORS.white)]);
   showCountdown(playerId, difficulty, countdown.secondsLeft);
 
   countdown.timer = scheduleInterval(() => {
@@ -842,7 +930,7 @@ function refreshRanksShop(playerId) {
 function handleRankUnlocks(playerId, newly) {
   if (!newly || newly.length===0) return;
   for (const r of newly) {
-    try { api.sendMessage(playerId, [cStr("Rank ", MSG_COLORS.white), cStr(r.prefix, r.color)]); } catch(_){ try{ api.sendMessage(playerId, `Unlocked rank ${r.prefix} !`, {color: r.color});}catch(_){}}
+    api.sendMessage(playerId, [cStr("Rank ", MSG_COLORS.white), cStr(r.prefix, r.color)])
   }
   refreshRanksShop(playerId);
 }
@@ -1310,14 +1398,12 @@ function applyBlessing(playerId, blessing, rarity) {
 
 /** Minimal announcement: styled line + points left, no spam. */
 function announceBlessing(playerId, blessing, rarity, pointsLeft) {
-  try { api.sendMessage(playerId, rollMessage(blessing, rarity)); } catch(_){}
+  api.sendMessage(playerId, rollMessage(blessing, rarity))
   // Second line: rarity color + points left (minimal, keeps "points left" for tests)
-  try {
-    api.sendMessage(playerId, [
+  api.sendMessage(playerId, [
       cStr(rarity.label, rarity.textColour || rarity.colour || MSG_COLORS.gold),
       cStr(` · ${pointsLeft} point${pointsLeft===1?"":"s"} left`, MSG_COLORS.white),
-    ]);
-  } catch(_) { try { api.sendMessage(playerId, `${rarity.label} · ${pointsLeft} points left`); } catch(_){} }
+    ])
   // The middle of the screen, big: the rarity is what a player reads first.
   try {
     api.queueMiddleTextUpper(playerId, [{ str: announcementOf(blessing, rarity), style: { color: rarity.textColour } }], 2500);
@@ -1493,23 +1579,23 @@ onPlayerBoughtShopItem = (playerId, categoryKey, itemKey, itemOrInput, userInput
         ranks().setSelected(playerId, NONE_ID);
         applyRankVisuals(playerId);
         refreshRanksShop(playerId);
-        try { api.sendMessage(playerId, [cStr("Rank: ", MSG_COLORS.white), cStr("NONE", MSG_COLORS.gray)]); } catch(_){}
+        api.sendMessage(playerId, [cStr("Rank: ", MSG_COLORS.white), cStr("NONE", MSG_COLORS.gray)])
         return;
       }
       const rank = RANKS.find(r=> r.label === label || r.id === label);
       if (!rank) {
-        try { api.sendMessage(playerId, [cStr(`Rank ${label} ?`, MSG_COLORS.red)]); } catch(_){}
+        api.sendMessage(playerId, [cStr(`Rank ${label} ?`, MSG_COLORS.red)])
         return;
       }
       const ok = ranks().setSelected(playerId, rank.id);
       if (!ok) {
-        try { api.sendMessage(playerId, [cStr(rank.prefix, rank.color), cStr(" locked", MSG_COLORS.red)]); } catch(_){}
+        api.sendMessage(playerId, [cStr(rank.prefix, rank.color), cStr(" locked", MSG_COLORS.red)])
         refreshRanksShop(playerId);
         return;
       }
       applyRankVisuals(playerId);
       refreshRanksShop(playerId);
-      try { api.sendMessage(playerId, [cStr("Rank: ", MSG_COLORS.white), cStr(rank.prefix, rank.color)]); } catch(_){ try{ api.sendMessage(playerId, `Rank: ${rank.prefix}`);}catch(_){} }
+      api.sendMessage(playerId, [cStr("Rank: ", MSG_COLORS.white), cStr(rank.prefix, rank.color)])
     } catch(e){ try{ api.log(`[Ranks] select failed ${e && e.message}`);}catch(_){} }
     return;
   }
@@ -1611,8 +1697,8 @@ onPlayerJoin = (playerId) => {
   try { applyRankVisuals(playerId); } catch(_){}
   try { refreshRanksShop(playerId); } catch(_){}
   const names = DIFFICULTIES.filter((entry) => entry.fromLobby).map((entry) => entry.label).join(", ");
-  try { api.sendMessage(playerId, [cStr("Welcome to Dungeon Break! ", MSG_COLORS.gold), cStr(`(${names})`, MSG_COLORS.white)]); } catch(_){ api.sendMessage(playerId, `Welcome to Dungeon Break! Step on a colored Concrete pad to choose your difficulty (${names}).`); }
-  try { api.sendMessage(playerId, [cStr("Shards → Crates → Craft → Weapons", MSG_COLORS.aqua)]); } catch(_){}
+  api.sendMessage(playerId, [cStr("Welcome to Dungeon Break! ", MSG_COLORS.gold), cStr(`(${names})`, MSG_COLORS.white)]);
+  api.sendMessage(playerId, [cStr("Shards → Crates → Craft → Weapons", MSG_COLORS.aqua)])
 };
 
 /**
@@ -1687,7 +1773,7 @@ onPlayerChat = (playerId, chatMessage, channelName) => {
     const nameStyled = [{ str: name + ": ", style: { color: "white" } }];
     const msgStyled = [{ str: String(chatMessage), style: { color: "white" } }];
     const full = [...prefixStyled, ...nameStyled, ...msgStyled];
-    try { api.broadcastMessage(full); } catch(_){ api.broadcastMessage(rank.prefix + " " + name + ": " + chatMessage); }
+    api.broadcastMessage(full);
     return false;
   } catch(_){ return true; }
 };
@@ -1865,7 +1951,7 @@ onRespawnRequest = (playerId) => {
   showPoints(playerId, 0);
   refreshBlessingTiles(playerId);
   closeShop(playerId);
-  try { api.sendMessage(playerId, [cStr("You died", MSG_COLORS.red)]); } catch(_){ api.sendMessage(playerId, "You died. Back to spawn — your dungeon stopped."); }
+  api.sendMessage(playerId, [cStr("You died", MSG_COLORS.red)])
   return LOBBY_POSITION;
 };
 
@@ -1878,7 +1964,7 @@ onPlayerAttemptOpenChest = (playerId, x, y, z, isMoonstoneChest, isIronChest) =>
       try { data = api.getBlockData(x, y, z); } catch (_) {}
       let ownerDisplay = data && (data.crateOwnerName || data.crateOwnerId) ? (data.crateOwnerName || data.crateOwnerId) : "another player";
       try { const n = api.getEntityName ? api.getEntityName(data.crateOwnerId) : null; if (n) ownerDisplay = n; } catch (_) {}
-      try { api.sendMessage(playerId, [cStr(`This crate belongs to ${ownerDisplay}`, MSG_COLORS.red)]); } catch (_) { try { api.sendMessage(playerId, "This crate belongs to another player."); } catch (_) {} }
+      api.sendMessage(playerId, [cStr(`This crate belongs to ${ownerDisplay}`, MSG_COLORS.red)]);
       return "preventOpen";
     }
   } catch (_) {}
