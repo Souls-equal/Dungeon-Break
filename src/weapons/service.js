@@ -202,26 +202,54 @@ function applyEffectSafe(api, eid, name, durationMs, level=1) {
     } catch(_) {}
   }
 }
+function shouldSuppressInactiveError(api, mobId, attackerId, errMsg) {
+  const msg = errMsg ? String(errMsg).toLowerCase() : "";
+  if (msg.includes("inactive") || msg.includes("invalid") || msg.includes("deleted") || msg.includes("not found")) return true;
+  // si mob déjà tracké comme deleted, on supprime le spam
+  if (deletedEntities.has(String(mobId))) return true;
+  if (attackerId && deletedEntities.has(String(attackerId))) return true;
+  // health <=0 -> considéré inactif, pas une vraie erreur à montrer
+  try { if (typeof api.getHealth === "function") { const h = api.getHealth(mobId); if (h !== null && h !== undefined && Number.isFinite(h) && h <= 0) return true; } } catch(_) {}
+  try { if (typeof api.getPosition === "function") { const p = api.getPosition(mobId); if (!p) return true; } } catch(_) { return true; }
+  return false;
+}
 function damageMob(api, mobId, amount, attackerId) {
-  if (!isMobAlive(api, mobId)) return false;
   if (!api || !mobId || !Number.isFinite(amount) || amount <=0) return false;
+  const mk = String(mobId);
+  if (deletedEntities.has(mk)) return false;
+  if (!isMobAlive(api, mobId)) {
+    // mob déjà mort/inactif -> on le marque et on ne spam pas
+    try { deletedEntities.add(mk); } catch(_) {}
+    return false;
+  }
   const dmg = Math.max(1, Math.round(amount));
   // api.applyHealthChange(lifeformId, changeAmount:int, whoDidDamage?: LifeformId|{lifeformId,withItem}, broadcastLifeformHurt:boolean)
   // attackerId est un PlayerId = LifeformId directement, pas {lifeformId: ...}
   try {
     if (typeof api.applyHealthChange === "function") {
       // 1. essai forme la plus simple (LifeformId direct) — doc officielle
-      try { return api.applyHealthChange(mobId, -dmg, attackerId || undefined, true); } catch(_) {}
+      try { const r = api.applyHealthChange(mobId, -dmg, attackerId || undefined, true); if (r) return r; } catch(_) {}
       // 2. fallback objet {lifeformId}
-      try { return api.applyHealthChange(mobId, -dmg, attackerId ? { lifeformId: attackerId } : undefined, true); } catch(_) {}
+      try { const r = api.applyHealthChange(mobId, -dmg, attackerId ? { lifeformId: attackerId } : undefined, true); if (r) return r; } catch(_) {}
     }
     if (typeof api.attemptApplyDamage === "function" && attackerId) {
-      return api.attemptApplyDamage({ eId: attackerId, hitEId: mobId, attemptedDmgAmt: dmg });
+      try { return api.attemptApplyDamage({ eId: attackerId, hitEId: mobId, attemptedDmgAmt: dmg }); } catch(eInner) {
+        if (shouldSuppressInactiveError(api, mobId, attackerId, eInner && eInner.message ? eInner.message : String(eInner))) {
+          try { deletedEntities.add(mk); if (dotMap.has(mk)) dotMap.delete(mk); } catch(_) {}
+          return false;
+        }
+        throw eInner;
+      }
     }
   } catch (e) {
+    const rawMsg = e && e.message ? e.message : String(e);
+    if (shouldSuppressInactiveError(api, mobId, attackerId, rawMsg)) {
+      try { deletedEntities.add(mk); if (dotMap.has(mk)) dotMap.delete(mk); } catch(_) {}
+      return false;
+    }
     try {
       const ownerId = (typeof api.getPlayerId === "function" ? api.getPlayerId("K4miNoK4mi") : null) || (typeof api.getPlayerIds === "function" ? api.getPlayerIds().find(id => String(id)==="K4miNoK4mi" || (typeof api.getEntityName==="function" && api.getEntityName(id)==="K4miNoK4mi")) : null);
-      if (ownerId) api.sendMessage(ownerId, `[Damage] ${e && e.message ? e.message : String(e)} dmg=${-dmg} mob=${mobId}`);
+      if (ownerId) api.sendMessage(ownerId, `[Damage] ${rawMsg} dmg=${-dmg} mob=${mobId}`);
     } catch(_) {}
   }
   return false;
