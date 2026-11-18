@@ -41,27 +41,27 @@ export const CRATE_COLOR = {
 export const WEAPON_SET_COLOR = {
   Amethite: "#9B59B6",   // violet cristal
   Magmasteel: "#E74C3C", // rouge feu
-  Rubellite: "#C0392B",  // rouge sang gemme
+  Rubellite: "#E91E63",  // rose rubis (plus distinct que C0392B)
   Serpentite: "#2ECC71", // vert écaille
   Sanguine: "#8B0000",   // dark blood (Steel Bar)
-  Spectral: "#85C1E9",   // bleu spectral (Logic Board)
+  Spectral: "#00D4C8",   // cyan spectral
   Geo: "#D4A574",        // terre ocre (Copper Bar)
-  Astral: "#F1C40F",     // or cosmique (Star Alloy)
+  Astral: "#8A2BE2",     // violet cosmique (Star Alloy)
 };
 
 // Même palette pour armures (défense)
 export const ARMOR_SET_COLOR = {
   Amethite: "#9B59B6",
   Magmasteel: "#E74C3C",
-  Rubellite: "#C0392B",
+  Rubellite: "#E91E63",
   Serpentite: "#2ECC71",
   Cursemetal: "#5D4037", // brun maudit (Iron Plate)
   "Kingly Amethite": "#FFD700", // or royal (Gold Plate)
   "Kingly Diamond": "#BDC3C7", // diamant (Machine Hull)
   Sanguine: "#8B0000",
-  Spectral: "#85C1E9",
+  Spectral: "#00D4C8",
   Geo: "#D4A574",
-  Astral: "#F1C40F",
+  Astral: "#8A2BE2",
   Voltplate: "#00E5FF", // cyan tech (Voltite Cell)
 };
 
@@ -294,5 +294,188 @@ export const PRESETS = {
     blendMode: 1,
     manualEmitCount: Math.round(6 * tierScale),
     colorGradients: [{ timeFraction: 0, minColor: [...hexToRgb(colorHex), 0.7], maxColor: [...hexToRgb(colorHex), 0] }],
+  }),
+
+  // ── Sets spéciaux — nouveaux effets ──────────────────────────────────
+  // Amethite: grand anneau violet au sol
+  amethystZone: (tierScale = 1) => ({
+    texture: PARTICLE_TEXTURES.magic,
+    minLifeTime: 0.55, maxLifeTime: 0.9,
+    minEmitPower: 0.6, maxEmitPower: 1.8,
+    minSize: 0.32 * tierScale, maxSize: 0.58 * tierScale,
+    gravity: [0, 0.4, 0],
+    blendMode: 1,
+    manualEmitCount: Math.round(26 * tierScale),
+    colorGradients: [
+      { timeFraction: 0, minColor: [...hexToRgb("#9B59B6"), 1], maxColor: [...hexToRgb("#D8B4FE"), 1] },
+      { timeFraction: 1, minColor: [...hexToRgb("#FFFFFF"), 0.7], maxColor: [...hexToRgb("#FFFFFF"), 0] },
+    ],
+  }),
+  // Magmasteel: brûlure — flammes qui montent orange→rouge
+  magmaBurn: () => ({
+    texture: PARTICLE_TEXTURES.flame,
+    minLifeTime: 0.45, maxLifeTime: 0.8,
+    minEmitPower: 0.8, maxEmitPower: 2.2,
+    minSize: 0.22, maxSize: 0.45,
+    gravity: [0, 2.8, 0],
+    blendMode: 1,
+    manualEmitCount: 16,
+    colorGradients: [
+      { timeFraction: 0, minColor: [...hexToRgb("#E74C3C"), 1], maxColor: [...hexToRgb("#FF7700"), 1] },
+      { timeFraction: 0.5, minColor: [...hexToRgb("#FF4400"), 0.9], maxColor: [...hexToRgb("#FFAA00"), 0.9] },
+      { timeFraction: 1, minColor: [...hexToRgb("#FFCC00"), 0], maxColor: [...hexToRgb("#FFFFFF"), 0] },
+    ],
+  }),
+  // Rubellite: large zone rose autour du joueur sur kill
+  rubelliteKillZone: () => ({
+    texture: PARTICLE_TEXTURES.magic,
+    minLifeTime: 0.7, maxLifeTime: 1.1,
+    minEmitPower: 0.5, maxEmitPower: 1.6,
+    minSize: 0.30, maxSize: 0.60,
+    gravity: [0, 1.2, 0],
+    blendMode: 1,
+    manualEmitCount: 34,
+    colorGradients: [
+      { timeFraction: 0, minColor: [...hexToRgb("#E91E63"), 1], maxColor: [...hexToRgb("#FF88CC"), 1] },
+      { timeFraction: 1, minColor: [...hexToRgb("#FFD6E8"), 0.6], maxColor: [...hexToRgb("#FFFFFF"), 0] },
+    ],
+  }),
+  // Serpentite: poison vert qui tournoie lentement
+  serpentPoison: () => ({
+    texture: PARTICLE_TEXTURES.spark,
+    minLifeTime: 0.6, maxLifeTime: 1.0,
+    minEmitPower: 0.4, maxEmitPower: 1.2,
+    minSize: 0.20, maxSize: 0.38,
+    gravity: [0, 1.0, 0],
+    blendMode: 1,
+    manualEmitCount: 14,
+    colorGradients: [
+      { timeFraction: 0, minColor: [...hexToRgb("#2ECC71"), 0.95], maxColor: [...hexToRgb("#1A7A3A"), 0.95] },
+      { timeFraction: 1, minColor: [...hexToRgb("#2ECC71"), 0], maxColor: [...hexToRgb("#FFFFFF"), 0] },
+    ],
+  }),
+  // Sanguine: heal — particules descendantes sur mob (rouge sombre) + montantes sur joueur (rose)
+  sanguineDrainMob: () => ({
+    texture: PARTICLE_TEXTURES.spark,
+    minLifeTime: 0.4, maxLifeTime: 0.7,
+    minEmitPower: 0.7, maxEmitPower: 1.6,
+    minSize: 0.18, maxSize: 0.34,
+    gravity: [0, -2.0, 0],
+    blendMode: 1,
+    manualEmitCount: 12,
+    colorGradients: [
+      { timeFraction: 0, minColor: [...hexToRgb("#8B0000"), 1], maxColor: [...hexToRgb("#FF0000"), 1] },
+      { timeFraction: 1, minColor: [...hexToRgb("#000000"), 0.8], maxColor: [...hexToRgb("#8B0000"), 0] },
+    ],
+  }),
+  sanguineHealPlayer: () => ({
+    texture: PARTICLE_TEXTURES.star,
+    minLifeTime: 0.5, maxLifeTime: 0.85,
+    minEmitPower: 0.9, maxEmitPower: 1.8,
+    minSize: 0.20, maxSize: 0.40,
+    gravity: [0, 2.5, 0],
+    blendMode: 1,
+    manualEmitCount: 14,
+    colorGradients: [
+      { timeFraction: 0, minColor: [...hexToRgb("#FF3366"), 1], maxColor: [...hexToRgb("#FF88AA"), 1] },
+      { timeFraction: 1, minColor: [...hexToRgb("#FFFFFF"), 0.7], maxColor: [...hexToRgb("#FF3366"), 0] },
+    ],
+  }),
+  // Spectral: invisibilité cyan/noir
+  spectralInvis: () => ({
+    texture: PARTICLE_TEXTURES.magic,
+    minLifeTime: 0.5, maxLifeTime: 0.9,
+    minEmitPower: 0.6, maxEmitPower: 1.6,
+    minSize: 0.22, maxSize: 0.44,
+    gravity: [0, 1.6, 0],
+    blendMode: 1,
+    manualEmitCount: 18,
+    colorGradients: [
+      { timeFraction: 0, minColor: [...hexToRgb("#00D4C8"), 1], maxColor: [...hexToRgb("#111111"), 1] },
+      { timeFraction: 1, minColor: [...hexToRgb("#00D4C8"), 0.3], maxColor: [...hexToRgb("#000000"), 0] },
+    ],
+  }),
+  // Spectral: explosion cyan/noir large
+  spectralExplosion: () => ({
+    texture: PARTICLE_TEXTURES.star,
+    minLifeTime: 0.55, maxLifeTime: 0.95,
+    minEmitPower: 1.8, maxEmitPower: 3.6,
+    minSize: 0.35, maxSize: 0.70,
+    gravity: [0, 1.2, 0],
+    blendMode: 1,
+    manualEmitCount: 38,
+    colorGradients: [
+      { timeFraction: 0, minColor: [...hexToRgb("#00D4C8"), 1], maxColor: [...hexToRgb("#0A0A0A"), 1] },
+      { timeFraction: 1, minColor: [...hexToRgb("#00D4C8"), 0.2], maxColor: [...hexToRgb("#FFFFFF"), 0] },
+    ],
+  }),
+  // Geo: mine — pulsation ocre qui clignote
+  geoMineTick: () => ({
+    texture: PARTICLE_TEXTURES.spark,
+    minLifeTime: 0.35, maxLifeTime: 0.6,
+    minEmitPower: 0.3, maxEmitPower: 0.9,
+    minSize: 0.20, maxSize: 0.36,
+    gravity: [0, 0.8, 0],
+    blendMode: 1,
+    manualEmitCount: 10,
+    colorGradients: [
+      { timeFraction: 0, minColor: [...hexToRgb("#D4A574"), 1], maxColor: [...hexToRgb("#8B5A2B"), 1] },
+      { timeFraction: 1, minColor: [...hexToRgb("#FFD9A0"), 0.6], maxColor: [...hexToRgb("#FFFFFF"), 0] },
+    ],
+  }),
+  geoMineExplosion: () => ({
+    texture: PARTICLE_TEXTURES.smoke,
+    minLifeTime: 0.5, maxLifeTime: 0.9,
+    minEmitPower: 1.6, maxEmitPower: 3.2,
+    minSize: 0.38, maxSize: 0.72,
+    gravity: [0, -0.5, 0],
+    blendMode: 1,
+    manualEmitCount: 28,
+    colorGradients: [
+      { timeFraction: 0, minColor: [...hexToRgb("#D4A574"), 1], maxColor: [...hexToRgb("#5A3A1A"), 1] },
+      { timeFraction: 1, minColor: [...hexToRgb("#D4A574"), 0.4], maxColor: [...hexToRgb("#FFFFFF"), 0] },
+    ],
+  }),
+  // Astral: Glowing violet
+  astralGlowing: () => ({
+    texture: PARTICLE_TEXTURES.magic,
+    minLifeTime: 0.6, maxLifeTime: 1.0,
+    minEmitPower: 0.4, maxEmitPower: 1.3,
+    minSize: 0.24, maxSize: 0.48,
+    gravity: [0, 1.4, 0],
+    blendMode: 1,
+    manualEmitCount: 20,
+    colorGradients: [
+      { timeFraction: 0, minColor: [...hexToRgb("#8A2BE2"), 1], maxColor: [...hexToRgb("#111111"), 1] },
+      { timeFraction: 1, minColor: [...hexToRgb("#DAAAFF"), 0.5], maxColor: [...hexToRgb("#FFFFFF"), 0] },
+    ],
+  }),
+  // Astral: tornade violet/noir autour du mob
+  astralTornado: () => ({
+    texture: PARTICLE_TEXTURES.magic,
+    minLifeTime: 0.7, maxLifeTime: 1.15,
+    minEmitPower: 1.0, maxEmitPower: 2.6,
+    minSize: 0.28, maxSize: 0.55,
+    gravity: [0, 2.6, 0],
+    blendMode: 1,
+    manualEmitCount: 26,
+    colorGradients: [
+      { timeFraction: 0, minColor: [...hexToRgb("#8A2BE2"), 1], maxColor: [...hexToRgb("#000000"), 1] },
+      { timeFraction: 1, minColor: [...hexToRgb("#DAAAFF"), 0.6], maxColor: [...hexToRgb("#000000"), 0] },
+    ],
+  }),
+  // Astral: aura enveloppante (lenteur)
+  astralAura: () => ({
+    texture: PARTICLE_TEXTURES.spark,
+    minLifeTime: 0.5, maxLifeTime: 0.9,
+    minEmitPower: 0.3, maxEmitPower: 0.9,
+    minSize: 0.18, maxSize: 0.34,
+    gravity: [0, 0.9, 0],
+    blendMode: 1,
+    manualEmitCount: 14,
+    colorGradients: [
+      { timeFraction: 0, minColor: [...hexToRgb("#8A2BE2"), 0.85], maxColor: [...hexToRgb("#111111"), 0.85] },
+      { timeFraction: 1, minColor: [...hexToRgb("#8A2BE2"), 0], maxColor: [...hexToRgb("#000000"), 0] },
+    ],
   }),
 };
