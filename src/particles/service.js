@@ -1,6 +1,6 @@
 /**
- * Particles service — safe wrapper autour de api.playParticleEffect
- * Ne crash jamais si API manquante (tests).
+ * Particles service — safe wrapper around api.playParticleEffect
+ * Never crashes if API missing (tests).
  */
 
 export function canUseParticles(api) {
@@ -11,12 +11,10 @@ export function spawn(api, pos, preset, extra = {}) {
   if (!canUseParticles(api)) return null;
   if (!pos || pos.length < 3) return null;
   const [x, y, z] = pos;
-  // pos1/pos2 définissent la zone d’émission (petite boîte autour du centre)
   const r = extra.radius ?? 0.5;
   const h = extra.height ?? 0.5;
   const pos1 = [x - r, y, z - r];
   const pos2 = [x + r, y + h, z + r];
-  // dir1/dir2 = dispersion vitesse
   const dir1 = extra.dir1 || [-1, -1, -1];
   const dir2 = extra.dir2 || [1, 1, 1];
   const cfg = { ...preset, pos1, pos2, dir1, dir2, ...extra.overrides };
@@ -28,7 +26,7 @@ export function spawn(api, pos, preset, extra = {}) {
   }
 }
 
-// Helpers spécifiques — 1 ligne par endroit
+// Specific helpers — one line per location
 export function padRing(api, padPos, colorHex) {
   const { PRESETS } = globalThis.__PARTICLE_PRESETS || {};
   if (!PRESETS) return null;
@@ -51,8 +49,8 @@ export function crateFountain(api, chestPos, rarity, colorHex) {
 }
 
 // ── Combat FX helpers ────────────────────────────────────────────────
-// hit visuel à chaque coup + proc tous les X coups selon type
-// spawn position helpers adaptés au type (slash plat, thrust ligne, etc.)
+// Hit visual on every hit + proc every X hits per type
+// Spawn position helpers adapted to type (flat slash, line thrust, etc.)
 
 function weaponSpawn(api, pos, presetFn, colorHex, tierScale, spawnOpts) {
   const { PRESETS } = globalThis.__PARTICLE_PRESETS || {};
@@ -62,7 +60,6 @@ function weaponSpawn(api, pos, presetFn, colorHex, tierScale, spawnOpts) {
   return spawn(api, pos, preset, spawnOpts);
 }
 
-// presets par type d'arme: { presetKey, every, spawnOpts }
 const WEAPON_SPAWN = {
   Sword:     (tierScale) => ({ preset: (c,s)=> globalThis.__PARTICLE_PRESETS.PRESETS.weaponSlash(c,s), every: 3, opts: { radius: 1.0, height: 0.3, dir1: [-1.2,0.2,-1.2], dir2: [1.2,0.6,1.2] }, tierScale }),
   Dagger:    (ts)=> ({ preset: (c,s)=> globalThis.__PARTICLE_PRESETS.PRESETS.weaponDagger(c,s), every: 2, opts: { radius: 0.6, height: 0.4, dir1: [-0.8,0.3,-0.8], dir2: [0.8,1.0,0.8] }, tierScale: ts }),
@@ -79,12 +76,10 @@ const WEAPON_SPAWN = {
 export function weaponFx(api, pos, weaponType, colorHex, tierScale = 1) {
   const { PRESETS } = globalThis.__PARTICLE_PRESETS || {};
   if (!PRESETS) return null;
-  // petit hit commun à chaque coup (toujours visible)
   try {
     const hit = PRESETS.weaponHit(colorHex, tierScale);
     spawn(api, [pos[0], pos[1]+0.8, pos[2]], hit, { radius: 0.35, height: 0.35, dir1: [-0.6,0,-0.6], dir2: [0.6,0.8,0.6] });
   } catch(_){}
-  // gros proc si c'est le bon coup est géré côté compteur (service combatFx) via weaponProcFx
   return true;
 }
 

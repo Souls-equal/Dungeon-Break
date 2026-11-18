@@ -16,7 +16,7 @@ export const WEAPON_SET_TIER = {
 
 // Flavor per weapon type (short lore, no dmg numbers)
 export const TYPE_FLAVOR = {
-  Sword: "Balanced blade — high damage, crit 1.35×.",
+  Sword: "Balanced blade — high damage, crit 1.35x.",
   Dagger: "Fast dagger — low damage, double from behind, combo scaling.",
   Spear: "Dash spear — lunges 7 blocks on hit.",
   Club: "Heavy club — sword damage + massive knockback.",
@@ -41,70 +41,70 @@ export const WEAPON_BASE_DAMAGE = {
 };
 
 // Elemental ability per set — real gameplay, PvE only
-// short = tooltip (1 line), desc = longer for docs, icon = small flying icon key
+// short = tooltip (1 line), desc = longer for docs, icon = valid IngameIconName for flyingMsg
 export const SET_ABILITIES = {
   Amethite: {
-    name: "Zone violette",
-    short: "4e coup zone violette +60%",
-    desc: "Amethite — 4e coup: zone violette +60% dégâts en cercle",
+    name: "Violet Zone",
+    short: "Every 4th hit: violet zone +60%",
+    desc: "Amethite — every 4th hit creates a violet zone dealing +60% damage in an area",
     color: "#9B59B6",
-    icon: "star",
+    icon: "Damage",
     every: 4,
     extraMult: 0.60,
   },
   Magmasteel: {
-    name: "Brûlure",
-    short: "Brûlure 20%/s ×5s (feu)",
-    desc: "Magmasteel — brûlure 20% dmg/s pendant 5s",
+    name: "Burn",
+    short: "Burn 20%/s for 5s (fire)",
+    desc: "Magmasteel — burn for 20% dmg/s over 5s",
     color: "#E74C3C",
-    icon: "fire",
+    icon: "Damage",
     burnTicks: 5 * 20,
     burnInterval: 20,
     burnFrac: 0.20,
   },
   Rubellite: {
-    name: "Cœur rubis",
-    short: "Kill: Régén. 15s (stack 10/9/8s)",
-    desc: "Rubellite — kill: Health Regen 15s, stack si kill dans 10/9/8s",
+    name: "Ruby Heart",
+    short: "Kill: Regen 15s (stack 10/9/8s)",
+    desc: "Rubellite — on kill: Health Regen 15s, stacks if kill within 10/9/8s",
     color: "#E91E63",
-    icon: "heart",
+    icon: "Health Regen",
     regenMs: 15000,
     stackWindows: [10, 9, 8],
   },
   Serpentite: {
-    name: "Venin",
-    short: "Poison vert faible long",
-    desc: "Serpentite — poison vert plus faible mais plus long",
+    name: "Venom",
+    short: "Poison 10%/s for 8s",
+    desc: "Serpentite — poison deals 10% dmg/s for 8s (weaker, longer)",
     color: "#2ECC71",
-    icon: "skull",
+    icon: "Poisoned",
     poisonTicks: 8 * 20,
     poisonInterval: 20,
     poisonFrac: 0.10,
   },
   Sanguine: {
     name: "Siphon",
-    short: "Soin 5% dmg infligé",
-    desc: "Sanguine — rend 5% des dégâts en vie",
+    short: "Heal 5% of damage dealt",
+    desc: "Sanguine — heals 5% of damage as health",
     color: "#8B0000",
-    icon: "heart",
+    icon: "Lifesteal",
     healFrac: 0.05,
   },
   Spectral: {
-    name: "Voile spectral",
-    short: "Invis 3s + aspiration & explosion à la mort",
-    desc: "Spectral — 3s invisibilité par coup; mort: aspiration + explosion zone",
+    name: "Spectral Veil",
+    short: "Invis 3s + vacuum & explosion on kill",
+    desc: "Spectral — 3s invisibility per hit; on kill: vacuum + zone explosion",
     color: "#00D4C8",
-    icon: "eye-slash",
+    icon: "Invisible",
     invisMs: 3000,
     explosionRadius: 5,
     explosionFrac: 0.8,
   },
   Geo: {
-    name: "Peau de pierre",
-    short: "Bouclier par coup + mines 3s",
-    desc: "Geo — bouclier à chaque coup + mines sur mobs proches à la mort (3s)",
+    name: "Stone Skin",
+    short: "Shield per hit + mines (3s delay)",
+    desc: "Geo — shield on each hit + mines on nearby mobs on kill (3s delay, avoidable)",
     color: "#D4A574",
-    icon: "shield",
+    icon: "HealthShield",
     shieldPerHit: 2,
     shieldCap: 12,
     mineDelay: 60,
@@ -112,11 +112,11 @@ export const SET_ABILITIES = {
     mineFrac: 0.7,
   },
   Astral: {
-    name: "Nova astrale",
-    short: "Kill: Glowing 15b + tornade + aura lenteur",
-    desc: "Astral — kill Glowing 15b (+dmg), tornade au hit, aura lenteur+dégâts en main",
+    name: "Astral Nova",
+    short: "Kill: Glowing 15b + tornado + slow aura",
+    desc: "Astral — on kill Glowing 15 blocks (+dmg), tornado on hit, slow aura while held",
     color: "#8A2BE2",
-    icon: "star",
+    icon: "Glowing",
     glowingMs: 10000,
     glowingRadius: 15,
     glowingExtraFrac: 0.35,
@@ -131,7 +131,10 @@ export function weaponTierForSet(setName) {
 }
 
 export function weaponBaseDamage(weaponName) {
-  return WEAPON_BASE_DAMAGE[weaponName] ?? null;
+  if (!weaponName || typeof weaponName !== "string") return null;
+  // strip meta suffix like "|meta|charging2" for bows
+  const clean = String(weaponName).split("|")[0].trim();
+  return WEAPON_BASE_DAMAGE[clean] ?? null;
 }
 
 export function abilityForSet(setName) {
@@ -140,9 +143,10 @@ export function abilityForSet(setName) {
 
 export function weaponMeta(weaponName) {
   if (!weaponName || typeof weaponName !== "string") return null;
-  const base = WEAPON_BASE_DAMAGE[weaponName];
+  const clean = String(weaponName).split("|")[0].trim();
+  const base = WEAPON_BASE_DAMAGE[clean];
   if (!base) return null;
-  const parts = weaponName.trim().split(/\s+/);
+  const parts = clean.split(/\s+/);
   const type = parts[parts.length - 1];
   const setName = parts.slice(0, -1).join(" ");
   const tier = WEAPON_SET_TIER[setName];
@@ -150,7 +154,7 @@ export function weaponMeta(weaponName) {
   const flavor = TYPE_FLAVOR[type];
   const ability = SET_ABILITIES[setName];
   if (!flavor || !ability) return null;
-  return { weaponName, base, type, setName, tier, flavor, ability };
+  return { weaponName: clean, base, type, setName, tier, flavor, ability };
 }
 
 export function buildDescription(weaponName, effectiveDmg) {

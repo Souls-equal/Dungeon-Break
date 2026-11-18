@@ -1,20 +1,20 @@
 /**
- * Crafts pour les armures custom — 2 étapes:
- *  1) Shards (obtenus dans les Crates) -> Matériaux (lingots/alliages)
- *  2) Matériaux -> Armures (5 pièces par set)
+ * Crafts for custom armors and weapons — 2 steps:
+ *  1) Shards (from Crates) -> Materials (ingots/alloys)
+ *  2) Materials -> Armors (5 pieces per set) + Weapons (9 types per set)
  *
- * Chaque set est Diamond-level par défaut, tunable via setItemStat si besoin.
- * Les shards sont la monnaie de donjon, les matériaux l'étape intermédiaire visible en craft.
+ * Each set is Diamond-level by default, tunable via setItemStat if needed.
+ * Shards are dungeon currency, materials are the visible intermediate craft step.
  *
  * Stations:
  *  - Workbench: Tier 1 (Amethite, Magmasteel, Rubellite, Serpentite)
  *  - Artisan Bench: Tier 2+ (Cursemetal, Kingly, Sanguine, Spectral, Geo, Astral, Voltplate)
  */
 
-// Helper pour déclarer un craft: result = itemName, requires = [{items:[], amt}]
+// Helper to declare a craft: result = itemName, requires = [{items:[], amt}]
 export const CRAFTS = [
-  // ────────────── ÉTAPE 1: Shards -> Matériaux (lingots) ──────────────
-  // Tier 1 — fragments basiques -> lingots élémentaires (Workbench)
+  // ────────────── STEP 1: Shards -> Materials (ingots) ──────────────
+  // Tier 1 — basic fragments -> elemental ingots (Workbench)
   {
     result: "Amethite",
     produces: 1,
@@ -39,7 +39,7 @@ export const CRAFTS = [
     station: "Workbench",
     requires: [{ items: ["Serpentite Fragment"], amt: 4 }],
   },
-  // Tier 2 — alliage Cursemetal (mélange Rubellite + Serpentite)
+  // Tier 2 — Cursemetal alloy (Rubellite + Serpentite mix)
   {
     result: "Iron Plate",
     produces: 1,
@@ -51,7 +51,7 @@ export const CRAFTS = [
     ],
     // Iron Plate = Cursemetal Ingot (proxy)
   },
-  // Tier 2 — Kingly Amethite (Amethite raffiné)
+  // Tier 2 — Kingly Amethite (refined Amethite)
   {
     result: "Gold Plate",
     produces: 1,
@@ -63,7 +63,7 @@ export const CRAFTS = [
     ],
     // Gold Plate = Kingly Amethite Ingot
   },
-  // Tier 2 — Kingly Diamond (Diamond raffiné)
+  // Tier 2 — Kingly Diamond (refined Diamond)
   {
     result: "Machine Hull",
     produces: 1,
@@ -75,7 +75,7 @@ export const CRAFTS = [
     ],
     // Machine Hull = Kingly Diamond Ingot
   },
-  // Tier 3 — Sanguine (sang) -> Steel Bar
+  // Tier 3 — Sanguine (blood) -> Steel Bar
   {
     result: "Steel Bar",
     produces: 1,
@@ -85,7 +85,7 @@ export const CRAFTS = [
       { items: ["Iron Bar"], amt: 1 },
     ],
   },
-  // Tier 3 — Spectral (spectre) -> Logic Board
+  // Tier 3 — Spectral (ghost) -> Logic Board
   {
     result: "Logic Board",
     produces: 1,
@@ -95,7 +95,7 @@ export const CRAFTS = [
       { items: ["Gold Fragment"], amt: 2 },
     ],
   },
-  // Tier 3 — Geo (terre) -> Copper Bar
+  // Tier 3 — Geo (earth) -> Copper Bar
   {
     result: "Copper Bar",
     produces: 1,
@@ -128,9 +128,9 @@ export const CRAFTS = [
     ],
   },
 
-  // ────────────── ÉTAPE 2: Matériaux -> Armures (5 pièces par set) ──────────────
-  // Coûts: Helmet 5, Chestplate 8, Leggings 7, Boots 4, Gauntlets 4
-  // Chaque set a un filler thématique secondaire
+  // ────────────── STEP 2: Materials -> Armors (5 pieces per set) ──────────────
+  // Costs: Helmet 5, Chestplate 8, Leggings 7, Boots 4, Gauntlets 4
+  // Each set has a secondary thematic filler
 
   // Amethite — Workbench + Iron Bar filler
   { result: "Amethite Helmet", produces: 1, station: "Workbench", requires: [{ items: ["Amethite"], amt: 5 }, { items: ["Iron Bar"], amt: 2 }] },
@@ -139,21 +139,21 @@ export const CRAFTS = [
   { result: "Amethite Boots", produces: 1, station: "Workbench", requires: [{ items: ["Amethite"], amt: 4 }, { items: ["Iron Bar"], amt: 2 }] },
   { result: "Amethite Gauntlets", produces: 1, station: "Workbench", requires: [{ items: ["Amethite"], amt: 4 }, { items: ["Iron Bar"], amt: 2 }] },
 
-  // Magmasteel — Workbench + Coal (feu)
+  // Magmasteel — Workbench + Coal (fire)
   { result: "Magmasteel Helmet", produces: 1, station: "Workbench", requires: [{ items: ["Magmasteel"], amt: 5 }, { items: ["Coal"], amt: 2 }] },
   { result: "Magmasteel Chestplate", produces: 1, station: "Workbench", requires: [{ items: ["Magmasteel"], amt: 8 }, { items: ["Coal"], amt: 3 }] },
   { result: "Magmasteel Leggings", produces: 1, station: "Workbench", requires: [{ items: ["Magmasteel"], amt: 7 }, { items: ["Coal"], amt: 3 }] },
   { result: "Magmasteel Boots", produces: 1, station: "Workbench", requires: [{ items: ["Magmasteel"], amt: 4 }, { items: ["Coal"], amt: 2 }] },
   { result: "Magmasteel Gauntlets", produces: 1, station: "Workbench", requires: [{ items: ["Magmasteel"], amt: 4 }, { items: ["Coal"], amt: 2 }] },
 
-  // Rubellite — Workbench + Gold Fragment (gemme)
+  // Rubellite — Workbench + Gold Fragment (gem)
   { result: "Rubellite Helmet", produces: 1, station: "Workbench", requires: [{ items: ["Rubellite"], amt: 5 }, { items: ["Gold Fragment"], amt: 2 }] },
   { result: "Rubellite Chestplate", produces: 1, station: "Workbench", requires: [{ items: ["Rubellite"], amt: 8 }, { items: ["Gold Fragment"], amt: 3 }] },
   { result: "Rubellite Leggings", produces: 1, station: "Workbench", requires: [{ items: ["Rubellite"], amt: 7 }, { items: ["Gold Fragment"], amt: 3 }] },
   { result: "Rubellite Boots", produces: 1, station: "Workbench", requires: [{ items: ["Rubellite"], amt: 4 }, { items: ["Gold Fragment"], amt: 2 }] },
   { result: "Rubellite Gauntlets", produces: 1, station: "Workbench", requires: [{ items: ["Rubellite"], amt: 4 }, { items: ["Gold Fragment"], amt: 2 }] },
 
-  // Serpentite — Workbench + Iron Fragment (écaille)
+  // Serpentite — Workbench + Iron Fragment (scale)
   { result: "Serpentite Helmet", produces: 1, station: "Workbench", requires: [{ items: ["Serpentite"], amt: 5 }, { items: ["Iron Fragment"], amt: 2 }] },
   { result: "Serpentite Chestplate", produces: 1, station: "Workbench", requires: [{ items: ["Serpentite"], amt: 8 }, { items: ["Iron Fragment"], amt: 3 }] },
   { result: "Serpentite Leggings", produces: 1, station: "Workbench", requires: [{ items: ["Serpentite"], amt: 7 }, { items: ["Iron Fragment"], amt: 3 }] },
@@ -217,11 +217,11 @@ export const CRAFTS = [
   { result: "Voltplate Gauntlets", produces: 1, station: "Artisan Bench", requires: [{ items: ["Voltite Cell"], amt: 4 }, { items: ["Copper Wire"], amt: 2 }] },
 ];
 
-// ────────────── ÉTAPE 2b: Matériaux -> Armes (9 types par set, 72 armes) ──────────────
-// Chaque arme suit le multiplicateur du joueur (dealingDamageMultiplier) via
-// - l'option client dealingDamageMultiplier (Bloxd applique déjà le multiplicateur aux dégâts d'armes)
-// - le hook onPlayerDamagingMob qui multiplie les dégâts rendus (fallback / mobs custom)
-// Coûts inspirés du vanilla: Sword 2+1, Dagger 1+1, Spear 1+2, Club 3+1, Mace 2+1+1, Whip 1+1, Bow 3+1+2, Crossbow 4+1+2+2, Boomerang 2+1, Staff 2+2+1
+// ────────────── STEP 2b: Materials -> Weapons (9 types per set, 72 weapons) ──────────────
+// Each weapon follows the player's dealingDamageMultiplier via
+// - the client option dealingDamageMultiplier (Bloxd already applies the multiplier to weapon damage)
+// - the onPlayerDamagingMob hook that multiplies returned damage (fallback / custom mobs)
+// Costs inspired by vanilla: Sword 2+1, Dagger 1+1, Spear 1+2, Club 3+1, Mace 2+1+1, Whip 1+1, Bow 3+1+2, Crossbow 4+1+2+2, Boomerang 2+1, Staff 2+2+1
 export const WEAPON_CRAFTS = [
   // Amethite — Workbench (Tier 1)
   { result: "Amethite Sword", produces: 1, station: "Workbench", requires: [{ items: ["Amethite"], amt: 2 }, { items: ["Stick"], amt: 1 }] },
@@ -305,7 +305,7 @@ export const WEAPON_CRAFTS = [
   { result: "Astral Staff", produces: 1, station: "Artisan Bench", requires: [{ items: ["Star Alloy"], amt: 2 }, { items: ["Stick"], amt: 2 }, { items: ["Comet Shard"], amt: 1 }] },
 ];
 
-// Shard -> Material mapping pour affichage / debug
+// Shard -> Material mapping for display / debug
 export const SHARD_TO_MATERIAL = {
   "Amethite Fragment": "Amethite",
   "Magmasteel Fragment": "Magmasteel",
@@ -318,7 +318,7 @@ export const SHARD_TO_MATERIAL = {
   "Voltite Dust": "Voltite Cell (Voltplate Core)",
 };
 
-// Armure sets pour debug
+// Armor sets for debug
 export const ARMOR_SETS = [
   { id: "amethite", label: "Amethite", material: "Amethite", shard: "Amethite Fragment", tier: 1 },
   { id: "magmasteel", label: "Magmasteel", material: "Magmasteel", shard: "Magmasteel Fragment", tier: 1 },
@@ -334,7 +334,7 @@ export const ARMOR_SETS = [
   { id: "voltplate", label: "Voltplate", material: "Voltite Cell", shard: "Voltite Dust", tier: 4 },
 ];
 
-// Arme sets pour debug (même tiers, 9 armes par set, 72 total)
+// Weapon sets for debug (same tiers, 9 weapons per set, 72 total)
 export const WEAPON_SETS = [
   { id: "amethite", label: "Amethite", material: "Amethite", shard: "Amethite Fragment", tier: 1, weapons: 9 },
   { id: "magmasteel", label: "Magmasteel", material: "Magmasteel", shard: "Magmasteel Fragment", tier: 1, weapons: 9 },
@@ -346,5 +346,5 @@ export const WEAPON_SETS = [
   { id: "astral", label: "Astral", material: "Star Alloy", shard: "Astral Shard", tier: 4, weapons: 9 },
 ];
 
-// Fusion CRAFTS (armor + weapons) pour rétro-compat: service importe CRAFTS
+// Merge CRAFTS (armor + weapons) for backwards compat: service imports CRAFTS
 for (const w of WEAPON_CRAFTS) CRAFTS.push(w);

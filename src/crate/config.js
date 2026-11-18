@@ -2,7 +2,7 @@
  * Crate system — config
  * Keys, air chances and loot tables per rarity.
  * Data only, no api.
- * Amount supporte soit `amount` fixe, soit `min`/`max` pour tirage aléatoire inclusif.
+ * Amount supports either fixed `amount` or `min`/`max` for inclusive random roll.
  */
 
 export const CRATE_KEYS = {

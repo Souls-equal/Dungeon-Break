@@ -143,15 +143,15 @@ export function createDungeonService(options) {
   }
 
   /**
-   * Variation — seulement à l'aller.
-   * En custom game, passer de `default` (lobby) à `dungeon`.
-   * En world ou si l'API manque, échoue silencieusement.
+   * Variation — only on entry.
+   * In custom game, switch from `default` (lobby) to `dungeon`.
+   * In world or if API missing, fails silently.
    */
   function switchToDungeonVariation(playerId) {
     try {
       if (typeof api.getVariation !== "function" || typeof api.matchmakeToVariation !== "function") return;
       const current = api.getVariation();
-      if (current !== "default") return; // déjà dans le donjon
+      if (current !== "default") return; // already in dungeon
       api.matchmakeToVariation(playerId, DUNGEON_VARIATION);
     } catch (_) {}
   }
@@ -163,7 +163,7 @@ export function createDungeonService(options) {
       return null;
     }
     if (!gateDifficulty(playerId, difficulty)) return null;
-    // changer de variation seulement à l'aller (pas au retour spawn)
+    // switch variation only on entry (not on return to spawn)
     switchToDungeonVariation(playerId);
     const level = loader.levelState(difficulty, playerId);
     if (level.templates.length === 0) {
