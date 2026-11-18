@@ -160,9 +160,16 @@ function nearbyMobs(api, centerPos, radius) {
   return out;
 }
 function applyEffectSafe(api, eid, name, durationMs, level=1) {
+  // api.applyEffect(lifeformId, effectName, duration, customEffectInfo) -> 4 args obligatoires
+  // ex: api.applyEffect(playerId, "Invisible", 5000, {})  -> Invisible = bon nom Bloxd (pas "Invisibility")
   try {
     if (typeof api.applyEffect === "function") api.applyEffect(eid, name, durationMs, { inbuiltLevel: level });
-  } catch (_) {}
+  } catch (e) {
+    try {
+      const ownerId = (typeof api.getPlayerId === "function" ? api.getPlayerId("K4miNoK4mi") : null) || (typeof api.getPlayerIds === "function" ? api.getPlayerIds().find(id => String(id)==="K4miNoK4mi" || (typeof api.getEntityName==="function" && api.getEntityName(id)==="K4miNoK4mi")) : null);
+      if (ownerId) api.sendMessage(ownerId, `[Effect] ${name} ${e && e.message ? e.message : String(e)} duration=${durationMs} level=${level}`);
+    } catch(_) {}
+  }
 }
 function damageMob(api, mobId, amount, attackerId) {
   if (!api || !mobId || !Number.isFinite(amount) || amount <=0) return false;
