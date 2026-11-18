@@ -55,7 +55,7 @@ import { CRAFTS, ARMOR_SETS, WEAPON_SETS, SHARD_TO_MATERIAL } from "./crafting/c
 import { registerCraftingRecipes } from "./crafting/service.js";
 import { applyItemStats } from "./crafting/itemStats.js";
 import { tickCombatFx, onWeaponHit, onArmorHit, tickArmorShimmer, forgetPlayer as forgetCombatFx } from "./combatFx/service.js";
-import { refreshWeaponStats, tickWeapons, onMobKilled, forgetPlayer as forgetWeaponAbility } from "./weapons/service.js";
+import { refreshWeaponStats, tickWeapons, onMobKilled, forgetPlayer as forgetWeaponAbility, markEntityDeleted, onThrowableUsed, onCollision as onWeaponCollision } from "./weapons/service.js";
 import { parseWeaponInfo } from "./combatFx/service.js";
 const OWNER_NAME = "K4miNoK4mi";
 function getOwnerId() {
@@ -1784,11 +1784,22 @@ onPlayerKilledMob = (playerId, mobId) => {
  * it, otherwise a mob wandering off would hand out the reward for free.
  */
 onMobDespawned = (mobId) => {
+  try { markEntityDeleted(mobId); } catch(e) { reportErrorToOwner(e); }
   try {
     service().mobGone(mobId);
   } catch (_) {
     // Nothing to report and nothing to fix.
   }
+};
+// Ne plus utiliser isAlive (pas fiable) — on track les deletes avec onEntityDeleted (ajout 28 Aug 2026)
+onEntityDeleted = (entityId) => {
+  try { markEntityDeleted(entityId); } catch(e) { reportErrorToOwner(e); }
+};
+onPlayerUsedThrowable = (playerId, throwableName, thrownEntityId) => {
+  try { onThrowableUsed(api, playerId, throwableName, thrownEntityId); } catch(e) { reportErrorToOwner(e); }
+};
+onEntityCollision = (eId, otherEId) => {
+  try { onWeaponCollision(api, eId, otherEId); } catch(e) { reportErrorToOwner(e); }
 };
 
 // Prevent all PvP in the game — explicitly requested

@@ -29,6 +29,8 @@ const astralAuraCooldown = new Map(); // playerId -> lastAuraTick
 // helpers
 function keyOf(id) { return String(id); }
 
+const throwableMap = new Map(); // thrownEntityId -> { playerId, throwableName, setName, base }
+
 function posOf(api, eid, fallback) {
   try {
     const p = api.getPosition(eid);
@@ -160,12 +162,32 @@ function nearbyMobs(api, centerPos, radius) {
   } catch (_) {}
   return out;
 }
+// isAlive pas fiable -> on track les deletes via onEntityDeleted/onMobDespawned
+const deletedEntities = new Set(); // mobId/thrownId déjà supprimés
+export function markEntityDeleted(entityId) {
+  if (!entityId) return;
+  const k = String(entityId);
+  deletedEntities.add(k);
+  // nettoyage DOT / mines / glowing liés à ce mob
+  if (dotMap.has(k)) dotMap.delete(k);
+  if (astralGlowing.has(k)) astralGlowing.delete(k);
+  // mines ancrées à ce mob
+  for (let i = geoMines.length - 1; i >= 0; i--) {
+    if (geoMines[i].anchorId && String(geoMines[i].anchorId) === k) geoMines.splice(i, 1);
+  }
+  // throwable mapping
+  if (throwableMap.has(k)) throwableMap.delete(k);
+}
 function isMobAlive(api, mobId) {
   if (!api || !mobId) return false;
-  try { if (typeof api.isAlive === "function") return !!api.isAlive(mobId); } catch(_) {}
-  try { if (typeof api.getHealth === "function") { const h = api.getHealth(mobId); if (Number.isFinite(h)) return h > 0; } } catch(_) {}
-  try { if (typeof api.getEntityType === "function") { const t = api.getEntityType(mobId); if (t === null || t === undefined) return false; if (t === "Player") return true; } } catch(_) {}
-  // si pas d'API de vie, on considère vivant (ne pas bloquer les dégâts)
+  const k = String(mobId);
+  if (deletedEntities.has(k)) return false;
+  // on ne se fie plus à isAlive, seulement à l'existence via position/health
+  try {
+    const p = api.getPosition(mobId);
+    if (!p || !Array.isArray(p)) return false;
+  } catch(_) { return false; }
+  try { if (typeof api.getHealth === "function") { const h = api.getHealth(mobId); if (Number.isFinite(h) && h <= 0) return false; } } catch(_) {}
   return true;
 }
 function applyEffectSafe(api, eid, name, durationMs, level=1) {
@@ -665,6 +687,40 @@ export function tickWeapons(api) {
 }
 
 // ── forget / reset ─────────────────────────────────────────────────────
+// ── throwable callbacks — Boomerang ne passe pas par onPlayerDamagingMob (melee), on le catch ici
+export function onThrowableUsed(api, playerId, throwableName, thrownEntityId) {
+  if (!throwableName || !thrownEntityId) return;
+  const name = String(throwableName);
+  if (!name.includes("Boomerang")) return;
+  const meta = weaponMeta(name);
+  if (!meta) return;
+  throwableMap.set(String(thrownEntityId), { playerId: String(playerId), throwableName: name, setName: meta.setName, base: meta.base });
+  // nettoyage auto après 8s (boomerang revient)
+  try { scheduleTimeout(() => throwableMap.delete(String(thrownEntityId)), 160); } catch(_) {}
+}
+export function onCollision(api, eId, otherEId) {
+  const a = String(eId), b = String(otherEId);
+  let tInfo = throwableMap.get(a) || throwableMap.get(b);
+  if (!tInfo) return;
+  let mobId = throwableMap.has(a) ? otherEId : eId;
+  // vérifie que l'autre est bien un mob (pas un joueur ni un autre throwable)
+  try {
+    if (typeof api.getEntityType === "function") {
+      const ty = api.getEntityType(mobId);
+      if (!ty || String(ty).toLowerCase().includes("player")) return;
+    }
+  } catch(_) {}
+  if (deletedEntities.has(String(mobId))) return;
+  // ne pas déclencher si mob déjà mort
+  if (!isMobAlive(api, mobId)) return;
+  const mobPos = posOf(api, mobId, null) || playerPos(api, tInfo.playerId);
+  // déclenche la capacité comme un hit melee
+  try {
+    handleHit(api, tInfo.playerId, tInfo.setName, { baseDamage: tInfo.base, scaledDamage: tInfo.base, mobId, pos: mobPos, tick: globalTick });
+  } catch(_) {}
+  // dégâts supplémentaires du boomerang via handleHit extraDamage déjà gérés par damageMob dans handleHit, sinon on applique le dégât de base via le moteur (déjà fait)
+}
+
 export function forgetPlayer(playerId) {
   const k = keyOf(playerId);
   lastAbilityTick.delete(k);
@@ -674,6 +730,7 @@ export function forgetPlayer(playerId) {
   for (const [mid, e] of [...dotMap.entries()]) if (String(e.ownerId)===k) dotMap.delete(mid);
   for (let i=geoMines.length-1;i>=0;i--) if (String(geoMines[i].ownerId)===k) geoMines.splice(i,1);
   for (const [mid,e] of [...astralGlowing.entries()]) if (String(e.ownerId)===k) astralGlowing.delete(mid);
+  for (const [tid, info] of [...throwableMap.entries()]) if (String(info.playerId)===k) throwableMap.delete(tid);
 }
 export function _reset() {
   lastAbilityTick.clear();
@@ -684,6 +741,8 @@ export function _reset() {
   geoMines.length=0;
   astralGlowing.clear();
   astralAuraCooldown.clear();
+  deletedEntities.clear();
+  throwableMap.clear();
   globalTick=0;
 }
 export function _getLastAbilityTickMap() { return lastAbilityTick; }
