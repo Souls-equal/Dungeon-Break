@@ -8,6 +8,42 @@ import { CRATE_KEYS, AIR_CHANCE, LOOT_TABLE, CRATE_LOCK_MS, CRATE_CLEAR_DISTANCE
 // Registry for 16s roll protection — tested every second per spec
 const activeCrates = new Map(); // key "x|y|z" -> { x, y, z, ownerId, lockUntil }
 
+// Bloxd chests have 36 slots, not 27 (field guide §9.5 CONFIRMED). Keep in sync everywhere.
+export const CHEST_SLOT_COUNT = 36;
+
+// Only these keys are allowed in crate BlockData. Everything else (inventory, leftover attributes, etc.) is discarded
+// to avoid InternalError: Argument too large when existing data is huge.
+const ALLOWED_CRATE_KEYS = ["crateOwnerId","crateOwnerName","crateRarity","crateOpenedAt","crateLockUntil","crateLowered"];
+
+function sanitizeCrateData(data) {
+  if (!data || typeof data !== "object") return {};
+  const out = {};
+  for (const k of ALLOWED_CRATE_KEYS) {
+    if (k in data) {
+      const v = data[k];
+      // Cap string values to 200 chars to avoid attribute JSON bloat (field guide: 400 cap)
+      if (typeof v === "string" && v.length > 200) out[k] = v.slice(0, 200);
+      else out[k] = v;
+    }
+  }
+  return out;
+}
+
+function safeSetBlockData(api, x, y, z, data) {
+  if (!data || typeof data !== "object") data = {};
+  // Extra safety: if serialized data would be >800 chars (inventory chunk), truncate to allowed keys only
+  try {
+    const s = JSON.stringify(data);
+    if (s && s.length > 800) {
+      // Force sanitize — discard everything but allowed keys
+      data = sanitizeCrateData(data);
+    }
+  } catch (_) {
+    data = sanitizeCrateData(data);
+  }
+  try { api.setBlockData(x, y, z, data); } catch (_) {}
+}
+
 export function getWeightedRandomItem(rarity, random = Math.random) {
   const list = LOOT_TABLE[rarity];
   if (!list || list.length === 0) return null;
@@ -115,11 +151,12 @@ function lowerChestOneBlock(api, chestPos) {
   let existingData = {};
   try { existingData = api.getBlockData(p.x, p.y, p.z) || {}; } catch (_) {}
   if (existingData === null || typeof existingData !== "object") existingData = {};
-  const newData = { ...existingData, crateLowered: true };
+  // CRITICAL: only copy allowed crate keys, not entire existingData (which may be huge -> Argument too large)
+  const newData = { ...sanitizeCrateData(existingData), crateLowered: true };
   try { api.setBlock(below.x, below.y, below.z, blockName); } catch (_) { try { api.setBlock(below.x, below.y, below.z, "Chest"); } catch (_) {} }
-  try { api.setBlockData(below.x, below.y, below.z, newData); } catch (_) {}
+  safeSetBlockData(api, below.x, below.y, below.z, newData);
   try { api.setBlock(p.x, p.y, p.z, "Air"); } catch (_) {}
-  try { api.setBlockData(p.x, p.y, p.z, {}); } catch (_) {}
+  safeSetBlockData(api, p.x, p.y, p.z, {});
   const oldKey = `${p.x}|${p.y}|${p.z}`;
   const newKey = `${below.x}|${below.y}|${below.z}`;
   if (activeCrates.has(oldKey)) {
@@ -138,15 +175,17 @@ export function setChestOwner(api, chestPos, playerId, rarity) {
   if (existing === null || typeof existing !== "object") existing = {};
   const now = nowMs(api);
   const displayName = getPlayerDisplayName(api, playerId);
+  // Only keep allowed keys from existing, discard huge inventory/lore
+  const base = sanitizeCrateData(existing);
   const merged = {
-    ...existing,
+    ...base,
     crateOwnerId: playerId,
     crateOwnerName: displayName,
     crateRarity: rarity,
     crateOpenedAt: now,
     crateLockUntil: now + CRATE_LOCK_MS,
   };
-  try { api.setBlockData(p.x, p.y, p.z, merged); } catch (_) {}
+  safeSetBlockData(api, p.x, p.y, p.z, merged);
   // track for 16s roll protection + distance clear
   const key = `${p.x}|${p.y}|${p.z}`;
   activeCrates.set(key, { x: p.x, y: p.y, z: p.z, ownerId: playerId, lockUntil: now + CRATE_LOCK_MS });
@@ -161,12 +200,15 @@ export function clearCrateLock(api, chestPos) {
   try { data = api.getBlockData(p.x, p.y, p.z); } catch (_) { data = null; }
   if (!data || typeof data !== "object") return;
   if (!data.crateOwnerId && !data.crateLockUntil) return;
-  const { crateOwnerId, crateOwnerName, crateRarity, crateOpenedAt, crateLockUntil, crateLowered, ...rest } = data;
-  try { api.setBlockData(p.x, p.y, p.z, rest); } catch (_) {}
-  // if no other data, clear to empty
-  try {
-    if (Object.keys(rest).length === 0) api.setBlockData(p.x, p.y, p.z, {});
-  } catch (_) {}
+  // Sanitize: only keep allowed keys that are not crate lock keys, discard rest (which may be huge)
+  const rest = sanitizeCrateData(data);
+  delete rest.crateOwnerId;
+  delete rest.crateOwnerName;
+  delete rest.crateRarity;
+  delete rest.crateOpenedAt;
+  delete rest.crateLockUntil;
+  // keep crateLowered if it was there
+  safeSetBlockData(api, p.x, p.y, p.z, rest);
 }
 
 export function tickCrateLocks(api) {
@@ -182,8 +224,9 @@ export function tickCrateLocks(api) {
       try {
         const data = api.getBlockData(crate.x, crate.y, crate.z);
         if (data && typeof data === "object" && data.crateLockUntil) {
-          const { crateLockUntil, ...rest } = data;
-          try { api.setBlockData(crate.x, crate.y, crate.z, rest); } catch (_) {}
+          const sanitized = sanitizeCrateData(data);
+          delete sanitized.crateLockUntil;
+          safeSetBlockData(api, crate.x, crate.y, crate.z, sanitized);
         }
       } catch (_) {}
       continue;
@@ -205,8 +248,9 @@ export function tickCrateLocks(api) {
       try {
         const d2 = api.getBlockData(crate.x, crate.y, crate.z);
         if (d2 && typeof d2 === "object" && d2.crateLockUntil) {
-          const { crateLockUntil, ...rest2 } = d2;
-          try { api.setBlockData(crate.x, crate.y, crate.z, rest2); } catch (_) {}
+          const sanitized = sanitizeCrateData(d2);
+          delete sanitized.crateLockUntil;
+          safeSetBlockData(api, crate.x, crate.y, crate.z, sanitized);
         }
       } catch (_) {}
     }
@@ -237,44 +281,125 @@ export function isChestLocked(api, chestPos, playerId) {
 }
 
 /**
- * Vide un coffre sans erreur même s'il est plein (bloquant le précédent setStandardChestItemSlot).
- * 1) Reset des data du coffre qui contiennent aussi les slots (evite l'erreur "chest full" lors du vidage)
- * 2) fallback brute force Air sur 27 slots
+ * Vide un coffre sans erreur même s'il est plein (Argument too large).
+ * Fix: 36 slots (not 27), no undefined args, sanitize BlockData, clearStandardChest first.
  */
 export function clearChestInventory(api, chestPos) {
   const p = normalizeChestPos(chestPos);
   if (!p) return;
-  // 1) reset data chest — preserve uniquement les clés crateOwner* pour ne pas perdre le lock, le reste (inventory) est jeté
+  const posArr = [p.x, p.y, p.z];
+
+  // 1) Sanitize BlockData: keep only allowed crate keys, discard huge inventory/lore
+  // This alone vides le coffre si l'engine stocke l'inventaire dans blockData
   try {
     let data = null;
     try { data = api.getBlockData(p.x, p.y, p.z); } catch (_) { data = null; }
     if (data && typeof data === "object") {
-      const crateKeep = {};
-      for (const k of ["crateOwnerId","crateOwnerName","crateRarity","crateOpenedAt","crateLockUntil","crateLowered"]) {
-        if (k in data) crateKeep[k] = data[k];
-      }
-      // Si data contenait des clés d'inventaire (items/slots/inventory etc.), les jeter revient à vider le coffre
-      // On détecte si data a plus que les clés crateKeep
-      const extraKeys = Object.keys(data).filter(k => !(k in crateKeep));
+      const sanitized = sanitizeCrateData(data);
+      // If original had extra keys beyond allowed, it likely contained inventory — replace with sanitized small version
+      const extraKeys = Object.keys(data).filter(k => !ALLOWED_CRATE_KEYS.includes(k));
       if (extraKeys.length > 0) {
-        try { api.setBlockData(p.x, p.y, p.z, crateKeep); } catch (_) {}
-        // si crateKeep vide, on force {} pour bien reset
-        if (Object.keys(crateKeep).length === 0) {
-          try { api.setBlockData(p.x, p.y, p.z, {}); } catch (_) {}
-        }
+        safeSetBlockData(api, p.x, p.y, p.z, sanitized);
       }
     }
   } catch (_) {}
-  // 2) brute force Air — couvre le cas où l'engine stocke l'inventaire hors data
-  for (let i = 0; i < 27; i++) {
-    try { api.setStandardChestItemSlot([p.x, p.y, p.z], i, "Air", 1, playerIdFallback(api, chestPos)); } catch (_) {}
-    try { api.setStandardChestItemSlot([p.x, p.y, p.z], i, "Air"); } catch (_) {}
-    // aussi via give/remove si dispo: on ignore
-  }
+
+  // 2) Try atomic clear (best for full chests — single call, no per-slot serialization of full inventory)
+  let clearedByAtomic = false;
   try {
-    if (typeof api.clearStandardChest === "function") api.clearStandardChest([p.x, p.y, p.z]);
+    if (typeof api.clearStandardChest === "function") {
+      api.clearStandardChest(posArr);
+      clearedByAtomic = true;
+    }
   } catch (_) {}
+  // Also try alternative name
+  if (!clearedByAtomic) {
+    try {
+      if (typeof api.clearChest === "function") {
+        api.clearChest(posArr);
+        clearedByAtomic = true;
+      }
+    } catch (_) {}
+  }
+
+  // 3) Fallback: brute force Air on all 36 slots — 3 args only (Air ignores amount), no undefined playerId
+  // Use minimal args to avoid large argument serialization. Each slot cleared individually.
+  for (let i = 0; i < CHEST_SLOT_COUNT; i++) {
+    try { api.setStandardChestItemSlot(posArr, i, "Air"); } catch (_) {}
+  }
+
+  // 4) Last resort: if still not empty (some engines need explicit Air with player context), try with correct arity
+  // We do not pass undefined — we omit optional args entirely.
 }
+
+// Queue for tick-striped safe clearing of extremely full chests (Argument too large guard, field guide §1.3)
+const chestClearQueue = [];
+let chestClearActive = false;
+
+function enqueueChestClear(posArr, totalSlots = CHEST_SLOT_COUNT) {
+  chestClearQueue.push({ posArr, nextSlot: 0, totalSlots });
+}
+
+export function tickChestClearQueue(api) {
+  if (chestClearQueue.length === 0) return;
+  // Process at most 6 slots per tick to keep per-tick argument size small
+  const BATCH = 6;
+  const job = chestClearQueue[0];
+  let done = 0;
+  while (done < BATCH && job.nextSlot < job.totalSlots) {
+    try { api.setStandardChestItemSlot(job.posArr, job.nextSlot, "Air"); } catch (_) {}
+    job.nextSlot++;
+    done++;
+  }
+  if (job.nextSlot >= job.totalSlots) {
+    chestClearQueue.shift();
+    // try atomic again in case some slots were missed due to earlier failure
+    try { if (typeof api.clearStandardChest === "function") api.clearStandardChest(job.posArr); } catch (_) {}
+  }
+}
+
+export function isChestClearQueueBusy() {
+  return chestClearQueue.length > 0;
+}
+
+/**
+ * Empty a chest in a chunked, tick-safe way for extremely full chests that throw Argument too large
+ * when cleared synchronously. Returns true if fully cleared sync, false if chunked async started.
+ * Use this for manual "vider coffre" command.
+ */
+export function clearChestInventoryChunked(api, chestPos, onDone) {
+  const p = normalizeChestPos(chestPos);
+  if (!p) { if (onDone) try { onDone(); } catch(_){} return true; }
+  const posArr = [p.x, p.y, p.z];
+
+  // Try atomic first — if it works, we're done sync (best for Argument too large)
+  try {
+    if (typeof api.clearStandardChest === "function") { api.clearStandardChest(posArr); if (onDone) onDone(true); return true; }
+  } catch (_) {}
+  // Sanitize blockData first (may contain huge inventory stored as blockData)
+  try {
+    let data = api.getBlockData(p.x, p.y, p.z);
+    if (data && typeof data === "object") {
+      const extra = Object.keys(data).filter(k => !ALLOWED_CRATE_KEYS.includes(k));
+      if (extra.length > 0) safeSetBlockData(api, p.x, p.y, p.z, sanitizeCrateData(data));
+    }
+  } catch (_) {}
+
+  // For manual empty, go directly to chunked queue to guarantee tick-safety for huge chests
+  // (sync 36x setStandardChestItemSlot in one tick can still be Argument too large if each serializes 36 large items)
+  enqueueChestClear(posArr, CHEST_SLOT_COUNT);
+  // Also try to sanitize blockData immediately (small write)
+  // Caller can listen for completion via queue empty; we invoke onDone async after ~ (36/6)=6 ticks = 300ms
+  // For now, don't poll — worldCode tick will drain queue; we notify immediate that async started
+  if (onDone) {
+    // Defer callback to avoid blocking; worldCode will handle message
+    try { onDone(false); } catch(_){}
+  }
+  return false;
+}
+
+// Expose queue for tests
+export function _clearQueueForTest() { chestClearQueue.length = 0; }
 
 function playerIdFallback(api, chestPos) {
   // helper to keep signature compatible when playerId non dispo — on tente sans
@@ -303,15 +428,18 @@ export function generateChest(api, playerId, chestPos, rarity, random = Math.ran
   try { effectivePos = lowerChestOneBlock(api, chestPos); } catch (_) { effectivePos = chestPos; }
   setChestOwner(api, effectivePos, playerId, rarity);
   clearChestInventory(api, effectivePos);
-  for (let i = 0; i < 27; i++) {
+  // Fill all 36 slots (Bloxd chests are 36, not 27). Use 3-arg form for Air, 4-arg for items (no playerId) to avoid large args.
+  const effArr = normalizeChestPos(effectivePos);
+  const fillPos = effArr ? [effArr.x, effArr.y, effArr.z] : effectivePos;
+  for (let i = 0; i < CHEST_SLOT_COUNT; i++) {
     if (random() * 100 < AIR_CHANCE[rarity]) {
-      try { api.setStandardChestItemSlot(effectivePos, i, "Air", 1, playerId); } catch (_) {}
+      try { api.setStandardChestItemSlot(fillPos, i, "Air"); } catch (_) {}
       continue;
     }
     const item = getWeightedRandomItem(rarity, random);
     if (!item) continue;
     const amount = getAmountForItem(item, random);
-    try { api.setStandardChestItemSlot(effectivePos, i, item.name, amount, playerId); } catch (_) {}
+    try { api.setStandardChestItemSlot(fillPos, i, item.name, amount); } catch (_) {}
   }
   try { api.sendMessage(playerId, [{str:`${rarity}`, style:{color:"#55ff55"}}, {str:" crate opened", style:{color:"#aaaaaa"}}]); } catch(_) { try { api.sendMessage(playerId, "Chest opened (" + rarity + ")!"); } catch(_){} }
   try {
