@@ -127,9 +127,9 @@ export const CRAFTS = [
       { items: ["Copper Wire"], amt: 1 },
     ],
   },
-  // Tier 5 — Nova (ultimate) -> Nova Alloy
+  // Tier 5 — Nova (ultimate) -> Nova Matter
   {
-    result: "Nova Alloy",
+    result: "Nova Matter",
     produces: 1,
     station: "Workbench",
     requires: [
@@ -316,13 +316,13 @@ export const WEAPON_CRAFTS = [
   // Moonstone Sword — juste après Diamond, plus de dégâts, Workbench
   { result: "Moonstone Sword", produces: 1, station: "Workbench", requires: [{ items: ["Moonstone"], amt: 2 }, { items: ["Stick"], amt: 1 }] },
   // Nova Blade — dernière arme, Workbench
-  { result: "Nova Blade", produces: 1, station: "Workbench", requires: [{ items: ["Nova Alloy"], amt: 3 }, { items: ["Stick"], amt: 1 }] },
-  // Nova Armors — 5 pièces, Workbench (Nova Alloy = ultima) — simplified to 1 ingredient to ensure valid recipes
-  { result: "Nova Helmet", produces: 1, station: "Workbench", requires: [{ items: ["Nova Alloy"], amt: 5 }] },
-  { result: "Nova Chestplate", produces: 1, station: "Workbench", requires: [{ items: ["Nova Alloy"], amt: 8 }] },
-  { result: "Nova Leggings", produces: 1, station: "Workbench", requires: [{ items: ["Nova Alloy"], amt: 7 }] },
-  { result: "Nova Boots", produces: 1, station: "Workbench", requires: [{ items: ["Nova Alloy"], amt: 4 }] },
-  { result: "Nova Gauntlets", produces: 1, station: "Workbench", requires: [{ items: ["Nova Alloy"], amt: 4 }] },
+  { result: "Nova Blade", produces: 1, station: "Workbench", requires: [{ items: ["Nova Matter"], amt: 3 }, { items: ["Stick"], amt: 1 }] },
+  // Nova Armors — 5 pièces, Artisan Bench (tier ultime) — 2 ingrédients comme Astral (valide côté serveur)
+  { result: "Nova Helmet", produces: 1, station: "Artisan Bench", requires: [{ items: ["Nova Matter"], amt: 5 }, { items: ["Comet Shard"], amt: 2 }] },
+  { result: "Nova Chestplate", produces: 1, station: "Artisan Bench", requires: [{ items: ["Nova Matter"], amt: 8 }, { items: ["Comet Shard"], amt: 3 }] },
+  { result: "Nova Leggings", produces: 1, station: "Artisan Bench", requires: [{ items: ["Nova Matter"], amt: 7 }, { items: ["Comet Shard"], amt: 3 }] },
+  { result: "Nova Boots", produces: 1, station: "Artisan Bench", requires: [{ items: ["Nova Matter"], amt: 4 }, { items: ["Comet Shard"], amt: 2 }] },
+  { result: "Nova Gauntlets", produces: 1, station: "Artisan Bench", requires: [{ items: ["Nova Matter"], amt: 4 }, { items: ["Comet Shard"], amt: 2 }] },
 ];
 
 // Shard -> Material mapping for display / debug
@@ -336,7 +336,7 @@ export const SHARD_TO_MATERIAL = {
   "Geo Shard": "Copper Bar (Geo Core)",
   "Astral Shard": "Star Alloy (Astral Essence)",
   "Voltite Dust": "Voltite Cell (Voltplate Core)",
-  "Nova Shard": "Nova Alloy (Nova Core)",
+  "Nova Shard": "Nova Matter (Nova Core)",
   "Moonstone Fragment": "Moonstone",
 };
 
@@ -354,7 +354,7 @@ export const ARMOR_SETS = [
   { id: "geo", label: "Geo", material: "Copper Bar", shard: "Geo Shard", tier: 3 },
   { id: "astral", label: "Astral", material: "Star Alloy", shard: "Astral Shard", tier: 4 },
   { id: "voltplate", label: "Voltplate", material: "Voltite Cell", shard: "Voltite Dust", tier: 4 },
-  { id: "nova", label: "Nova", material: "Nova Alloy", shard: "Nova Shard", tier: 6 },
+  { id: "nova", label: "Nova", material: "Nova Matter", shard: "Nova Shard", tier: 6 },
   { id: "moonstone", label: "Moonstone", material: "Moonstone", shard: "Moonstone Fragment", tier: 5 },
 ];
 
@@ -369,7 +369,7 @@ export const WEAPON_SETS = [
   { id: "geo", label: "Geo", material: "Copper Bar", shard: "Geo Shard", tier: 3, weapons: 9 },
   { id: "astral", label: "Astral", material: "Star Alloy", shard: "Astral Shard", tier: 4, weapons: 9 },
   { id: "moonstone", label: "Moonstone", material: "Moonstone", shard: "Moonstone Fragment", tier: 5, weapons: 1 },
-  { id: "nova", label: "Nova", material: "Nova Alloy", shard: "Nova Shard", tier: 6, weapons: 1 },
+  { id: "nova", label: "Nova", material: "Nova Matter", shard: "Nova Shard", tier: 6, weapons: 1 },
 ];
 
 // Merge CRAFTS (armor + weapons) for backwards compat: service imports CRAFTS
