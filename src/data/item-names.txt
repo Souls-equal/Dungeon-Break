@@ -1448,3 +1448,5 @@ Nova Boots
 Nova Gauntlets
 Nova Alloy
 Nova Shard
+Maple Log
+Maple Wood Planks

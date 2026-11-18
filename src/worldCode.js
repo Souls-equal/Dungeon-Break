@@ -193,6 +193,7 @@ const DUNGEON_GAMEMODE = "survivaladventure";
 const SPAWN_CENTER = LOBBY_POSITION;
 const SPAWN_RADIUS = 80;
 const spawnMode = new Map(); // playerId -> boolean true=spawn
+function isAtSpawn(playerId){ try{ return spawnMode.get(String(playerId)) === true; } catch(_){ return false; } }
 
 function isInSpawnPosition(playerId) {
   try {
@@ -1036,8 +1037,19 @@ function refreshBlessingTiles(playerId) {
   const account = blessings().accountOf(key);
   const offer = account.offer;
   showPoints(playerId, points);
+  const atSpawn = (()=>{ try{ return spawnMode.get(String(playerId)) === true; } catch(_){ return false; } })();
 
   try {
+    if (atSpawn) {
+      api.createShopItemForPlayer(playerId, BLESSING_CATEGORY, ROLL_ITEM, {
+        image: "Beacon",
+        customTitle: "Blessings disabled at spawn",
+        description: "Enter a dungeon to roll Blessings · " + blessingSummary(playerId, level),
+        canBuy: false,
+        redDot: false,
+        sortPriority: 10,
+      });
+    } else {
     // One tile, two states, **one line of text**: the level and the points. While an offer
     // is live the same tile says so and cannot be bought - a roll would cost a second point.
     api.createShopItemForPlayer(playerId, BLESSING_CATEGORY, ROLL_ITEM, offer.length > 0
@@ -1060,6 +1072,7 @@ function refreshBlessingTiles(playerId) {
         sortPriority: 10,
         onBoughtMessage: "Rolling...",
       });
+    }
   } catch (error) {
     logShopFailure(ROLL_ITEM, error);
   }
@@ -1067,6 +1080,10 @@ function refreshBlessingTiles(playerId) {
   // **The choices second**, after the roll tile above: `createShopItemForPlayer` is what
   // creates the category, so resetting a key in a category that does not exist yet is an
   // avoidable edge. The screen order is `sortPriority`, not creation order.
+  // At spawn, blessings cannot be chosen — hide stale choice tiles.
+  if (atSpawn) {
+    CHOICE_KEYS.forEach((itemKey) => removePlayerTile(playerId, itemKey));
+  } else {
   CHOICE_KEYS.forEach((itemKey, position) => {
     const draw = offer[position];
     if (!draw) {
@@ -1079,12 +1096,20 @@ function refreshBlessingTiles(playerId) {
       logShopFailure(itemKey, error);
     }
   });
+  }
 
   try {
+    if (atSpawn) {
+      api.configureShopCategoryForPlayer(playerId, BLESSING_CATEGORY, {
+        customTitle: "Blessings (disabled at spawn)",
+        redDot: false,
+      });
+    } else {
     api.configureShopCategoryForPlayer(playerId, BLESSING_CATEGORY, {
       customTitle: offer.length > 0 ? "Select one" : "Blessings",
       redDot: offer.length > 0 || points > 0,
     });
+    }
   } catch (_) {
     // The title is a nicety; the tiles are the feature.
   }
@@ -1150,9 +1175,14 @@ function armorDefenseReductionOf(playerId) {
 
 function applyBlessingOptions(playerId, base = {}) {
   const key = accountKeyOf(playerId);
-  // In spawn, only permanent stack applies (run/timed disabled for navigation, no slowdown)
+  // In spawn, reset speed to baseline — no blessing slowdown (or boost) carries into spawn navigation.
+  // Only permanent non-speed effects apply.
   if (spawnMode.get(String(playerId)) === true) {
-    const spawnOpts = effects.optionsFrom(blessings().permanentOf(key), [], base);
+    let spawnOpts = effects.optionsFrom(blessings().permanentOf(key), [], base);
+    // At spawn, no slowdown — clamp speed to at least baseline so permanent boosts stay but run/timed slows don't annoy
+    const baseSpeed = 1;
+    const clampSpeed = Math.max(baseSpeed, spawnOpts.speedMultiplier ?? baseSpeed);
+    spawnOpts = { ...spawnOpts, speedMultiplier: clampSpeed, runningSpeed: Math.max(7, spawnOpts.runningSpeed ?? 7), walkingSpeed: Math.max(4, spawnOpts.walkingSpeed ?? 4) };
     try { api.setClientOptions(playerId, spawnOpts); } catch(e) { reportErrorToOwner(e); }
     refreshDamageCache(playerId, spawnOpts);
     try { refreshWeaponStats(api, playerId, spawnOpts.dealingDamageMultiplier ?? 1); } catch(e) { reportErrorToOwner(e); }
@@ -1379,6 +1409,11 @@ function announceBlessing(playerId, blessing, rarity, pointsLeft) {
  * until the three were good.
  */
 function rollBlessing(playerId) {
+  if (isAtSpawn(playerId)) {
+    try { api.sendMessage(playerId, [cStr("Cannot roll Blessings at spawn — enter a dungeon first", MSG_COLORS.red)]); } catch(_){}
+    try { refreshBlessingTiles(playerId); } catch(_){}
+    return false;
+  }
   const key = accountKeyOf(playerId);
   const level = auraLevelOf(playerId);
   const offer = blessings().roll(key, level);
@@ -1398,6 +1433,11 @@ function rollBlessing(playerId) {
  * HUD moves, and the shop is **closed**: the pick is final.
  */
 function chooseBlessing(playerId, position) {
+  if (isAtSpawn(playerId)) {
+    try { api.sendMessage(playerId, [cStr("Cannot select Blessings at spawn — enter a dungeon first", MSG_COLORS.red)]); } catch(_){}
+    try { refreshBlessingTiles(playerId); } catch(_){}
+    return false;
+  }
   const key = accountKeyOf(playerId);
   const level = auraLevelOf(playerId);
   const result = blessings().choose(key, level, position);

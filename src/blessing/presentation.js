@@ -16,7 +16,7 @@
  * string is a message the game drops, and a card that fails is not worth a broken roll.
  */
 
-import { CHOICE_COUNT, categoryOf, formatPercent, rgbOf, rarityOdds, scopeOf } from "./config.js";
+import { CHOICE_COUNT, SCOPES, categoryOf, formatPercent, rgbOf, rarityOdds, scopeOf } from "./config.js";
 import { scopeKeyOf } from "./effects.js";
 
 /** The rarity name, in its own colour: what every surface shares. */
@@ -52,7 +52,11 @@ export function tagText(blessing, rarity) {
 
 /** The chat line of a roll, as custom styling the game can draw. */
 export function rollMessage(blessing, rarity) {
+  const rawScope = scopeShortOf(blessing);
+  const displayScope = rawScope === "TIMED" ? "TEMP" : rawScope;
+  const scopeInfo = SCOPES.find(s => s.short === rawScope) || { textColour: "#ffffff" };
   return [
+    { str: `[${displayScope}] `, style: { color: scopeInfo.textColour, fontWeight: "bold" } },
     "Blessing: ",
     ...nameText(blessing, rarity),
     " — ",
@@ -78,7 +82,7 @@ export function cardFor(blessing, rarity) {
   const category = categoryOf(blessing.category);
   return {
     icon: blessing.cardIcon,
-    text: `${blessing.name}\n${rarity.label} · ${scopeLabelOf(blessing)} · ${category ? category.label : "Unknown"}\n${blessing.description}`,
+    text: `${blessing.name}\n[${(() => { const s = scopeShortOf(blessing); return s === "TIMED" ? "TEMP" : s; })()}] ${rarity.label} · ${scopeLabelOf(blessing)} · ${category ? category.label : "Unknown"}\n${blessing.description}`,
     opts: {
       duration: 6,
       color: rgbOf(rarity.colour),
@@ -234,12 +238,17 @@ export function choiceTile(draw, position) {
   const category = categoryOf(blessing.category) || { label: blessing.category, colour: "#ffffff", textColour: "#ffffff" };
   const rarityColor = rarity ? (rarity.colour || rarity.textColour) : "#ffffff";
   const catColor = category.colour || category.textColour || "#ffffff";
+  const rawScope = scopeShortOf(blessing);
+  const displayScope = rawScope === "TIMED" ? "TEMP" : rawScope;
+  const scopeInfo = SCOPES.find(s => s.short === rawScope) || { textColour: "#ffffff" };
+  const scopeColor = scopeInfo ? scopeInfo.textColour : "#ffffff";
   const rawEffect = effectDescription(blessing);
   const effectStr = rawEffect.replace(/ Loose/g, "\nLoose");
   return {
     image: imageForBlessing(blessing, rarity),
     customTitle: blessing.name,
     description: [
+      { str: `[${displayScope}] `, style: { color: scopeColor } },
       { str: `[${rarity ? rarity.label : "Unknown"}]\n`, style: { color: rarityColor } },
       { str: `[${category.label}]\n`, style: { color: catColor } },
       { str: effectStr },
