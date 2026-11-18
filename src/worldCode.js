@@ -43,6 +43,9 @@ import {
   generateChest as crateGenerateChest,
   isChestOwnedByOther as crateIsOwnedByOther,
   tickCrateLocks as crateTick,
+  tickChestClearQueue as crateTickClear,
+  clearChestInventory as crateClearChest,
+  clearChestInventoryChunked as crateClearChunked,
 } from "./crate/service.js";
 import { RANKS, NONE_RANK_ID, getRank } from "./ranks/config.js";
 import { createRanksService, NONE_ID } from "./ranks/service.js";
@@ -472,6 +475,7 @@ const DEBUG_COMMANDS = {
   blessings: ["blessings", "blessing", "rolls"],
   crafts: ["crafts", "craft", "recipes", "recipe"],
   shards: ["shards", "shard", "materials", "mats"],
+  vider: ["vider", "empty", "clear", "vidercoffre", "emptychest", "clearchest"],
 };
 
 function debugSay(playerId, message) {
@@ -608,12 +612,32 @@ function runDebugCommand(playerId, verb) {
   ]);
 }
 
+function findNearbyChestForVider(api, playerId, radius = 6) {
+  let pos = null;
+  try { pos = api.getPosition(playerId); } catch(_) { return null; }
+  if (!pos || pos.length < 3) return null;
+  const cx = Math.floor(pos[0]), cy = Math.floor(pos[1]), cz = Math.floor(pos[2]);
+  for (let dy = -2; dy <= 3; dy++) {
+    for (let dx = -radius; dx <= radius; dx++) {
+      for (let dz = -radius; dz <= radius; dz++) {
+        const x = cx+dx, y = cy+dy, z = cz+dz;
+        try {
+          const b = api.getBlock(x,y,z);
+          if (b && typeof b === "string" && b.includes("Chest")) return [x,y,z];
+        } catch(_) {}
+      }
+    }
+  }
+  return null;
+}
+
 function parseDebugCommand(raw) {
   const text = String(raw === undefined || raw === null ? "" : raw).trim();
   if (text.length === 0) return null;
   const parts = text.split(/\s+/);
   let head = parts[0].toLowerCase();
   if (head.startsWith("/")) head = head.slice(1);
+  if (head.startsWith("!")) head = head.slice(1);
   for (const [verb, aliases] of Object.entries(DEBUG_COMMANDS)) {
     if (aliases.includes(head)) return verb;
   }
@@ -629,9 +653,39 @@ function parseDebugCommand(raw) {
 }
 
 playerCommand = (playerId, command) => {
+  const raw = String(command === undefined || command === null ? "" : command).trim();
+  const low = raw.toLowerCase();
+  if (low.startsWith("!vider") || low.startsWith("/vider") || low.startsWith("!empty") || low.startsWith("/empty") || low.startsWith("!clear") || low.startsWith("/clear") || low === "vider" || low === "empty" || low === "clear") {
+    try {
+      const parts = raw.split(/\s+/);
+      let chestPos = null;
+      if (parts.length >= 4) {
+        const x = Number(parts[1]), y = Number(parts[2]), z = Number(parts[3]);
+        if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) chestPos = [x,y,z];
+      }
+      if (!chestPos) chestPos = findNearbyChestForVider(api, playerId, 6);
+      if (!chestPos) {
+        debugSay(playerId, "[vider] no chest nearby — stand next to it or use: /vider x y z");
+        return true;
+      }
+      try { crateClearChunked(api, chestPos, () => {}); } catch(_) { try { crateClearChest(api, chestPos); } catch(_){} }
+      debugSay(playerId, `[vider] emptying chest ${chestPos[0]},${chestPos[1]},${chestPos[2]} — 36 slots chunked (6/tick) to avoid Argument too large`);
+      return true;
+    } catch (e) {
+      debugSay(playerId, `[vider] failed: ${e && e.message ? e.message : e}`);
+      return true;
+    }
+  }
   const verb = parseDebugCommand(command);
   if (!verb) return false;
   try {
+    if (verb === "vider") {
+      const chestPos = findNearbyChestForVider(api, playerId, 6);
+      if (!chestPos) { debugSay(playerId, "[vider] no chest nearby — stand next to it"); return true; }
+      try { crateClearChunked(api, chestPos, () => {}); } catch(_) { try { crateClearChest(api, chestPos); } catch(_){} }
+      debugSay(playerId, `[vider] emptying chest ${chestPos[0]},${chestPos[1]},${chestPos[2]} — chunked clear started`);
+      return true;
+    }
     runDebugCommand(playerId, verb);
   } catch (error) {
     debugSay(playerId, `[dbg] report failed: ${error && error.message ? error.message : "unknown error"}`);
@@ -1804,6 +1858,21 @@ globalThis.LOOT_TABLE = LOOT_TABLE;
 getWeightedRandomItem = (rarity) => crateGetWeightedRandomItem(rarity);
 hasKey = (playerId, rarity) => crateHasKey(api, playerId, rarity);
 consumeKey = (playerId, rarity) => crateConsumeKey(api, playerId, rarity);
+// Safe chest empty — works même sur coffre trop rempli (36 slots, chunked 6/tick évite Argument too large)
+emptyChest = (...args) => {
+  try {
+    let chestPos = null;
+    if (args.length === 1) chestPos = args[0];
+    else if (args.length === 2 && Array.isArray(args[1])) chestPos = args[1];
+    else if (args.length === 3 && Number.isFinite(args[0])) chestPos = [args[0], args[1], args[2]];
+    else chestPos = args[0];
+    if (!chestPos) return false;
+    try { return crateClearChunked(api, chestPos, () => {}); } catch (_) {}
+    try { crateClearChest(api, chestPos); return true; } catch (_) { return false; }
+  } catch (_) { return false; }
+};
+clearChest = emptyChest;
+viderCoffre = emptyChest;
 // main entry: must be arrow for code-block reachability — lowers chest by 1 on open (more space, no misclick roll vs reopen)
 generateChest = (playerId, chestPos, rarity) => {
   const result = crateGenerateChest(api, playerId, chestPos, rarity);
@@ -1839,6 +1908,11 @@ scheduleInterval(() => {
 scheduleInterval(() => {
   try { tickSpawnCheck(); } catch (_) {}
 }, 20);
+
+// Chest clear queue (Argument too large guard): 6 slots per tick for extremely full chests
+scheduleInterval(() => {
+  try { crateTickClear(api); } catch (_) {}
+}, 1);
 
 // The shop is registered once at load; `onPlayerJoin` repeats it for the first player.
 registerShopItems();
