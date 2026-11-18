@@ -1638,7 +1638,9 @@ test("a run blessing is dropped by death, leave and teleport, and the permanent 
     const options = optionsOf(world);
     assert.equal(options.dealingDamageMultiplier, taken.before.dealingDamageMultiplier,
       `the ${ending} left a damage bonus`);
-    assert.equal(options.speedMultiplier, taken.before.speedMultiplier, `the ${ending} left a speed bonus`);
+    // At spawn, speed is clamped to >=1 (no slowdown annoyance) — permanent slows are visible in dungeon but not at spawn/after teleport
+    const expectedSpeed = (ending === 'teleport' || ending === 'leave' || ending === 'death') ? Math.max(1, taken.before.speedMultiplier) : taken.before.speedMultiplier;
+    assert.equal(options.speedMultiplier, expectedSpeed, `the ${ending} left a speed bonus`);
     assert.equal(options.maxHealth, taken.before.maxHealth, `the ${ending} left extra health`);
     assert.equal(options.canClimbWalls, taken.before.canClimbWalls, `the ${ending} left wall climbing on`);
     // A run's lasting potion is taken off with the run, never left running.

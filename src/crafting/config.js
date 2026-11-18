@@ -317,12 +317,12 @@ export const WEAPON_CRAFTS = [
   { result: "Moonstone Sword", produces: 1, station: "Workbench", requires: [{ items: ["Moonstone"], amt: 2 }, { items: ["Stick"], amt: 1 }] },
   // Nova Blade — dernière arme, Workbench
   { result: "Nova Blade", produces: 1, station: "Workbench", requires: [{ items: ["Nova Alloy"], amt: 3 }, { items: ["Stick"], amt: 1 }] },
-  // Nova Armors — 5 pièces, Workbench (Nova Alloy = ultima) — simplified to 1 ingredient to ensure valid recipes
-  { result: "Nova Helmet", produces: 1, station: "Workbench", requires: [{ items: ["Nova Alloy"], amt: 5 }] },
-  { result: "Nova Chestplate", produces: 1, station: "Workbench", requires: [{ items: ["Nova Alloy"], amt: 8 }] },
-  { result: "Nova Leggings", produces: 1, station: "Workbench", requires: [{ items: ["Nova Alloy"], amt: 7 }] },
-  { result: "Nova Boots", produces: 1, station: "Workbench", requires: [{ items: ["Nova Alloy"], amt: 4 }] },
-  { result: "Nova Gauntlets", produces: 1, station: "Workbench", requires: [{ items: ["Nova Alloy"], amt: 4 }] },
+  // Nova Armors — 5 pièces, Artisan Bench (tier ultime) — 2 ingrédients comme Astral (valide côté serveur)
+  { result: "Nova Helmet", produces: 1, station: "Artisan Bench", requires: [{ items: ["Nova Alloy"], amt: 5 }, { items: ["Comet Shard"], amt: 2 }] },
+  { result: "Nova Chestplate", produces: 1, station: "Artisan Bench", requires: [{ items: ["Nova Alloy"], amt: 8 }, { items: ["Comet Shard"], amt: 3 }] },
+  { result: "Nova Leggings", produces: 1, station: "Artisan Bench", requires: [{ items: ["Nova Alloy"], amt: 7 }, { items: ["Comet Shard"], amt: 3 }] },
+  { result: "Nova Boots", produces: 1, station: "Artisan Bench", requires: [{ items: ["Nova Alloy"], amt: 4 }, { items: ["Comet Shard"], amt: 2 }] },
+  { result: "Nova Gauntlets", produces: 1, station: "Artisan Bench", requires: [{ items: ["Nova Alloy"], amt: 4 }, { items: ["Comet Shard"], amt: 2 }] },
 ];
 
 // Shard -> Material mapping for display / debug

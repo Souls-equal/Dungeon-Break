@@ -6,6 +6,7 @@
 
 import { CRAFTS } from "./config.js";
 import { VANILLA_CRAFTS } from "./vanilla.js";
+import { setTimeout as scheduleTimeout } from "../utils/scheduler.js";
 
 export function registerCraftingRecipes(api, playerId) {
   if (!api || !playerId) return 0;
@@ -38,38 +39,49 @@ export function registerCraftingRecipes(api, playerId) {
       station: craft.station ?? "Workbench",
     });
   }
-  for (const [result, recipes] of byResult) {
-    try {
-      api.editItemCraftingRecipes(playerId, result, recipes);
-      ok += 1;
-    } catch (e) {
-      // Fallback: try Workbench if Artisan Bench failed, and simplify requires
-      let recovered = false;
+  const entries = [...byResult.entries()];
+  // Bloxd limits calls per tick — batch over ticks to avoid "invalid item recipes" spam on rejoin
+  let index = 0;
+  const BATCH = 20;
+  function flushBatch() {
+    for (let batchCount = 0; batchCount < BATCH && index < entries.length; batchCount += 1, index += 1) {
+      const [result, recipes] = entries[index];
       try {
-        const fallback = recipes.map(r => ({
-          requires: r.requires,
-          produces: r.produces ?? 1,
-          station: "Workbench",
-        }));
-        api.editItemCraftingRecipes(playerId, result, fallback);
-        ok += 1; recovered = true;
-      } catch (_) {}
-      if (!recovered) {
+        api.editItemCraftingRecipes(playerId, result, recipes);
+        ok += 1;
+      } catch (e) {
+        // Fallback: try Workbench if Artisan Bench failed, and simplify requires
+        let recovered = false;
         try {
-          const simple = recipes.map(r => ({
-            requires: r.requires.slice(0,1),
+          const fallback = recipes.map(r => ({
+            requires: r.requires,
             produces: r.produces ?? 1,
             station: "Workbench",
           }));
-          api.editItemCraftingRecipes(playerId, result, simple);
+          api.editItemCraftingRecipes(playerId, result, fallback);
           ok += 1; recovered = true;
         } catch (_) {}
-      }
-      if (!recovered) {
-        try { api.log(`[Crafting] failed ${result}: ${e && e.message ? e.message : e}`); } catch (_) {}
+        if (!recovered) {
+          try {
+            const simple = recipes.map(r => ({
+              requires: r.requires.slice(0,1),
+              produces: r.produces ?? 1,
+              station: "Workbench",
+            }));
+            api.editItemCraftingRecipes(playerId, result, simple);
+            ok += 1; recovered = true;
+          } catch (_) {}
+        }
+        if (!recovered) {
+          try { api.log(`[Crafting] failed ${result}: ${e && e.message ? e.message : e}`); } catch (_) {}
+        }
       }
     }
+    if (index < entries.length) {
+      try { scheduleTimeout(flushBatch, 1); } catch (_) { /* scheduler not ready — flush synchronously */ while (index < entries.length) { const [r, rec] = entries[index++]; try { api.editItemCraftingRecipes(playerId, r, rec); ok+=1; } catch(_){} } }
+    }
   }
+  flushBatch();
   return ok;
 }
 
