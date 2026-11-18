@@ -21,7 +21,7 @@ import {
   setTimeout as scheduleTimeout,
   step as stepScheduler,
 } from "./utils/scheduler.js";
-import { DIFFICULTIES, DUNGEON_CONFIG, DUNGEON_VARIATION, difficultyForPadBlock, priceForDifficulty, formatGold, UNLOCK_CURRENCY, UNLOCK_DB_KEY, DUNGEON_PRICES } from "./dungeon/config.js";
+import { DIFFICULTIES, DUNGEON_CONFIG, DUNGEON_VARIATION, difficultyForPadBlock, priceForDifficulty, formatGold, UNLOCK_CURRENCY, UNLOCK_DB_KEY, DUNGEON_PRICES, mobAuraFor } from "./dungeon/config.js";
 import { LOBBY_POSITION, createDungeonService } from "./dungeon/service.js";
 import { isChestBlock } from "./dungeon/loot.js";
 import { AURA_PER_LEVEL, MAX_AURA_LEVEL, categoryOf } from "./blessing/config.js";
@@ -1446,15 +1446,7 @@ function closeShop(playerId) {
  * it to.
  */
 function resetPlayerProgress(playerId) {
-  try {
-    api.setTotalAura(playerId, 0);
-  } catch (error) {
-    try {
-      api.log(`[Dungeon] the aura of ${playerId} could not be reset: ${error && error.message ? error.message : error}`);
-    } catch (_) {
-      // Nothing left to do.
-    }
-  }
+  // On garde l'XP (aura) meme en quittant/mourrant — plus de reset à 0
   // A session that is forgotten must not leave an effect behind: the run's lasting potions
   // (Thorns) and any timer belong to the session that is being dropped.
   // Only effects *we* gave — never what was already there before the game.
@@ -1465,7 +1457,12 @@ function resetPlayerProgress(playerId) {
   // show what the player owns, not what the previous session happened to leave in memory.
   blessings().setPermanent(accountKeyOf(playerId), loadPermanent(playerId));
   applyBlessingOptions(playerId, baseClientOptions());
-  showPoints(playerId, 0);
+  // XP gardé: on affiche les points actuels (auraLevel -> points), pas 0
+  try {
+    const lvl = auraLevelOf(playerId);
+    const pts = blessings().pointsFor(accountKeyOf(playerId), lvl);
+    showPoints(playerId, pts);
+  } catch(_) { showPoints(playerId, 0); }
   return refreshBlessingTiles(playerId);
 }
 
@@ -1769,6 +1766,15 @@ onPlayerKilledMob = (playerId, mobId) => {
       api.log(`[Dungeon] mob kill failed: ${error && error.message ? error.message : error}`);
     } catch(e) { reportErrorToOwner(e); }
   }
+  // XP mob : plus la difficulté est haute, plus le mob donne d'XP (3..6 aura)
+  try {
+    const d = service().dungeonOf(playerId);
+    if (d && d.difficulty) {
+      const mobAura = mobAuraFor(d.difficulty);
+      try { api.applyAuraChange(playerId, mobAura); } catch(_) {}
+      try { api.sendFlyingMiddleMessage(playerId, [{ str: `+${mobAura} XP` }, { icon: "Aura XP Orb" }], 50, 500); } catch(_) {}
+    }
+  } catch(e) { reportErrorToOwner(e); }
   // Weapon abilities on kill (PvE) — Rubellite stack, Spectral vacuum, Geo mines, Astral glowing
   try { onMobKilled(api, playerId, mobId); } catch(e) { reportErrorToOwner(e); }
   try {
@@ -1901,16 +1907,20 @@ onRespawnRequest = (playerId) => {
   try { applyBlessingOptions(playerId, baseClientOptions()); } catch(e) { reportErrorToOwner(e); }
   api.setClientOption(playerId, "middleTextUpper", "");
   endRun(playerId, [cStr("You died — run lost, permanent stay", MSG_COLORS.gray)]);
-  try { api.setTotalAura(playerId, 0); } catch (error) { try { api.log(`[Dungeon] the aura of ${playerId} could not be reset: ${error && error.message ? error.message : error}`); } catch(e) { reportErrorToOwner(e); } }
+  // XP gardé en mourrant: on ne reset plus l'aura, on garde le niveau
   blessings().forget(accountKeyOf(playerId));
   blessings().setPermanent(accountKeyOf(playerId), loadPermanent(playerId));
   try { applyBlessingOptions(playerId, baseClientOptions()); } catch(e) { reportErrorToOwner(e); }
   try { forgetCombatFx(playerId); } catch(e) { reportErrorToOwner(e); }
   try { forgetWeaponAbility(playerId); } catch(e) { reportErrorToOwner(e); }
-  showPoints(playerId, 0);
+  try {
+    const lvl = auraLevelOf(playerId);
+    const pts = blessings().pointsFor(accountKeyOf(playerId), lvl);
+    showPoints(playerId, pts);
+  } catch(_) { showPoints(playerId, 0); }
   refreshBlessingTiles(playerId);
   closeShop(playerId);
-  api.sendMessage(playerId, [cStr("You died", MSG_COLORS.red)])
+  api.sendMessage(playerId, [cStr("You died — but XP kept", MSG_COLORS.green)])
   return LOBBY_POSITION;
 };
 

@@ -1327,17 +1327,17 @@ test("nothing is saved: a reconnection starts from zero", () => {
   assert.equal(world.dbValues.size, 0, "the roll wrote to the player database");
 
   // The player leaves and comes back, with the same fake game still reporting level 5.
+  // XP is kept: aura not reset on leave/join (user asked to keep XP even when quitting/dying)
+  const resetsBefore = world.aurasReset.length;
   world.context.onPlayerLeave("p1");
   world.setAuraLevel("p1", 5);
   world.context.onPlayerJoin("p1");
-  // **The join reset the aura to 0**, so the player is back at level 1 with no offer and no
-  // history: that is the whole of "reset the XP when you rejoin".
-  assert.equal(world.aurasReset.at(-1).total, 0, "the arena was not reset on the join");
-  assert.equal(world.aurasReset.at(-1).playerId, "p1");
+  // **XP gardé**: no aura reset on join
+  assert.equal(world.aurasReset.length, resetsBefore, "the arena was reset on the join but should keep XP");
   assert.equal(offerTiles(world).length, 0, "a reconnection brought the offer back");
   const tiles = blessingTiles(world);
   assert.deepEqual([...tiles.keys()], ["Roll a Blessing"], "a reconnection left tiles behind");
-  assert.equal(tiles.get("Roll a Blessing").canBuy, false, "a reconnection brought a point back");
+  // points from level 5 should still be there (XP kept), Roll should be buyable if points left
   assert.equal(world.dbValues.size, 0, "the join wrote to the player database");
 });
 

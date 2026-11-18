@@ -330,6 +330,13 @@ export function roomAuraFor(difficulty) {
   const steps = Math.max(1, DIFFICULTIES.length - 1);
   return Math.round(DUNGEON_CONFIG.roomAura * (1 + level / steps));
 }
+export function mobAuraFor(difficulty) {
+  const rank = DIFFICULTIES.findIndex((entry) => entry.id === difficulty.id);
+  const level = rank < 0 ? 0 : rank;
+  const steps = Math.max(1, DIFFICULTIES.length - 1);
+  // base 3 aura per mob, doubled at Hell -> 3..6, room gives 10..20 so mobs are ~30% of room XP
+  return Math.round(3 * (1 + level / steps));
+}
 
 /**
  * The keys a level can give, with the weight each one has there.
