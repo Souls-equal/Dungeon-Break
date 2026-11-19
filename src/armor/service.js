@@ -3,7 +3,7 @@
  * Integrates with combat: onDamaged, onDealingDamage, onMobKilled, tick
  */
 
-import { ARMOR_SETS, armorLevelForCount, getLevelDef } from "./config.js";
+import { ARMOR_SETS, ARMOR_IDS, armorLevelForCount, getLevelDef, getArmorDescriptionForCount } from "./config.js";
 import { PRESETS } from "../particles/config.js";
 import { setTimeout as scheduleTimeout } from "../utils/scheduler.js";
 
@@ -848,7 +848,46 @@ export function tick(api){
       prevShield.set(keyOf(pid),curShield);
     }
   }
+  // ── dynamic armor descriptions (refresh every 1s) ──
+  if (now % 20 === 0){
+    try { refreshAllArmorDescriptions(api); } catch(_){}
+  }
 }
+
+// ── Dynamic armor descriptions ──
+const ARMOR_PARTS = ["Helmet","Chestplate","Leggings","Boots","Gauntlets"];
+const _descCache = new Map(); // "pid:setId" -> lvl
+export function refreshArmorDescriptions(api, playerId){
+  if (!api || !playerId || typeof api.setItemStat !== "function") return 0;
+  const counts = getArmorCounts(api, playerId);
+  let updated = 0;
+  for (const setId of ARMOR_IDS){
+    const cnt = counts.get(setId) || 0;
+    const lvl = armorLevelForCount(cnt);
+    const key = `${keyOf(playerId)}:${setId}`;
+    if (_descCache.get(key) === lvl) continue;
+    _descCache.set(key, lvl);
+    let desc;
+    try { desc = getArmorDescriptionForCount(setId, cnt); }
+    catch(_){ const d=getLevelDef(setId, Math.max(1,lvl)); desc = d?.desc || ""; }
+    for (const part of ARMOR_PARTS){
+      const itemName = `${setId} ${part}`;
+      try { api.setItemStat(playerId, itemName, "description", desc); updated++; } catch(_){}
+    }
+  }
+  return updated;
+}
+export function refreshAllArmorDescriptions(api){
+  if (!api || typeof api.getPlayerIds !== "function") return 0;
+  let total=0;
+  try {
+    const pids = api.getPlayerIds() || [];
+    for (const pid of pids) total += refreshArmorDescriptions(api, pid) || 0;
+  } catch(_){}
+  return total;
+}
+export function _getDescCache(){ return _descCache; }
+export function _clearDescCache(){ _descCache.clear(); }
 
 const temporaryDefense=new Map(); // pid -> {mult,expire}
 const prevShield=new Map();
@@ -863,6 +902,7 @@ export function getTemporaryDefense(pid){
 export function forgetPlayer(playerId){
   const k=keyOf(playerId);
   rubelliteStacks.delete(k); amethiteCooldown.delete(k); geoHits.delete(k); voltCharges.delete(k); voltDischargeCd.delete(k); novaChargesArmor.delete(k); spectralInvis.delete(k); spectralSpeed.delete(k); kinglyAmethiteState.delete(k); kinglyDiamondLowCd.delete(k); shieldBreakCd.delete(k); temporaryDefense.delete(k); prevShield.delete(k);
+  for (const sid of ARMOR_IDS) _descCache.delete(`${k}:${sid}`);
   // clean mines owned by player
   for(let i=geoMines.length-1;i>=0;i--) if(String(geoMines[i].owner)===k) geoMines.splice(i,1);
   // clean dot owned
@@ -872,7 +912,7 @@ export function forgetPlayer(playerId){
 }
 export function _reset(){
   globalTick=0;
-  magBurns.clear(); serpentPoisons.clear(); cursedMobs.clear(); rubelliteStacks.clear(); amethiteCooldown.clear(); geoHits.clear(); geoMines.length=0; astralGlowingArmor.clear(); astralSlowed.clear(); voltCharges.clear(); voltDischargeCd.clear(); novaChargesArmor.clear(); spectralInvis.clear(); spectralSpeed.clear(); kinglyAmethiteState.clear(); kinglyDiamondLowCd.clear(); shieldBreakCd.clear(); temporaryDefense.clear(); prevShield.clear();
+  magBurns.clear(); serpentPoisons.clear(); cursedMobs.clear(); rubelliteStacks.clear(); amethiteCooldown.clear(); geoHits.clear(); geoMines.length=0; astralGlowingArmor.clear(); astralSlowed.clear(); voltCharges.clear(); voltDischargeCd.clear(); novaChargesArmor.clear(); spectralInvis.clear(); spectralSpeed.clear(); kinglyAmethiteState.clear(); kinglyDiamondLowCd.clear(); shieldBreakCd.clear(); temporaryDefense.clear(); prevShield.clear(); _descCache.clear();
   if(globalThis.__armorKillDepth) globalThis.__armorKillDepth.clear();
 }
 export function _getMagBurns(){ return magBurns; }
