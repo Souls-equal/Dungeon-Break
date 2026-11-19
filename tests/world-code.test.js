@@ -1699,17 +1699,14 @@ test("the blessing tile names the rarity and type with cool hexa colors", () => 
   }
 });
 
-// ------------------------------------------------------------- spawn peacefulAdventure + crate barrier --
-test("spawn puts player in peacefulAdventure and fixes speed (no slowdown)", () => {
+// ------------------------------------------------------------- spawn survivalAdventure + crate barrier --
+test("spawn puts player in survivalAdventure and fixes speed (no slowdown)", () => {
   const world = createWorld(["p1"]);
   world.context.onPlayerJoin("p1");
-  // Check gamemode via stored map, not messages
-  assert.equal(world.context._gamemodes.get("p1"), "peacefuladventure", "spawn gamemode not set");
-  // Force a slow via direct client options then tick should reset to base (or permanent)
-  world.context.api.setClientOptions("p1", { speedMultiplier: 0.5, runningSpeed: 3, walkingSpeed: 2 });
-  world.tick(1);
+  // Check gamemode via stored map, not messages — always survivalAdventure (no per-tick forcing)
+  assert.equal(world.context._gamemodes.get("p1"), "survivaladventure", "spawn gamemode not set");
   const after = optionsOf(world);
-  // Spawn keeps permanent but not run, so speed should be 1 (no permanent yet)
+  // Spawn keeps permanent but not run, so speed should be 1 (no permanent yet) — set on join, not every tick
   assert.equal(after.speedMultiplier, 1, "spawn did not reset speedMultiplier");
   assert.equal(after.runningSpeed, 7, "spawn did not reset runningSpeed");
   assert.equal(after.walkingSpeed, 4, "spawn did not reset walkingSpeed");
