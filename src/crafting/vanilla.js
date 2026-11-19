@@ -29,16 +29,16 @@
 function armorSet(material, barItem, station) {
   const s = station ?? undefined;
   return [
-    { result: `${material} Helmet`, produces: 1, station: s, requires: [{ items: [barItem], amt: 5 }] },
-    { result: `${material} Chestplate`, produces: 1, station: s, requires: [{ items: [barItem], amt: 8 }] },
-    { result: `${material} Leggings`, produces: 1, station: s, requires: [{ items: [barItem], amt: 7 }] },
-    { result: `${material} Boots`, produces: 1, station: s, requires: [{ items: [barItem], amt: 4 }] },
-    { result: `${material} Gauntlets`, produces: 1, station: s, requires: [{ items: [barItem], amt: 4 }] },
+    { result: `${material} Helmet`, produces: 1, station: s, isStarterRecipe: true, requires: [{ items: [barItem], amt: 5 }] },
+    { result: `${material} Chestplate`, produces: 1, station: s, isStarterRecipe: true, requires: [{ items: [barItem], amt: 8 }] },
+    { result: `${material} Leggings`, produces: 1, station: s, isStarterRecipe: true, requires: [{ items: [barItem], amt: 7 }] },
+    { result: `${material} Boots`, produces: 1, station: s, isStarterRecipe: true, requires: [{ items: [barItem], amt: 4 }] },
+    { result: `${material} Gauntlets`, produces: 1, station: s, isStarterRecipe: true, requires: [{ items: [barItem], amt: 4 }] },
   ];
 }
 
 function craft(result, station, requires) {
-  return { result, produces: 1, station, requires };
+  return { result, produces: 1, station, isStarterRecipe: true, requires };
 }
 
 // Wood/Stone are blocks, not listed items — we use Stick/Coal as valid proxies

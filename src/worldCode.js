@@ -57,7 +57,7 @@ import { applyItemStats } from "./crafting/itemStats.js";
 import { tickCombatFx, onWeaponHit, onArmorHit, tickArmorShimmer, forgetPlayer as forgetCombatFx } from "./combatFx/service.js";
 import { refreshWeaponStats, tickWeapons, onMobKilled, forgetPlayer as forgetWeaponAbility, markEntityDeleted, onThrowableUsed, onCollision as onWeaponCollision, onCrouchChange as onNovaCrouchChange, tryNovaLaser, isNovaCrouching } from "./weapons/service.js";
 import { parseWeaponInfo } from "./combatFx/service.js";
-import { onDamaged as onArmorDamaged, onDealingDamage as onArmorDealingDamage, onMobKilled as onArmorMobKilled, tick as tickArmors, forgetPlayer as forgetArmorAbility, getTemporaryDefense as armorTempDefense } from "./armor/service.js";
+import { onDamaged as onArmorDamaged, onDealingDamage as onArmorDealingDamage, onMobKilled as onArmorMobKilled, tick as tickArmors, forgetPlayer as forgetArmorAbility, getTemporaryDefense as armorTempDefense, refreshArmorDescriptions } from "./armor/service.js";
 const OWNER_NAME = "K4miNoK4mi";
 function getOwnerId() {
   try {
@@ -1670,6 +1670,7 @@ onPlayerJoin = (playerId) => {
   // Crafts custom: shards -> materials -> armors (12 sets, 72 recipes) + renames/descriptions
   try { registerCraftingRecipes(api, playerId); } catch(e) { reportErrorToOwner(e); }
   try { applyItemStats(api, playerId); } catch(e) { reportErrorToOwner(e); }
+  try { refreshArmorDescriptions(api, playerId); } catch(e) { reportErrorToOwner(e); }
   // The owner's respawn rule and the aura scale travel together: they are the same call.
   // The shop is re-registered per join: an item created while nobody was online is
   // not always offered to the first player who arrives, and replacing it is free.
