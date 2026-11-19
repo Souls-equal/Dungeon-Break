@@ -187,9 +187,22 @@ function ensureUnlockedOrPay(playerId, difficulty) {
   return false;
 }
 
-// Spawn handling: peaceful adventure + blessing reset while in spawn
-const SPAWN_GAMEMODE = "peacefuladventure";
+// Spawn handling: always survivalAdventure — no mobs/PvP at spawn, gamemode only when needed
+const SPAWN_GAMEMODE = "survivaladventure";
 const DUNGEON_GAMEMODE = "survivaladventure";
+function ensureSurvivalGamemode(playerId){
+  const desired = DUNGEON_GAMEMODE;
+  try{
+    if (typeof api.getPlayerGamemode === "function"){
+      const cur = api.getPlayerGamemode(playerId);
+      if (cur != null){
+        const norm = String(cur).toLowerCase();
+        if (norm === desired || norm === "survivaladventure" || norm.includes("survival") || cur === 0 || cur === "0") return;
+      }
+    }
+    if (typeof api.setPlayerGamemode === "function") api.setPlayerGamemode(playerId, desired);
+  }catch(e){ reportErrorToOwner(e); }
+}
 const SPAWN_CENTER = LOBBY_POSITION;
 const SPAWN_RADIUS = 80;
 const spawnMode = new Map(); // playerId -> boolean true=spawn
@@ -216,7 +229,7 @@ function syncPlayerSpawnState(playerId) {
   if (wasSpawn === shouldSpawn) return;
   spawnMode.set(String(playerId), shouldSpawn);
   if (shouldSpawn) {
-    try { if (typeof api.setPlayerGamemode === "function") api.setPlayerGamemode(playerId, SPAWN_GAMEMODE); } catch(e) { reportErrorToOwner(e); }
+    // gamemode stays survivalAdventure — only blessings change at spawn
     // Spawn: only permanent blessings (run/timed disabled) for clean navigation
     try { applyBlessingOptions(playerId, baseClientOptions()); } catch(e) { reportErrorToOwner(e); }
     // Remove run/timed potion effects (keep permanent none)
@@ -233,7 +246,7 @@ function syncPlayerSpawnState(playerId) {
       }
     } catch(e) { reportErrorToOwner(e); }
   } else {
-    try { if (typeof api.setPlayerGamemode === "function") api.setPlayerGamemode(playerId, DUNGEON_GAMEMODE); } catch(e) { reportErrorToOwner(e); }
+    // gamemode stays survivalAdventure — dungeon re-enables run blessings
     applyBlessingOptions(playerId, baseClientOptions());
     const k = accountKeyOf(playerId);
     for (const ef of effects.runEffects(blessings().runOf(k))) applyRunEffect(playerId, ef);
@@ -256,21 +269,7 @@ function tickSpawnCheck() {
   for (const pid of ids) {
     try { syncPlayerSpawnState(pid); } catch(e) { reportErrorToOwner(e); }
   }
-  // Periodic enforcement for spawn: keep permanent-only options and peacefulAdventure
-  for (const pid of ids) {
-    if (spawnMode.get(String(pid)) === true) {
-      try {
-        if (typeof api.getPlayerGamemode === "function") {
-          const gm = api.getPlayerGamemode(pid);
-          if (gm !== SPAWN_GAMEMODE && gm !== "peacefuladventure" && gm !== "PeacefulAdventure" && gm !== 4 && gm !== "pa") {
-            api.setPlayerGamemode(pid, SPAWN_GAMEMODE);
-          }
-        }
-      } catch(e) { reportErrorToOwner(e); }
-      // Re-apply permanent-only to reset any manual speed changes in spawn
-      try { applyBlessingOptions(pid, baseClientOptions()); } catch(e) { reportErrorToOwner(e); }
-    }
-  }
+  // No periodic gamemode enforcement — always survivalAdventure. Blessings only on transition.
 }
 
 // One service for the whole world: two players in the same level see the same
@@ -377,7 +376,7 @@ function completeLobbyCountdown(playerId, countdown) {
   });
   if (entered) {
     try { spawnMode.set(String(playerId), false); } catch(e) { reportErrorToOwner(e); }
-    try { if (typeof api.setPlayerGamemode === "function") api.setPlayerGamemode(playerId, DUNGEON_GAMEMODE); } catch(e) { reportErrorToOwner(e); }
+    try { ensureSurvivalGamemode(playerId); } catch(e) { reportErrorToOwner(e); }
     try { applyBlessingOptions(playerId, baseClientOptions()); } catch(e) { reportErrorToOwner(e); }
     // re-apply run potion effects for dungeon
     try {
@@ -470,7 +469,7 @@ function onPadStart(playerId, x, y, z, difficulty) {
     const progressed = service().usePad(playerId);
     if (progressed) {
       try { spawnMode.set(String(playerId), false); } catch(e) { reportErrorToOwner(e); }
-      try { if (typeof api.setPlayerGamemode === "function") api.setPlayerGamemode(playerId, DUNGEON_GAMEMODE); } catch(e) { reportErrorToOwner(e); }
+      try { ensureSurvivalGamemode(playerId); } catch(e) { reportErrorToOwner(e); }
       try { applyBlessingOptions(playerId, baseClientOptions()); } catch(e) { reportErrorToOwner(e); }
     }
     return;
@@ -1616,7 +1615,7 @@ onPlayerBoughtShopItem = (playerId, categoryKey, itemKey, itemOrInput, userInput
   endRun(playerId, [cStr("Run over — permanent stay", MSG_COLORS.gray)]);
   stopLobbyCountdown(playerId);
   try { spawnMode.set(String(playerId), true); } catch(e) { reportErrorToOwner(e); }
-  try { if (typeof api.setPlayerGamemode === "function") api.setPlayerGamemode(playerId, SPAWN_GAMEMODE); } catch(e) { reportErrorToOwner(e); }
+  try { ensureSurvivalGamemode(playerId); } catch(e) { reportErrorToOwner(e); }
   try { applyBlessingOptions(playerId, baseClientOptions()); } catch(e) { reportErrorToOwner(e); }
   api.setClientOption(playerId, "middleTextUpper", "");
   closeShop(playerId);
@@ -1683,7 +1682,7 @@ onPlayerJoin = (playerId) => {
   resetPlayerProgress(playerId);
   api.setPosition(playerId, LOBBY_POSITION);
   try { spawnMode.set(String(playerId), true); } catch(e) { reportErrorToOwner(e); }
-  try { if (typeof api.setPlayerGamemode === "function") api.setPlayerGamemode(playerId, SPAWN_GAMEMODE); } catch(e) { reportErrorToOwner(e); }
+  try { ensureSurvivalGamemode(playerId); } catch(e) { reportErrorToOwner(e); }
   // In spawn, keep blessings but fix speed for navigation (no slowdown)
   try { applyBlessingOptions(playerId, baseClientOptions()); } catch(e) { reportErrorToOwner(e); }
   try { applyRankVisuals(playerId); } catch(e) { reportErrorToOwner(e); }
@@ -2053,7 +2052,7 @@ onRespawnRequest = (playerId) => {
   stopLobbyCountdown(playerId);
   service().teleportToSpawn(playerId);
   try { spawnMode.set(String(playerId), true); } catch(e) { reportErrorToOwner(e); }
-  try { if (typeof api.setPlayerGamemode === "function") api.setPlayerGamemode(playerId, SPAWN_GAMEMODE); } catch(e) { reportErrorToOwner(e); }
+  try { ensureSurvivalGamemode(playerId); } catch(e) { reportErrorToOwner(e); }
   try { applyBlessingOptions(playerId, baseClientOptions()); } catch(e) { reportErrorToOwner(e); }
   api.setClientOption(playerId, "middleTextUpper", "");
   endRun(playerId, [cStr("You died — run lost, permanent stay", MSG_COLORS.gray)]);
@@ -2152,7 +2151,7 @@ scheduleInterval(() => {
   try { crateTick(api); } catch(e) { reportErrorToOwner(e); }
 }, 20);
 
-// Spawn peacefulAdventure enforcement: every second
+// Spawn state check (blessings) — gamemode stays survivalAdventure, only on transition
 scheduleInterval(() => {
   try { tickSpawnCheck(); } catch(e) { reportErrorToOwner(e); }
 }, 20);
