@@ -60,33 +60,27 @@ import { parseWeaponInfo } from "./combatFx/service.js";
 import { onDamaged as onArmorDamaged, onDealingDamage as onArmorDealingDamage, onMobKilled as onArmorMobKilled, tick as tickArmors, forgetPlayer as forgetArmorAbility, getTemporaryDefense as armorTempDefense, refreshArmorDescriptions } from "./armor/service.js";
 const OWNER_NAME = "K4miNoK4mi";
 function getOwnerId() {
-  try {
-    if (typeof api.getPlayerId === "function") {
-      const id = api.getPlayerId(OWNER_NAME);
-      if (id) return id;
-    }
-  } catch(_) {}
-  try {
-    if (typeof api.getPlayerIds === "function") {
-      const ids = api.getPlayerIds();
-      for (const id of ids) {
-        if (String(id) === OWNER_NAME) return id;
-        if (typeof api.getEntityName === "function") {
-          const n = api.getEntityName(id);
-          if (n === OWNER_NAME) return id;
-        }
+  if (typeof api.getPlayerId === "function") {
+    const id = api.getPlayerId(OWNER_NAME);
+    if (id) return id;
+  }
+  if (typeof api.getPlayerIds === "function") {
+    const ids = api.getPlayerIds();
+    for (const id of ids) {
+      if (String(id) === OWNER_NAME) return id;
+      if (typeof api.getEntityName === "function") {
+        const n = api.getEntityName(id);
+        if (n === OWNER_NAME) return id;
       }
     }
-  } catch(_) {}
+  }
   return null;
 }
 function reportErrorToOwner(e) {
-  try {
-    const ownerId = getOwnerId();
-    if (!ownerId) return;
-    const msg = e && e.message ? e.message : String(e);
-    api.sendMessage(ownerId, `[Error] ${msg}`);
-  } catch(_) {}
+  const ownerId = getOwnerId();
+  if (!ownerId) return;
+  const msg = e && e.message ? e.message : String(e);
+  api.sendMessage(ownerId, `[Error] ${msg}`);
 }
 
 // expose presets for service helpers (avoid circular)
@@ -107,48 +101,40 @@ const LOBBY_CONFIG = {
 
 // Gold unlock for dungeons (cstm_smp_gold via Market Place plugin)
 function getGoldAmount(playerId) {
-  try {
-    if (typeof api.getCurrencyAmount === "function") {
-      const v = api.getCurrencyAmount(playerId, UNLOCK_CURRENCY);
-      if (v === null || v === undefined) return 0;
-      return Number(v) || 0;
-    }
-  } catch(e) { reportErrorToOwner(e); }
+  if (typeof api.getCurrencyAmount === "function") {
+    const v = api.getCurrencyAmount(playerId, UNLOCK_CURRENCY);
+    if (v === null || v === undefined) return 0;
+    return Number(v) || 0;
+  }
   return null; // no currency system -> treat as free (for tests)
 }
 function spendGold(playerId, amount) {
   if (amount <= 0) return true;
-  try {
-    if (typeof api.giveCurrencyAmount === "function") {
-      api.giveCurrencyAmount(playerId, UNLOCK_CURRENCY, -amount);
+  if (typeof api.giveCurrencyAmount === "function") {
+    api.giveCurrencyAmount(playerId, UNLOCK_CURRENCY, -amount);
+    return true;
+  }
+  if (typeof api.setCurrencyAmount === "function") {
+    const current = getGoldAmount(playerId);
+    if (current !== null) {
+      api.setCurrencyAmount(playerId, UNLOCK_CURRENCY, Math.max(0, current - amount));
       return true;
     }
-    if (typeof api.setCurrencyAmount === "function") {
-      const current = getGoldAmount(playerId);
-      if (current !== null) {
-        api.setCurrencyAmount(playerId, UNLOCK_CURRENCY, Math.max(0, current - amount));
-        return true;
-      }
-    }
-  } catch(e) { reportErrorToOwner(e); }
+  }
   return false;
 }
 function loadUnlocks(playerId) {
-  try {
-    const raw = api.getPlayerDbValue(playerId, UNLOCK_DB_KEY);
-    if (!raw) return {};
-    if (typeof raw === "object") return raw;
-    if (typeof raw === "string") {
-      try { const j = JSON.parse(raw); return j && typeof j === "object" ? j : {}; } catch (_) { return {}; }
-    }
-  } catch(e) { reportErrorToOwner(e); }
+  const raw = api.getPlayerDbValue(playerId, UNLOCK_DB_KEY);
+  if (!raw) return {};
+  if (typeof raw === "object") return raw;
+  if (typeof raw === "string") {
+    const j = JSON.parse(raw); return j && typeof j === "object" ? j : {};
+  }
   return {};
 }
 function saveUnlocks(playerId, data) {
-  try {
-    const str = JSON.stringify(data);
-    api.setPlayerDbValue(playerId, UNLOCK_DB_KEY, str);
-  } catch(e) { reportErrorToOwner(e); }
+  const str = JSON.stringify(data);
+  api.setPlayerDbValue(playerId, UNLOCK_DB_KEY, str);
 }
 function isUnlocked(playerId, difficulty) {
   const d = difficulty && difficulty.id ? difficulty : null;
@@ -206,21 +192,18 @@ function ensureSurvivalGamemode(playerId){
 const SPAWN_CENTER = LOBBY_POSITION;
 const SPAWN_RADIUS = 80;
 const spawnMode = new Map(); // playerId -> boolean true=spawn
-function isAtSpawn(playerId){ try{ return spawnMode.get(String(playerId)) === true; } catch(_){ return false; } }
+function isAtSpawn(playerId){ return spawnMode.get(String(playerId)) === true; }
 
 function isInSpawnPosition(playerId) {
-  try {
-    const pos = api.getPosition(playerId);
-    if (!pos || !Array.isArray(pos) || pos.length < 3) return false;
-    const dx = pos[0] - SPAWN_CENTER[0];
-    const dy = pos[1] - SPAWN_CENTER[1];
-    const dz = pos[2] - SPAWN_CENTER[2];
-    return Math.sqrt(dx*dx+dy*dy+dz*dz) <= SPAWN_RADIUS;
-  } catch (_) { return false; }
+  const pos = api.getPosition(playerId);
+  if (!pos || !Array.isArray(pos) || pos.length < 3) return false;
+  const dx = pos[0] - SPAWN_CENTER[0];
+  const dy = pos[1] - SPAWN_CENTER[1];
+  const dz = pos[2] - SPAWN_CENTER[2];
+  return Math.sqrt(dx*dx+dy*dy+dz*dz) <= SPAWN_RADIUS;
 }
 function shouldBeInSpawn(playerId) {
-  // In spawn if not in dungeon OR near lobby (fallback for edge)
-  try { if (!service().inDungeon(playerId)) return true; } catch(e) { reportErrorToOwner(e); }
+  if (!service().inDungeon(playerId)) return true;
   return isInSpawnPosition(playerId);
 }
 function syncPlayerSpawnState(playerId) {
@@ -229,22 +212,13 @@ function syncPlayerSpawnState(playerId) {
   if (wasSpawn === shouldSpawn) return;
   spawnMode.set(String(playerId), shouldSpawn);
   if (shouldSpawn) {
-    // gamemode stays survivalAdventure — only blessings change at spawn
-    // Spawn: only permanent blessings (run/timed disabled) for clean navigation
-    try { applyBlessingOptions(playerId, baseClientOptions()); } catch(e) { reportErrorToOwner(e); }
-    // Remove run/timed potion effects (keep permanent none)
-    try {
-      const k = accountKeyOf(playerId);
-      for (const e of effects.runEffects(blessings().runOf(k))) try { api.removeEffect(playerId, e.effectName); } catch(e) { reportErrorToOwner(e); }
-      for (const ent of blessings().timedOf(k)) {
-        const ef = effects.timedEffectOf(ent.blessing);
-        if (ef) try { api.removeEffect(playerId, ef.effectName); } catch(e) { reportErrorToOwner(e); }
-      }
-      const tracked = sessionPotionEffects.get(String(playerId));
-      if (tracked) {
-        // Keep tracking but remove effects already handled above; don't delete set
-      }
-    } catch(e) { reportErrorToOwner(e); }
+    applyBlessingOptions(playerId, baseClientOptions());
+    const k = accountKeyOf(playerId);
+    for (const e of effects.runEffects(blessings().runOf(k))) api.removeEffect(playerId, e.effectName);
+    for (const ent of blessings().timedOf(k)) {
+      const ef = effects.timedEffectOf(ent.blessing);
+      if (ef) api.removeEffect(playerId, ef.effectName);
+    }
   } else {
     // gamemode stays survivalAdventure — dungeon re-enables run blessings
     applyBlessingOptions(playerId, baseClientOptions());
@@ -256,20 +230,14 @@ function syncPlayerSpawnState(playerId) {
       const remainingTicks = ent.endsAtTick - tickNow();
       if (remainingTicks <= 0) continue;
       const remainingMs = remainingTicks * 50;
-      try {
-        const shouldTrack = !hadEffectBefore(playerId, ef.effectName);
-        api.applyEffect(playerId, ef.effectName, remainingMs, { inbuiltLevel: ef.level });
-        if (shouldTrack) rememberSessionEffect(playerId, ef.effectName);
-      } catch(e) { reportErrorToOwner(e); }
+      const shouldTrack = !hadEffectBefore(playerId, ef.effectName);
+      api.applyEffect(playerId, ef.effectName, remainingMs, { inbuiltLevel: ef.level });
+      if (shouldTrack) rememberSessionEffect(playerId, ef.effectName);
     }
   }
 }
 function tickSpawnCheck() {
-  const ids = [...spawnMode.keys()];
-  for (const pid of ids) {
-    try { syncPlayerSpawnState(pid); } catch(e) { reportErrorToOwner(e); }
-  }
-  // No periodic gamemode enforcement — always survivalAdventure. Blessings only on transition.
+  for (const pid of [...spawnMode.keys()]) syncPlayerSpawnState(pid);
 }
 
 // One service for the whole world: two players in the same level see the same
@@ -375,14 +343,11 @@ function completeLobbyCountdown(playerId, countdown) {
     } catch(e) { reportErrorToOwner(e); }
   });
   if (entered) {
-    try { spawnMode.set(String(playerId), false); } catch(e) { reportErrorToOwner(e); }
-    try { ensureSurvivalGamemode(playerId); } catch(e) { reportErrorToOwner(e); }
-    try { applyBlessingOptions(playerId, baseClientOptions()); } catch(e) { reportErrorToOwner(e); }
-    // re-apply run potion effects for dungeon
-    try {
-      const k = accountKeyOf(playerId);
-      for (const ef of effects.runEffects(blessings().runOf(k))) applyRunEffect(playerId, ef);
-    } catch(e) { reportErrorToOwner(e); }
+    spawnMode.set(String(playerId), false);
+    ensureSurvivalGamemode(playerId);
+    applyBlessingOptions(playerId, baseClientOptions());
+    const k = accountKeyOf(playerId);
+    for (const ef of effects.runEffects(blessings().runOf(k))) applyRunEffect(playerId, ef);
   }
 }
 
@@ -468,9 +433,9 @@ function onPadStart(playerId, x, y, z, difficulty) {
   if (service().inDungeon(playerId)) {
     const progressed = service().usePad(playerId);
     if (progressed) {
-      try { spawnMode.set(String(playerId), false); } catch(e) { reportErrorToOwner(e); }
-      try { ensureSurvivalGamemode(playerId); } catch(e) { reportErrorToOwner(e); }
-      try { applyBlessingOptions(playerId, baseClientOptions()); } catch(e) { reportErrorToOwner(e); }
+      spawnMode.set(String(playerId), false);
+      ensureSurvivalGamemode(playerId);
+      applyBlessingOptions(playerId, baseClientOptions());
     }
     return;
   }
@@ -976,25 +941,13 @@ function blessingSummary(playerId, level) {
  * `persistent: false` is the owner's rule written where it is enforced.
  */
 function showPoints(playerId, points) {
-  try {
-    api.setCurrency(playerId, POINTS_CURRENCY, {
-      amount: points,
-      icon: "fa-solid fa-star",
-      iconColour: "orange",
-      persistent: false,
-    });
-  } catch (error) {
-    try {
-      api.log(`[Dungeon] the points currency could not be shown: ${error && error.message ? error.message : error}`);
-    } catch (_) {
-      // Nothing left to do.
-    }
-  }
-  try {
-    api.setCurrencyAmount(playerId, POINTS_CURRENCY, points, "Blessing");
-  } catch (_) {
-    // `setCurrency` above already carried the amount; this only keeps the subtext honest.
-  }
+  api.setCurrency(playerId, POINTS_CURRENCY, {
+    amount: points,
+    icon: "fa-solid fa-star",
+    iconColour: "orange",
+    persistent: false,
+  });
+  api.setCurrencyAmount(playerId, POINTS_CURRENCY, points, "Blessing");
 }
 
 /**
@@ -1005,17 +958,8 @@ function showPoints(playerId, points) {
  * refresh.
  */
 function removePlayerTile(playerId, itemKey) {
-  try {
-    api.resetShopItemForPlayer(playerId, BLESSING_CATEGORY, itemKey);
-    return true;
-  } catch (error) {
-    try {
-      api.log(`[Dungeon] blessing tile "${itemKey}" could not be removed: ${error && error.message ? error.message : error}`);
-    } catch (_) {
-      // Nothing left to do.
-    }
-    return false;
-  }
+  api.resetShopItemForPlayer(playerId, BLESSING_CATEGORY, itemKey);
+  return true;
 }
 
 /**
@@ -1036,7 +980,7 @@ function refreshBlessingTiles(playerId) {
   const account = blessings().accountOf(key);
   const offer = account.offer;
   showPoints(playerId, points);
-  const atSpawn = (()=>{ try{ return spawnMode.get(String(playerId)) === true; } catch(_){ return false; } })();
+  const atSpawn = spawnMode.get(String(playerId)) === true;
 
   try {
     if (atSpawn) {
@@ -1141,62 +1085,47 @@ function logShopFailure(itemKey, error) {
 const blessingDamageCache = new Map(); // playerId -> { dealing, receiving }
 
 function refreshDamageCache(playerId, options) {
-  try {
-    blessingDamageCache.set(String(playerId), {
-      dealing: Number.isFinite(options.dealingDamageMultiplier) ? options.dealingDamageMultiplier : 1,
-      receiving: Number.isFinite(options.receivingDamageMultiplier) ? options.receivingDamageMultiplier : 1,
-    });
-  } catch(e) { reportErrorToOwner(e); }
+  blessingDamageCache.set(String(playerId), {
+    dealing: Number.isFinite(options.dealingDamageMultiplier) ? options.dealingDamageMultiplier : 1,
+    receiving: Number.isFinite(options.receivingDamageMultiplier) ? options.receivingDamageMultiplier : 1,
+  });
 }
 
 function dealingMultiplierOf(playerId) {
   const cached = blessingDamageCache.get(String(playerId));
   if (cached && Number.isFinite(cached.dealing)) return cached.dealing;
-  try {
-    const key = accountKeyOf(playerId);
-    const opts = effects.optionsFrom(blessings().permanentOf(key), blessings().runOf(key), {});
-    return Number.isFinite(opts.dealingDamageMultiplier) ? opts.dealingDamageMultiplier : 1;
-  } catch (_) { return 1; }
+  const key = accountKeyOf(playerId);
+  const opts = effects.optionsFrom(blessings().permanentOf(key), blessings().runOf(key), {});
+  return Number.isFinite(opts.dealingDamageMultiplier) ? opts.dealingDamageMultiplier : 1;
 }
 function receivingMultiplierOf(playerId) {
   const cached = blessingDamageCache.get(String(playerId));
   if (cached && Number.isFinite(cached.receiving)) return cached.receiving;
-  try {
-    const key = accountKeyOf(playerId);
-    const opts = effects.optionsFrom(blessings().permanentOf(key), blessings().runOf(key), {});
-    return Number.isFinite(opts.receivingDamageMultiplier) ? opts.receivingDamageMultiplier : 1;
-  } catch (_) { return 1; }
+  const key = accountKeyOf(playerId);
+  const opts = effects.optionsFrom(blessings().permanentOf(key), blessings().runOf(key), {});
+  return Number.isFinite(opts.receivingDamageMultiplier) ? opts.receivingDamageMultiplier : 1;
 }
 function armorDefenseReductionOf(playerId) {
-  try { const v = armorTempDefense(playerId); if (Number.isFinite(v) && v>0) return v; } catch(_) {}
+  const v = armorTempDefense(playerId); if (Number.isFinite(v) && v>0) return v;
   return 0;
 }
 
 function applyBlessingOptions(playerId, base = {}) {
   const key = accountKeyOf(playerId);
-  // In spawn, reset speed to baseline — no blessing slowdown (or boost) carries into spawn navigation.
-  // Only permanent non-speed effects apply.
   if (spawnMode.get(String(playerId)) === true) {
     let spawnOpts = effects.optionsFrom(blessings().permanentOf(key), [], base);
-    // At spawn, no slowdown — clamp speed to at least baseline so permanent boosts stay but run/timed slows don't annoy
     const baseSpeed = 1;
     const clampSpeed = Math.max(baseSpeed, spawnOpts.speedMultiplier ?? baseSpeed);
     spawnOpts = { ...spawnOpts, speedMultiplier: clampSpeed, runningSpeed: Math.max(7, spawnOpts.runningSpeed ?? 7), walkingSpeed: Math.max(4, spawnOpts.walkingSpeed ?? 4) };
-    try { api.setClientOptions(playerId, spawnOpts); } catch(e) { reportErrorToOwner(e); }
+    api.setClientOptions(playerId, spawnOpts);
     refreshDamageCache(playerId, spawnOpts);
-    try { refreshWeaponStats(api, playerId, spawnOpts.dealingDamageMultiplier ?? 1); } catch(e) { reportErrorToOwner(e); }
+    refreshWeaponStats(api, playerId, spawnOpts.dealingDamageMultiplier ?? 1);
     return spawnOpts;
   }
   const options = effects.optionsFrom(blessings().permanentOf(key), blessings().runOf(key), base);
-  try {
-    api.setClientOptions(playerId, options);
-  } catch (error) {
-    try {
-      api.log(`[Dungeon] blessing options could not be applied for ${playerId}: ${error && error.message ? error.message : error}`);
-    } catch(e) { reportErrorToOwner(e); }
-  }
+  api.setClientOptions(playerId, options);
   refreshDamageCache(playerId, options);
-  try { refreshWeaponStats(api, playerId, options.dealingDamageMultiplier ?? 1); } catch(e) { reportErrorToOwner(e); }
+  refreshWeaponStats(api, playerId, options.dealingDamageMultiplier ?? 1);
   return options;
 }
 
@@ -1224,15 +1153,8 @@ function applyTimedEffect(playerId, blessing) {
   if (!effect) return false;
   // Remember only if it wasn't already there — we must not clear a pre-existing effect later
   const shouldTrack = !hadEffectBefore(playerId, effect.effectName);
-  try {
-    api.applyEffect(playerId, effect.effectName, effect.durationMs, { inbuiltLevel: effect.level });
-    if (shouldTrack) rememberSessionEffect(playerId, effect.effectName);
-  } catch (error) {
-    try {
-      api.log(`[Dungeon] the ${effect.effectName} effect could not be applied: ${error && error.message ? error.message : error}`);
-    } catch(e) { reportErrorToOwner(e); }
-    return false;
-  }
+  api.applyEffect(playerId, effect.effectName, effect.durationMs, { inbuiltLevel: effect.level });
+  if (shouldTrack) rememberSessionEffect(playerId, effect.effectName);
   return true;
 }
 
