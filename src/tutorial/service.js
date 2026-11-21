@@ -1,15 +1,20 @@
-import { spawn as spawnParticles } from "../particles/service.js";
-import { PRESETS } from "../particles/config.js";
-
 /**
- * Tutoriel jouable ~90s — rapide, visuel, 3 messages max.
- * Couloir: pad VeryEasy [2,21,-8] → Wood Crate [30,23,3] → craft → mob
- * Guidage par flèches directionnelles (2 types : sol + aérienne), pas de nouveau shop.
+ * Tutoriel jouable ~90s — 3 étapes, groundArrowPath natif.
+ * 1) Join → Wooden Key + flèche rouge vers crate [31.5,20,-0.5]
+ * 2) generateChest() → message "récupère le loot"
+ * 3) Flèche verte vers donjon [2.5,20,-7.5]
  * Flag hasDoneTutorial via api.get/setPlayerDbValue.
  */
 export const TUTORIAL_DB_KEY = "dungeonBreak.tutorial.v1";
 const TUTORIAL_STEP_KEY = "dungeonBreak.tutorial.step";
-export const TUTORIAL_STEPS = ["portal", "chest", "crate", "craft", "kill", "done"];
+export const TUTORIAL_STEPS = ["crate", "loot", "dungeon", "done"];
+
+// Nouvelles coords fournies
+export const TUTORIAL_CRATE_TARGET = [31.5, 20, -0.5];
+export const TUTORIAL_DUNGEON_TARGET = [2.5, 20, -7.5];
+// Positions block correspondantes (pour debug)
+export const TUTORIAL_CRATE_POS = [31, 20, -1];
+export const TUTORIAL_PORTAL_POS = [2, 21, -8];
 
 export function hasDoneTutorial(api, playerId) {
   try {
@@ -20,98 +25,77 @@ export function hasDoneTutorial(api, playerId) {
 export function markDone(api, playerId) {
   try { api.setPlayerDbValue(playerId, TUTORIAL_DB_KEY, true); api.setPlayerDbValue(playerId, TUTORIAL_STEP_KEY, "done"); } catch {}
 }
-export function startTutorial(api, playerId) {
-  try { api.setPlayerDbValue(playerId, TUTORIAL_DB_KEY, "started"); api.setPlayerDbValue(playerId, TUTORIAL_STEP_KEY, "portal"); } catch {}
-}
 export function shouldRunTutorial(api, playerId) {
   return !hasDoneTutorial(api, playerId);
 }
-
-export function buildTutorialConfig(portalPos, cratePos) {
-  return {
-    portalPos,
-    cratePos,
-    arrows: [
-      { from: portalPos, to: cratePos, kind: 0 },
-      { from: cratePos, to: null, kind: 1 },
-    ],
-  };
-}
-
-// Coords fournies: Super facile [2,21,-8], Wood Crate [30,23,3]
-export const TUTORIAL_CONFIG = buildTutorialConfig([2, 21, -8], [30, 23, 3]);
-
-export const TUTORIAL_MESSAGES = {
-  welcome: "→ Suis la flèche verte → portail",
-  afterPortal: "Coffre → clé → crate",
-  final: "Bien joué ! /dbg crafts pour crafter",
-};
-
 function getStep(api, playerId) {
   try {
     const v = api.getPlayerDbValue(playerId, TUTORIAL_STEP_KEY);
-    return v && TUTORIAL_STEPS.includes(v) ? v : "portal";
-  } catch { return "portal"; }
+    return v && TUTORIAL_STEPS.includes(v) ? v : "crate";
+  } catch { return "crate"; }
 }
 export function advanceStep(api, playerId, step) {
   try { api.setPlayerDbValue(playerId, TUTORIAL_STEP_KEY, step); } catch {}
 }
-
-function lerp(a, b, t) { return a + (b - a) * t; }
-
-export function tickTutorialArrows(api, tutorialConfig, playerId) {
-  if (!tutorialConfig || !tutorialConfig.portalPos) return;
-  const step = getStep(api, playerId);
-  let target = null;
-  if (step === "portal") target = tutorialConfig.portalPos;
-  else if (step === "chest" || step === "crate") target = tutorialConfig.cratePos;
-  if (!target) return;
+function setArrow(api, playerId, colour, target) {
   try {
-    const col = "#55FF55";
-    // 2 types: 0=anneau au sol (padRing), 1=vortex aérien (entryVortex) — alternés
-    const presetMain = step === "portal" ? PRESETS.padRing(col) : PRESETS.entryVortex(col);
-    spawnParticles(api, [target[0] + 0.5, target[1] + 0.5, target[2] + 0.5], presetMain, { radius: 0.5, height: 1.2 });
-
-    // Flèches intermédiaires le long du trajet (tous les ~4 blocs)
-    // Évite le spam: on tire le trajet depuis position joueur ou lobby vers cible
-    let from = null;
-    try {
-      const p = api.getPosition ? api.getPosition(playerId) : null;
-      if (p && typeof p.x === "number") from = [p.x, p.y, p.z];
-      else if (Array.isArray(p)) from = p;
-    } catch {}
-    if (!from) from = step === "portal" ? [10, 21, 10] : tutorialConfig.portalPos;
-    const dx = target[0] - from[0], dz = target[2] - from[2];
-    const dist = Math.hypot(dx, dz);
-    const steps = Math.min(4, Math.floor(dist / 4));
-    for (let i = 1; i <= steps; i++) {
-      const t = i / (steps + 1);
-      const x = lerp(from[0], target[0], t);
-      const z = lerp(from[2], target[2], t);
-      const y = lerp(from[1], target[1], t) + 0.3;
-      // alterne les 2 types pour montrer la variété
-      const preset = i % 2 === 0 ? PRESETS.padRing(col) : PRESETS.entryVortex(col);
-      const small = { ...preset, manualEmitCount: Math.max(4, Math.floor((preset.manualEmitCount || 12) / 3)), minSize: (preset.minSize || 0.3) * 0.7, maxSize: (preset.maxSize || 0.5) * 0.7 };
-      spawnParticles(api, [x, y, z], small, { radius: 0.3, height: 0.8 });
-    }
+    if (typeof api.setClientOption === "function") api.setClientOption(playerId, "groundArrowPath", { colour, target });
+  } catch {}
+}
+function clearArrow(api, playerId) {
+  try {
+    if (typeof api.setClientOption === "function") api.setClientOption(playerId, "groundArrowPath", null);
   } catch {}
 }
 
-export function onTutorialJoin(api, playerId, cfg) {
-  if (!cfg || !cfg.portalPos) return false;
+export const TUTORIAL_MESSAGES = {
+  join: "Tutorial: ouvre la crate → flèche rouge",
+  crateOpened: "Récupère le loot dans la crate !",
+  toDungeon: "Bien ! Cherche des clés dans le donjon → flèche verte",
+  final: "Bien joué !",
+};
+
+export function onTutorialJoin(api, playerId) {
   if (hasDoneTutorial(api, playerId)) return false;
-  startTutorial(api, playerId);
+  try { api.setPlayerDbValue(playerId, TUTORIAL_DB_KEY, "started"); api.setPlayerDbValue(playerId, TUTORIAL_STEP_KEY, "crate"); } catch {}
+  // 1) Donne la clé tuto
   try {
-    api.sendMessage(playerId, [{ str: TUTORIAL_MESSAGES.welcome, style: { color: "#55FF55" } }]);
-    tickTutorialArrows(api, cfg, playerId);
+    if (typeof api.giveItem === "function") api.giveItem(playerId, "Wooden Key", 1, { customDisplayName: "Tutorial Key", customDescription: "Your first key.\nUsed in the tutorial." });
   } catch {}
+  // Flèche rouge vers crate
+  setArrow(api, playerId, "red", TUTORIAL_CRATE_TARGET);
+  try { api.sendMessage(playerId, [{ str: TUTORIAL_MESSAGES.join, style: { color: "#ff5555" } }]); } catch {}
   return true;
 }
-export function onTutorialPortalUsed(api, playerId) {
-  advanceStep(api, playerId, "chest");
-  try { api.sendMessage(playerId, [{ str: TUTORIAL_MESSAGES.afterPortal, style: { color: "#FFFF55" } }]); } catch {}
+
+export function onTutorialCrateOpened(api, playerId) {
+  if (hasDoneTutorial(api, playerId)) return;
+  const step = getStep(api, playerId);
+  if (step !== "crate") return;
+  advanceStep(api, playerId, "loot");
+  try { api.sendMessage(playerId, [{ str: TUTORIAL_MESSAGES.crateOpened, style: { color: "#FFFF55" } }]); } catch {}
+  // 3) Après avoir dit de récupérer, on guide vers le donjon
+  // Petit délai pour laisser le joueur loot, mais on pose déjà la flèche verte
+  setArrow(api, playerId, "#69EA5E", TUTORIAL_DUNGEON_TARGET);
+  try { api.sendMessage(playerId, [{ str: TUTORIAL_MESSAGES.toDungeon, style: { color: "#69EA5E" } }]); } catch {}
+  advanceStep(api, playerId, "dungeon");
 }
-export function onTutorialComplete(api, playerId) {
+
+export function onTutorialDungeonEntered(api, playerId) {
+  if (hasDoneTutorial(api, playerId)) return;
+  const step = getStep(api, playerId);
+  if (step !== "dungeon" && step !== "loot") return;
   markDone(api, playerId);
+  clearArrow(api, playerId);
   try { api.sendMessage(playerId, [{ str: TUTORIAL_MESSAGES.final, style: { color: "#FFD700" } }]); } catch {}
 }
+
+// Legacy compat: buildTutorialConfig encore importé ailleurs
+export function buildTutorialConfig(portalPos, cratePos) {
+  return { portalPos, cratePos, crateTarget: TUTORIAL_CRATE_TARGET, dungeonTarget: TUTORIAL_DUNGEON_TARGET };
+}
+export const TUTORIAL_CONFIG = buildTutorialConfig(TUTORIAL_PORTAL_POS, TUTORIAL_CRATE_POS);
+// keep old tick for compat no-op
+export function tickTutorialArrows() {}
+export function onTutorialComplete(api, playerId) { markDone(api, playerId); }
+export function onTutorialPortalUsed() {}
