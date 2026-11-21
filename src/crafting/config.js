@@ -7,9 +7,9 @@
  * Shards are dungeon currency, materials are the visible intermediate craft step.
  *
  * Stations (réorg étape 2):
- *  - Workbench: toutes les armes (épées, dagues, arcs, etc.)
- *  - Artisan Bench: toutes les armures (5 pièces par set)
- *  - Inventaire (station ""): tous les matériaux (shards -> lingots/alloy)
+ *  - Workbench: all weapons (swords, daggers, bows, etc.)
+ *  - Artisan Bench: all armors (5 pieces per set)
+ *  - Inventory (station ""): all materials (shards -> ingots/alloy)
  */
 
 // Helper to declare a craft: result = itemName, requires = [{items:[], amt}]
