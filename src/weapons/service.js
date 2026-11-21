@@ -352,7 +352,42 @@ function isPlayerCrouching(api, playerId) {
   try { if (typeof api.getPlayerIsCrouching === "function" && api.getPlayerIsCrouching(playerId)) return true; } catch(_) {}
   return false;
 }
+function yawPitchToDir(yaw, pitch) {
+  let y = Number(yaw), p = Number(pitch);
+  if (!Number.isFinite(y) || !Number.isFinite(p)) return null;
+  const isDeg = Math.abs(y) > 6.5 || Math.abs(p) > 6.5;
+  if (isDeg) { y = y * Math.PI / 180; p = p * Math.PI / 180; }
+  const cp = Math.cos(p), sp = Math.sin(p);
+  const sy = Math.sin(y), cy = Math.cos(y);
+  const dx = -sy * cp;
+  const dy = -sp;
+  const dz = cy * cp;
+  const len = Math.sqrt(dx*dx+dy*dy+dz*dz) || 1;
+  return [dx/len, dy/len, dz/len];
+}
 function getLookDir(api, playerId) {
+  const tryVector = (v) => {
+    if (!v) return null;
+    if (Array.isArray(v) && v.length >= 3 && v.every(n => Number.isFinite(n))) {
+      const len = Math.sqrt(v[0]*v[0]+v[1]*v[1]+v[2]*v[2]);
+      if (len > 1e-6) return [v[0]/len, v[1]/len, v[2]/len];
+    }
+    if (Array.isArray(v) && v.length === 2 && Number.isFinite(v[0]) && Number.isFinite(v[1])) {
+      const d = yawPitchToDir(v[0], v[1]);
+      if (d) return d;
+    }
+    if (v && typeof v === "object") {
+      if (Number.isFinite(v.x) && Number.isFinite(v.y) && Number.isFinite(v.z)) {
+        const len = Math.sqrt(v.x*v.x+v.y*v.y+v.z*v.z) || 1;
+        if (len > 1e-6) return [v.x/len, v.y/len, v.z/len];
+      }
+      if (Number.isFinite(v.yaw) && Number.isFinite(v.pitch)) { const d=yawPitchToDir(v.yaw, v.pitch); if(d) return d; }
+      if (Number.isFinite(v.y) && Number.isFinite(v.p)) { const d=yawPitchToDir(v.y, v.p); if(d) return d; }
+      if (Array.isArray(v.dir) && v.dir.length>=3) { const d=v.dir; const len=Math.sqrt(d[0]*d[0]+d[1]*d[1]+d[2]*d[2])||1; if(len>1e-6) return [d[0]/len,d[1]/len,d[2]/len]; }
+      if (Array.isArray(v.rotation) && v.rotation.length>=2) { const d=yawPitchToDir(v.rotation[0], v.rotation[1]); if(d) return d; }
+    }
+    return null;
+  };
   const cands = [
     () => typeof api.getPlayerDirection === "function" && api.getPlayerDirection(playerId),
     () => typeof api.getPlayerFacingDirection === "function" && api.getPlayerFacingDirection(playerId),
@@ -361,25 +396,28 @@ function getLookDir(api, playerId) {
     () => typeof api.getFacingDirection === "function" && api.getFacingDirection(playerId),
     () => typeof api.getPlayerLookVector === "function" && api.getPlayerLookVector(playerId),
     () => typeof api.getLookVector === "function" && api.getLookVector(playerId),
+    () => typeof api.getViewDirection === "function" && api.getViewDirection(playerId),
+    () => typeof api.getCameraDirection === "function" && api.getCameraDirection(playerId),
+    () => typeof api.getEntityLookDirection === "function" && api.getEntityLookDirection(playerId),
+    () => typeof api.getPlayerLookDirection === "function" && api.getPlayerLookDirection(playerId),
     () => typeof api.getRotation === "function" && api.getRotation(playerId),
     () => typeof api.getEntityRotation === "function" && api.getEntityRotation(playerId),
+    () => typeof api.getPlayerRotation === "function" && api.getPlayerRotation(playerId),
+    () => typeof api.getYaw === "function" && typeof api.getPitch === "function" && [api.getYaw(playerId), api.getPitch(playerId)],
+    () => typeof api.getPlayerYaw === "function" && typeof api.getPlayerPitch === "function" && [api.getPlayerYaw(playerId), api.getPlayerPitch(playerId)],
   ];
   for (const fn of cands) {
     try {
       const v = fn();
-      if (Array.isArray(v) && v.length >= 3 && v.every(n => Number.isFinite(n))) {
-        const len = Math.sqrt(v[0]*v[0]+v[1]*v[1]+v[2]*v[2]) || 1;
-        return [v[0]/len, v[1]/len, v[2]/len];
-      }
-      if (v && typeof v === "object" && Number.isFinite(v.x) && Number.isFinite(v.y) && Number.isFinite(v.z)) {
-        const len = Math.sqrt(v.x*v.x+v.y*v.y+v.z*v.z) || 1;
-        return [v.x/len, v.y/len, v.z/len];
-      }
-      if (v && typeof v === "object" && Array.isArray(v.dir)) {
-        const d = v.dir; if (d.length>=3) { const len = Math.sqrt(d[0]*d[0]+d[1]*d[1]+d[2]*d[2])||1; return [d[0]/len,d[1]/len,d[2]/len]; }
+      const dir = tryVector(v);
+      if (dir) return dir;
+      if (Array.isArray(v) && v.length===2 && Number.isFinite(v[0]) && Number.isFinite(v[1])) {
+        const d = yawPitchToDir(v[0], v[1]);
+        if (d) return d;
       }
     } catch(_) {}
   }
+  try { if (typeof api.getEntityView === "function") { const v=api.getEntityView(playerId); const dir=tryVector(v); if(dir) return dir; } } catch(_) {}
   return [0, 0, 1];
 }
 function triggerNovaLaser(api, playerId) {

@@ -3,9 +3,10 @@
  * 1) Join → Wooden Key + red arrow to crate [31.5,20,-0.5]
  * 2) generateChest() → "collect the loot"
  * 3) Green arrow to dungeon [2.5,20,-7.5]
- * Flag hasDoneTutorial via api.get/setPlayerDbValue.
+ * Flag hasDoneTutorial via api.get/setPlayerDbValue with t:0/t:1 (persisted).
  */
-export const TUTORIAL_DB_KEY = "dungeonBreak.tutorial.v1";
+export const TUTORIAL_DB_KEY = "t";
+const LEGACY_TUTORIAL_KEY = "dungeonBreak.tutorial.v1";
 const TUTORIAL_STEP_KEY = "dungeonBreak.tutorial.step";
 export const TUTORIAL_STEPS = ["crate", "loot", "dungeon", "done"];
 
@@ -17,11 +18,22 @@ export const TUTORIAL_PORTAL_POS = [2, 21, -8];
 export function hasDoneTutorial(api, playerId) {
   try {
     const v = api.getPlayerDbValue(playerId, TUTORIAL_DB_KEY);
-    return v === true || v === "1" || v === 1 || v === "done";
+    if (v === 1 || v === "1" || v === true || v === "true") return true;
+    // legacy compat: dungeonBreak.tutorial.v1 === true/"1"/"done"
+    const legacy = api.getPlayerDbValue(playerId, LEGACY_TUTORIAL_KEY);
+    if (legacy === true || legacy === "1" || legacy === 1 || legacy === "done" || legacy === "true") return true;
+    // also step done
+    const step = api.getPlayerDbValue(playerId, TUTORIAL_STEP_KEY);
+    if (step === "done") return true;
   } catch { return false; }
+  return false;
 }
 export function markDone(api, playerId) {
-  try { api.setPlayerDbValue(playerId, TUTORIAL_DB_KEY, true); api.setPlayerDbValue(playerId, TUTORIAL_STEP_KEY, "done"); } catch {}
+  try {
+    api.setPlayerDbValue(playerId, TUTORIAL_DB_KEY, 1);
+    api.setPlayerDbValue(playerId, LEGACY_TUTORIAL_KEY, 1);
+    api.setPlayerDbValue(playerId, TUTORIAL_STEP_KEY, "done");
+  } catch {}
 }
 export function shouldRunTutorial(api, playerId) {
   return !hasDoneTutorial(api, playerId);
@@ -55,7 +67,12 @@ export const TUTORIAL_MESSAGES = {
 
 export function onTutorialJoin(api, playerId) {
   if (hasDoneTutorial(api, playerId)) return false;
-  try { api.setPlayerDbValue(playerId, TUTORIAL_DB_KEY, "started"); api.setPlayerDbValue(playerId, TUTORIAL_STEP_KEY, "crate"); } catch {}
+  try {
+    // t:0 = tutorial in progress, t:1 = done
+    api.setPlayerDbValue(playerId, TUTORIAL_DB_KEY, 0);
+    api.setPlayerDbValue(playerId, LEGACY_TUTORIAL_KEY, 0);
+    api.setPlayerDbValue(playerId, TUTORIAL_STEP_KEY, "crate");
+  } catch {}
   try {
     if (typeof api.giveItem === "function") api.giveItem(playerId, "Wooden Key", 1, { customDisplayName: "Tutorial Key", customDescription: "Your first key.\nUsed in the tutorial." });
   } catch {}
