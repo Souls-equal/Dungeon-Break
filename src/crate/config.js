@@ -38,7 +38,6 @@ export const LOOT_TABLE = {
     { name: "Wood Dagger", amount: 1, weight: 7 },
     { name: "Wood Whip", amount: 1, weight: 7 },
     { name: "Wood Club", amount: 1, weight: 7 },
-    { name: "Wood Club", amount: 1, weight: 7 },
     { name: "Wood Bow", amount: 1, weight: 7 },
     { name: "Arrow", min: 5, max: 12, weight: 20 },
 
@@ -52,6 +51,8 @@ export const LOOT_TABLE = {
     { name: "Maple Wood Planks", min: 8, max: 16, weight: 40 },
     { name: "Maple Log", min: 4, max: 8, weight: 40 },
     { name: "Stick", min: 6, max: 12, weight: 35 },
+
+    { name: "Cotton", min: 3, max: 6, weight: 35 },
 
     // Shards — Tier 1 (Common): surtout Amethite/Magmasteel/Rubellite
     { name: "Amethite Fragment", min: 1, max: 3, weight: 22 },
@@ -84,6 +85,10 @@ export const LOOT_TABLE = {
     { name: "Maple Wood Planks", min: 8, max: 16, weight: 40 },
     { name: "Maple Log", min: 4, max: 8, weight: 40 },
     { name: "Stick", min: 6, max: 12, weight: 35 },
+
+    { name: "Cotton", min: 4, max: 8, weight: 30 },
+    { name: "Diamond Fragment", min: 1, max: 2, weight: 10 },
+    { name: "Diamond", min: 1, max: 2, weight: 8 },
 
     // Shards — Tier 1+2
     { name: "Amethite Fragment", min: 1, max: 3, weight: 14 },
@@ -120,6 +125,11 @@ export const LOOT_TABLE = {
     { name: "Spectral Shard", min: 1, max: 3, weight: 10 },
     { name: "Geo Shard", min: 1, max: 2, weight: 8 },
     { name: "Voltite Dust", min: 1, max: 2, weight: 6 },
+    { name: "Cotton", min: 4, max: 10, weight: 30 },
+    { name: "Diamond Fragment", min: 1, max: 3, weight: 12 },
+    { name: "Diamond", min: 1, max: 3, weight: 10 },
+    { name: "Moonstone Dust", min: 1, max: 2, weight: 8 },
+    { name: "Copper Wire", min: 1, max: 2, weight: 8 },
   ],
 
   Epic: [
@@ -146,6 +156,12 @@ export const LOOT_TABLE = {
     { name: "Voltite Dust", min: 1, max: 3, weight: 8 },
     { name: "Comet Shard", min: 1, max: 2, weight: 6 },
     { name: "Raw Voltite", min: 1, max: 2, weight: 4 },
+    { name: "Cotton", min: 4, max: 10, weight: 25 },
+    { name: "Diamond", min: 2, max: 4, weight: 10 },
+    { name: "Diamond Fragment", min: 1, max: 3, weight: 10 },
+    { name: "Moonstone Dust", min: 1, max: 3, weight: 10 },
+    { name: "Copper Wire", min: 1, max: 3, weight: 10 },
+    { name: "Moonstone", min: 1, max: 2, weight: 8 },
   ],
 
   Legendary: [
@@ -172,5 +188,11 @@ export const LOOT_TABLE = {
     { name: "Voltite Dust", min: 1, max: 3, weight: 10 },
     { name: "Raw Voltite", min: 1, max: 2, weight: 6 },
     { name: "Star Alloy", min: 1, max: 2, weight: 4 },
+    { name: "Cotton", min: 4, max: 10, weight: 20 },
+    { name: "Diamond", min: 2, max: 5, weight: 12 },
+    { name: "Diamond Fragment", min: 1, max: 3, weight: 8 },
+    { name: "Moonstone Dust", min: 1, max: 3, weight: 12 },
+    { name: "Copper Wire", min: 1, max: 3, weight: 12 },
+    { name: "Moonstone", min: 1, max: 3, weight: 10 },
   ],
 };

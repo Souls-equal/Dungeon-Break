@@ -139,6 +139,12 @@ export const CRAFTS = [
     ],
   },
 
+  // ────────────── Recyclage (inspiré vanilla) ──────────────
+  { isStarterRecipe: true, result: "Amethite Fragment", produces: 2, station: "", requires: [{ items: ["Amethite"], amt: 1 }] },
+  { isStarterRecipe: true, result: "Magmasteel Fragment", produces: 2, station: "", requires: [{ items: ["Magmasteel"], amt: 1 }] },
+  { isStarterRecipe: true, result: "Rubellite Fragment", produces: 2, station: "", requires: [{ items: ["Rubellite"], amt: 1 }] },
+  { isStarterRecipe: true, result: "Serpentite Fragment", produces: 2, station: "", requires: [{ items: ["Serpentite"], amt: 1 }] },
+
   // ────────────── Maple conversions (handcraft, visible everywhere) ──────────────
   { isStarterRecipe: true, result: "Maple Wood Planks", produces: 4, requires: [{ items: ["Maple Log"], amt: 1 }] },
   { isStarterRecipe: true, result: "Stick", produces: 1, requires: [{ items: ["Maple Wood Planks"], amt: 2 }] },
