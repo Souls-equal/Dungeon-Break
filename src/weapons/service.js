@@ -26,7 +26,9 @@ const geoMines = []; // { pos:[x,y,z], ownerId, explodeTick, dmg, radius }
 const astralGlowing = new Map(); // mobId -> { ownerId, expireTick, extraFrac }
 const astralAuraCooldown = new Map(); // playerId -> lastAuraTick
 const novaCharges = new Map(); // playerId -> charges 0..20
-const novaLasers = []; // { playerId, startPos:[x,y,z], dir:[x,y,z], endTick, dmg, range, ownerId }
+const novaLasers = []; // { playerId, startPos:[x,y,z], dir:[x,y,z], endTick, dmg, range, radius, ownerId }
+const novaCrescents = []; // { ownerId, pos:[x,y,z], dir:[x,y,z], ticksLeft, dmg, radius }
+const novaCrescentCooldown = new Map(); // playerId -> lastTick
 const novaCrouch = new Map(); // playerId -> bool isCrouching
 const novaLaserCooldown = new Map(); // playerId -> lastLaserTick
 let novaTickCounter = 0;
@@ -287,6 +289,56 @@ function shieldAdd(api, playerId, add, cap) {
   } catch (_) {}
 }
 // ── Nova helpers ────────────────────────────────────────────────────
+// ── Nova crescent helpers ──────────────────────────────────────────
+function spawnNovaCrescent(api, playerId) {
+  const k = keyOf(playerId);
+  const abil = abilityForSet("Nova");
+  if (!abil) return false;
+  const now = globalTick;
+  const cd = abil.crescentCooldown ?? 5;
+  const last = novaCrescentCooldown.get(k) || -9999;
+  if (now - last < cd) return false;
+  const pPos = playerPos(api, playerId);
+  if (!pPos) return false;
+  const dir = getLookDir(api, playerId);
+  const range = abil.crescentRange ?? 12;
+  const speed = abil.crescentSpeed ?? 1.8;
+  const ticks = Math.ceil(range / speed);
+  const base = WEAPON_BASE_DAMAGE["Nova Blade"] || 68;
+  const dmg = Math.max(1, Math.round(base * (abil.crescentDamageFrac ?? 0.65)));
+  const start = [pPos[0] + dir[0]*0.8, pPos[1]+0.9 + dir[1]*0.8, pPos[2] + dir[2]*0.8];
+  novaCrescents.push({ ownerId: playerId, pos: [...start], dir: [...dir], ticksLeft: ticks, dmg, radius: 1.9, speed });
+  novaCrescentCooldown.set(k, now);
+  try { spawnAt(api, start, "novaSlash", { radius: 0.8, height: 0.6 }); } catch(_) {}
+  return true;
+}
+function novaCrescentTick(api, now) {
+  if (!novaCrescents.length) return;
+  for (let i = novaCrescents.length - 1; i >= 0; i--) {
+    const c = novaCrescents[i];
+    // move
+    c.pos[0] += c.dir[0] * c.speed;
+    c.pos[1] += c.dir[1] * c.speed;
+    c.pos[2] += c.dir[2] * c.speed;
+    // damage cylinder
+    const nears = nearbyMobs(api, c.pos, c.radius);
+    for (const { id } of nears) {
+      try { damageMob(api, id, c.dmg, c.ownerId); } catch(_) {}
+    }
+    // crescent visual - wider arc
+    try { spawnAt(api, c.pos, "novaSlash", { radius: 0.7, height: 0.5 }); } catch(_) {}
+    try { spawnPreset(api, c.pos, p => p.novaSlash ? p.novaSlash() : null); } catch(_) {}
+    // trail
+    try { spawnAt(api, [c.pos[0]-c.dir[0]*0.5, c.pos[1]-c.dir[1]*0.5, c.pos[2]-c.dir[2]*0.5], "novaSlash", { radius: 0.4, height: 0.3 }); } catch(_) {}
+    c.ticksLeft--;
+    if (c.ticksLeft <= 0) {
+      // end burst
+      try { spawnZone(api, c.pos, "novaSlash", 1.8, 0.6); } catch(_) {}
+      novaCrescents.splice(i, 1);
+    }
+  }
+}
+
 function isPlayerCrouching(api, playerId) {
   if (!api || !playerId) return false;
   const k = keyOf(playerId);
@@ -344,8 +396,9 @@ function triggerNovaLaser(api, playerId) {
   if (!pPos) return false;
   const dir = getLookDir(api, playerId);
   const durationTicks = Math.max(20, charges * (abil.laserPerCharge ?? 20));
-  const dmg = abil.laserDps ?? 6;
-  const range = abil.laserRange ?? 24;
+  const dmg = abil.laserDps ?? 9;
+  const range = abil.laserRange ?? 36;
+  const radius = abil.laserRadius ?? 2.8;
   novaLasers.push({
     playerId: k,
     ownerId: playerId,
@@ -354,6 +407,7 @@ function triggerNovaLaser(api, playerId) {
     endTick: now + durationTicks,
     dmg,
     range,
+    radius,
     startTick: now,
   });
   novaCharges.set(k, 0);
@@ -368,7 +422,8 @@ function novaLaserTick(api, now) {
     try { const cur = playerPos(api, l.ownerId); if (cur) { l.startPos = [cur[0], cur[1]+0.9, cur[2]]; } } catch(_) {}
     const dir = l.dir;
     const range = l.range;
-    const step = 1.2;
+    const radius = l.radius ?? 2.8;
+    const step = 1.0;
     const steps = Math.ceil(range / step);
     for (let s = 1; s <= steps; s++) {
       const t = s * step;
@@ -376,14 +431,17 @@ function novaLaserTick(api, now) {
       const y = l.startPos[1] + dir[1]*t;
       const z = l.startPos[2] + dir[2]*t;
       const pos = [x,y,z];
-      if (s % 2 === 0) { try { spawnAt(api, pos, "novaLaser", { radius: 0.35, height: 0.4 }); } catch(_) {} }
+      if (s % 3 === 0) { try { spawnAt(api, pos, "novaLaser", { radius: 0.5, height: 0.6 }); } catch(_) {} }
       else { try { spawnPreset(api, pos, p => p.novaLaser ? p.novaLaser() : null); } catch(_) {} }
-      const nears = nearbyMobs(api, pos, 1.6);
+      // thicker beam: larger hitbox
+      const nears = nearbyMobs(api, pos, radius);
       for (const { id } of nears) {
         try { damageMob(api, id, l.dmg, l.ownerId); } catch(_) {}
       }
     }
-    try { spawnAt(api, l.startPos, "novaLaser", { radius: 0.6, height: 0.8 }); } catch(_) {}
+    // origin glow larger
+    try { spawnAt(api, l.startPos, "novaLaser", { radius: 0.9, height: 1.0 }); } catch(_) {}
+    try { spawnZone(api, l.startPos, "novaLaser", 1.2, 0.6); } catch(_) {}
   }
 }
 function novaSpeedTick(api, now) {
@@ -850,7 +908,8 @@ export function tickWeapons(api) {
     }
   }
 
-  // Nova: laser + speed
+  // Nova: crescent + laser + speed
+  try { novaCrescentTick(api, now); } catch(_) {}
   try { novaLaserTick(api, now); } catch(_) {}
   try { novaSpeedTick(api, now); } catch(_) {}
 
@@ -948,6 +1007,10 @@ export function setNovaCharges(playerId, n) {
 export function tryNovaLaser(api, playerId) {
   return triggerNovaLaser(api, playerId);
 }
+export function tryNovaCrescent(api, playerId) {
+  return spawnNovaCrescent(api, playerId);
+}
+export function _getNovaCrescents() { return novaCrescents; }
 export function isNovaCrouching(api, playerId) {
   return isPlayerCrouching(api, playerId);
 }
@@ -962,6 +1025,8 @@ export function forgetPlayer(playerId) {
   novaCrouch.delete(k);
   novaLaserCooldown.delete(k);
   for (let i=novaLasers.length-1;i>=0;i--) if (String(novaLasers[i].playerId)===k) novaLasers.splice(i,1);
+  for (let i=novaCrescents.length-1;i>=0;i--) if (String(novaCrescents[i].ownerId)===k) novaCrescents.splice(i,1);
+  novaCrescentCooldown.delete(k);
   for (const [mid, e] of [...dotMap.entries()]) if (String(e.ownerId)===k) dotMap.delete(mid);
   for (let i=geoMines.length-1;i>=0;i--) if (String(geoMines[i].ownerId)===k) geoMines.splice(i,1);
   for (const [mid,e] of [...astralGlowing.entries()]) if (String(e.ownerId)===k) astralGlowing.delete(mid);
@@ -980,6 +1045,8 @@ export function _reset() {
   novaCrouch.clear();
   novaLaserCooldown.clear();
   novaLasers.length=0;
+  novaCrescents.length=0;
+  novaCrescentCooldown.clear();
   deletedEntities.clear();
   throwableMap.clear();
   globalTick=0;

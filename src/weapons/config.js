@@ -138,14 +138,19 @@ export const SET_ABILITIES = {
   },
   Nova: {
     name: "Nova Overdrive",
-    short: "Slash every hit · Speed when held · 20 charges laser",
-    desc: "Nova — Slash à chaque coup, Speed quand tenue, charge par kill (max 20), crouch+attack = laser 1s/charge",
+    short: "Crescent every click · Slash on hit · Speed when held · 20 charges laser",
+    desc: "Nova — Crescent projectile every click, slash on hit, Speed when held, charge per kill (max 20), crouch+attack = long laser 1s/charge",
     color: "#00FFFF",
     icon: "Damage",
     maxCharges: 20,
     laserPerCharge: 20, // ticks = 1s
-    laserDps: 6,
-    laserRange: 24,
+    laserDps: 9,
+    laserRange: 36,
+    laserRadius: 2.8,
+    crescentDamageFrac: 0.65,
+    crescentRange: 12,
+    crescentSpeed: 1.8,
+    crescentCooldown: 5,
   },
 };
 
