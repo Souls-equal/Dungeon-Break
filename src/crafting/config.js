@@ -145,9 +145,14 @@ export const CRAFTS = [
   { isStarterRecipe: true, result: "Rubellite Fragment", produces: 2, station: "", requires: [{ items: ["Rubellite"], amt: 1 }] },
   { isStarterRecipe: true, result: "Serpentite Fragment", produces: 2, station: "", requires: [{ items: ["Serpentite"], amt: 1 }] },
 
+  // ────────────── Basic fragments -> bars (inventory, handcraft) ──────────────
+  { isStarterRecipe: true, result: "Iron Bar", produces: 1, station: "", requires: [{ items: ["Iron Fragment"], amt: 4 }] },
+  { isStarterRecipe: true, result: "Gold Bar", produces: 1, station: "", requires: [{ items: ["Gold Fragment"], amt: 4 }] },
+  { isStarterRecipe: true, result: "Diamond", produces: 1, station: "", requires: [{ items: ["Diamond Fragment"], amt: 4 }] },
+
   // ────────────── Maple conversions (handcraft, visible everywhere) ──────────────
-  { isStarterRecipe: true, result: "Maple Wood Planks", produces: 4, requires: [{ items: ["Maple Log"], amt: 1 }] },
-  { isStarterRecipe: true, result: "Stick", produces: 1, requires: [{ items: ["Maple Wood Planks"], amt: 2 }] },
+  { isStarterRecipe: true, result: "Maple Wood Planks", produces: 4, station: "", requires: [{ items: ["Maple Log"], amt: 1 }] },
+  { isStarterRecipe: true, result: "Stick", produces: 1, station: "", requires: [{ items: ["Maple Wood Planks"], amt: 2 }] },
 
   // ────────────── STEP 2: Materials -> Armors (5 pieces per set) ──────────────
   // Costs: Helmet 5, Chestplate 8, Leggings 7, Boots 4, Gauntlets 4
