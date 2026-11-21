@@ -343,7 +343,8 @@ function novaSoundAt(api, target, name, volume, pitch, maxDist) {
 }
 const WIND_ARC = 1.15, WIND_THICK = 1.1, WIND_HT = 2.5, WIND_EYE = 1.2, WIND_PTS = 14;
 function novaCrescentSlash(api, c, fr, t) {
-  for (let i = 0; i < WIND_PTS; i++) {
+  // halved points (i+=2) + reduced preset count 4 => ~7x less particles
+  for (let i = 0; i < WIND_PTS; i += 2) {
     const k = -WIND_ARC + (2 * WIND_ARC) * (i / (WIND_PTS - 1 || 1));
     const side = Math.sin(k) * (1.6 + t * 0.4);
     const arc = Math.cos(k) * 0.15;
@@ -352,9 +353,8 @@ function novaCrescentSlash(api, c, fr, t) {
       c[1] + 0.2 + fr.f[1]*0.1 + fr.u[1]*arc,
       c[2] + fr.f[2]*0.1 + fr.r[2]*side + fr.u[2]*arc,
     ];
-    try { spawnAt(api, p, "novaCrescent", { radius: 0.35, height: 0.45 }); } catch(_) {}
+    try { spawnAt(api, p, "novaCrescent", { radius: 0.3, height: 0.4 }); } catch(_) {}
   }
-  try { spawnAt(api, c, "novaCrescent", { radius: 0.6, height: 0.7 }); } catch(_) {}
 }
 function novaCrescentHitAt(api, casterId, c, fr, seen, dmg) {
   const nears = nearbyMobs(api, c, 5);
@@ -574,26 +574,22 @@ function novaLaserTick(api, now) {
     const dir = l.dir;
     const range = l.range;
     const radius = l.radius ?? 5;
-    const step = 0.6;
+    const step = 1.2;
     const steps = Math.ceil(range / step);
-    try { spawnAt(api, l.startPos, "novaLaser", { radius: 0.45, height: 0.55 }); } catch(_) {}
     for (let s = 1; s <= steps; s++) {
       const t = s * step;
       const x = l.startPos[0] + dir[0]*t;
       const y = l.startPos[1] + dir[1]*t;
       const z = l.startPos[2] + dir[2]*t;
       const pos = [x,y,z];
-      try {
-        if (s % 2 === 0) spawnAt(api, pos, "novaLaser", { radius: 0.5, height: 0.6 });
-        else spawnPreset(api, pos, p => p.novaLaser ? p.novaLaser() : null);
-      } catch(_) {}
       const nears = nearbyMobs(api, pos, radius);
       for (const { id } of nears) {
         try { damageMob(api, id, l.dmg, l.ownerId); } catch(_) {}
       }
+      if (s % 2 !== 0) continue;
+      try { spawnAt(api, pos, "novaLaser", { radius: 0.4, height: 0.5 }); } catch(_) {}
     }
-    try { spawnAt(api, l.startPos, "novaLaser", { radius: 0.9, height: 1.0 }); } catch(_) {}
-    try { spawnZone(api, l.startPos, "novaLaser", 1.2, 0.6); } catch(_) {}
+    try { spawnAt(api, l.startPos, "novaLaser", { radius: 0.6, height: 0.7 }); } catch(_) {}
   }
 }
 function novaSpeedTick(api, now) {
