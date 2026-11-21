@@ -113,7 +113,7 @@ export const SET_ABILITIES = {
     shieldPerHit: 2,
     shieldCap: 12,
     mineDelay: 60,
-    mineRadius: 3,
+    mineRadius: 5,
     mineFrac: 0.7,
   },
   Astral: {
@@ -146,7 +146,7 @@ export const SET_ABILITIES = {
     laserPerCharge: 20, // ticks = 1s
     laserDps: 9,
     laserRange: 36,
-    laserRadius: 2.8,
+    laserRadius: 5,
     crescentDamageFrac: 0.65,
     crescentRange: 12,
     crescentSpeed: 1.8,

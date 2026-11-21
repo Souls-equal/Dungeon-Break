@@ -307,7 +307,7 @@ function spawnNovaCrescent(api, playerId) {
   const base = WEAPON_BASE_DAMAGE["Nova Blade"] || 68;
   const dmg = Math.max(1, Math.round(base * (abil.crescentDamageFrac ?? 0.65)));
   const start = [pPos[0] + dir[0]*0.8, pPos[1]+0.9 + dir[1]*0.8, pPos[2] + dir[2]*0.8];
-  novaCrescents.push({ ownerId: playerId, pos: [...start], dir: [...dir], ticksLeft: ticks, dmg, radius: 1.9, speed });
+  novaCrescents.push({ ownerId: playerId, pos: [...start], dir: [...dir], ticksLeft: ticks, dmg, radius: 5, speed });
   novaCrescentCooldown.set(k, now);
   try { spawnAt(api, start, "novaSlash", { radius: 0.8, height: 0.6 }); } catch(_) {}
   return true;
@@ -398,7 +398,7 @@ function triggerNovaLaser(api, playerId) {
   const durationTicks = Math.max(20, charges * (abil.laserPerCharge ?? 20));
   const dmg = abil.laserDps ?? 9;
   const range = abil.laserRange ?? 36;
-  const radius = abil.laserRadius ?? 2.8;
+  const radius = abil.laserRadius ?? 5;
   novaLasers.push({
     playerId: k,
     ownerId: playerId,
@@ -422,7 +422,7 @@ function novaLaserTick(api, now) {
     try { const cur = playerPos(api, l.ownerId); if (cur) { l.startPos = [cur[0], cur[1]+0.9, cur[2]]; } } catch(_) {}
     const dir = l.dir;
     const range = l.range;
-    const radius = l.radius ?? 2.8;
+    const radius = l.radius ?? 5;
     const step = 1.0;
     const steps = Math.ceil(range / step);
     for (let s = 1; s <= steps; s++) {
@@ -788,7 +788,7 @@ export function onMobKilled(api, playerId, mobId) {
           ownerId: playerId,
           explodeTick: globalTick + (ability.mineDelay ?? 60),
           dmg,
-          radius: ability.mineRadius ?? 3,
+          radius: ability.mineRadius ?? 5,
           anchorId: id ? String(id) : null,
         });
         spawnAt(api, mPos, "geoMineTick", { radius:0.5, height:0.6 });
