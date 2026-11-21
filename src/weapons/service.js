@@ -449,6 +449,14 @@ export function handleHit(api, playerId, setName, opts = {}) {
   const scaled = opts.scaledDamage ?? base;
   let extraDamage = 0;
   let triggered = false;
+  // Chiffre coloré par set (complément, Bloxd fait le son/flash de base)
+  try {
+    if (Number.isFinite(scaled) && scaled > 0) {
+      const col = ability.color || "#FFFFFF";
+      // On évite de spammer quand la cible meurt dans la même tick — on affiche quand même
+      flyingMsg(api, playerId, [{ str: `${Math.round(scaled)}`, style:{color: col} }]);
+    }
+  } catch {}
 
   // Remember weapon set for kill handler
   try { lastWeaponSet.set(k, setName); } catch(_){}

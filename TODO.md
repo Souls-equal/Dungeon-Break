@@ -14,13 +14,9 @@
 
 ## P0 — Critique (faire en premier)
 
-### [ ] 1. Feedback de combat immédiat
-**Problème :** On ne "sent" pas les dégâts — #1 cause d'avis négatifs en PvE.
-**Faire :**
-- Damage numbers (couleur par set), crit flash, hitstop léger
-- Son différent par type d'arme (Sword/Dagger/Staff)
-- Particules déjà dispo `PRESETS`/`spawnParticles` + calcul déjà dans `onPlayerDamagingMob`
-**Fichiers :** `src/combatFx/service.js`, `src/weapons/service.js`, `src/worldCode.js:onPlayerDamagingMob`
+### [x] 1. Feedback de combat immédiat — fait (complément Bloxd natif)
+**Fait :** damage numbers couleur set, flying text `+burn/poison/shield` via `onPlayerDamagingMob` + `api.sendFlyingMiddleMessage`, son optionnel par set `api.playSound` si dispo. Bloxd natif garde hit sound/crit particles/flash rouge — on ne duplique pas.
+**Fichiers :** `src/combatFx/service.js`, `src/weapons/service.js`
 **Métrique :** `analytics.combat.hit` + `analytics.combat.kill_time_avg`
 **Impact :** ⭐⭐⭐ / Effort : **S**
 
