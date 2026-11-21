@@ -1611,7 +1611,7 @@ onPlayerJoin = (playerId) => {
   try { refreshRanksShop(playerId); } catch(e) { reportErrorToOwner(e); }
   const names = DIFFICULTIES.filter((entry) => entry.fromLobby).map((entry) => entry.label).join(", ");
   api.sendMessage(playerId, [cStr("Welcome to Dungeon Break! ", MSG_COLORS.gold), cStr(`(${names})`, MSG_COLORS.white)]);
-  api.sendMessage(playerId, [cStr("Shards → Crates → Craft → Weapons", MSG_COLORS.aqua)])
+  api.sendMessage(playerId, [cStr("Craft simple: ", MSG_COLORS.aqua), cStr("Inventaire=matériaux", MSG_COLORS.white), cStr(" | ", MSG_COLORS.gray), cStr("Workbench=armes", MSG_COLORS.white), cStr(" | ", MSG_COLORS.gray), cStr("Artisan=armures", MSG_COLORS.white), cStr(" — /dbg crafts", MSG_COLORS.gray)])
   // Give a Wood Sword if player has no item containing "Sword"
   try {
     let hasSword = false;
