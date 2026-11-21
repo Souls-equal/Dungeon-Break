@@ -58,6 +58,7 @@ import { tickCombatFx, onWeaponHit, onArmorHit, tickArmorShimmer, forgetPlayer a
 import { refreshWeaponStats, tickWeapons, onMobKilled, forgetPlayer as forgetWeaponAbility, markEntityDeleted, onThrowableUsed, onCollision as onWeaponCollision, onCrouchChange as onNovaCrouchChange, tryNovaLaser, isNovaCrouching } from "./weapons/service.js";
 import { parseWeaponInfo } from "./combatFx/service.js";
 import { onDamaged as onArmorDamaged, onDealingDamage as onArmorDealingDamage, onMobKilled as onArmorMobKilled, tick as tickArmors, forgetPlayer as forgetArmorAbility, getTemporaryDefense as armorTempDefense, refreshArmorDescriptions } from "./armor/service.js";
+import { shouldRunTutorial, onTutorialJoin, TUTORIAL_CONFIG } from "./tutorial/service.js";
 const OWNER_NAME = "K4miNoK4mi";
 function getOwnerId() {
   if (typeof api.getPlayerId === "function") {
@@ -1609,9 +1610,16 @@ onPlayerJoin = (playerId) => {
   try { applyBlessingOptions(playerId, baseClientOptions()); } catch(e) { reportErrorToOwner(e); }
   try { applyRankVisuals(playerId); } catch(e) { reportErrorToOwner(e); }
   try { refreshRanksShop(playerId); } catch(e) { reportErrorToOwner(e); }
-  const names = DIFFICULTIES.filter((entry) => entry.fromLobby).map((entry) => entry.label).join(", ");
-  api.sendMessage(playerId, [cStr("Welcome to Dungeon Break! ", MSG_COLORS.gold), cStr(`(${names})`, MSG_COLORS.white)]);
-  api.sendMessage(playerId, [cStr("Craft simple: ", MSG_COLORS.aqua), cStr("Inventaire=matériaux", MSG_COLORS.white), cStr(" | ", MSG_COLORS.gray), cStr("Workbench=armes", MSG_COLORS.white), cStr(" | ", MSG_COLORS.gray), cStr("Artisan=armures", MSG_COLORS.white), cStr(" — /dbg crafts", MSG_COLORS.gray)])
+  // Tutoriel rapide : remplace les 2 messages si premier join
+  try {
+    if (shouldRunTutorial(api, playerId) && onTutorialJoin(api, playerId, TUTORIAL_CONFIG)) {
+      // tuto a pris le relais — pas de welcome normal
+    } else {
+      const names = DIFFICULTIES.filter((entry) => entry.fromLobby).map((entry) => entry.label).join(", ");
+      api.sendMessage(playerId, [cStr("Welcome to Dungeon Break! ", MSG_COLORS.gold), cStr(`(${names})`, MSG_COLORS.white)]);
+      api.sendMessage(playerId, [cStr("Craft simple: ", MSG_COLORS.aqua), cStr("Inventaire=matériaux", MSG_COLORS.white), cStr(" | ", MSG_COLORS.gray), cStr("Workbench=armes", MSG_COLORS.white), cStr(" | ", MSG_COLORS.gray), cStr("Artisan=armures", MSG_COLORS.white), cStr(" — /dbg crafts", MSG_COLORS.gray)])
+    }
+  } catch(e) { reportErrorToOwner(e); }
   // Give a Wood Sword if player has no item containing "Sword"
   try {
     let hasSword = false;
