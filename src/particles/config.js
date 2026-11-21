@@ -496,6 +496,20 @@ export const PRESETS = {
       { timeFraction: 1, minColor: [...hexToRgb("#00FFFF"), 0.2], maxColor: [...hexToRgb("#FFFFFF"), 0] },
     ],
   }),
+  // Nova: green crescent (from Block Pirate Spring/Eagle windBlade) — Lime Quick
+  novaCrescent: () => ({
+    texture: PARTICLE_TEXTURES.star,
+    minLifeTime: 0.32, maxLifeTime: 0.58,
+    minEmitPower: 0.9, maxEmitPower: 1.8,
+    minSize: 0.22, maxSize: 0.44,
+    gravity: [0, -0.8, 0],
+    blendMode: 1,
+    manualEmitCount: 14,
+    colorGradients: [
+      { timeFraction: 0, minColor: [...hexToRgb("#7CFC00"), 1], maxColor: [...hexToRgb("#ADFF2F"), 1] },
+      { timeFraction: 1, minColor: [...hexToRgb("#32CD32"), 0.6], maxColor: [...hexToRgb("#FFFFFF"), 0] },
+    ],
+  }),
   // Nova: laser beam (long line)
   novaLaser: () => ({
     texture: PARTICLE_TEXTURES.star,
