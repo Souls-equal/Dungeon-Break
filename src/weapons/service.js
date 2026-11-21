@@ -169,6 +169,52 @@ function nearbyMobs(api, centerPos, radius) {
   } catch (_) {}
   return out;
 }
+// ── Nouveau: trajectoire complète sans cubes par point ──
+function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+function segDistSq(p, a, b) {
+  const abx = b[0]-a[0], aby = b[1]-a[1], abz = b[2]-a[2];
+  const apx = p[0]-a[0], apy = p[1]-a[1], apz = p[2]-a[2];
+  const ab2 = abx*abx+aby*aby+abz*abz;
+  let t = 0;
+  if (ab2 > 1e-4) t = clamp((apx*abx+apy*aby+apz*abz)/ab2, 0, 1);
+  const cx = a[0]+abx*t, cy = a[1]+aby*t, cz = a[2]+abz*t;
+  const dx = p[0]-cx, dy = p[1]-cy, dz = p[2]-cz;
+  return dx*dx+dy*dy+dz*dz;
+}
+function mobsOnBeam(api, start, end, radius) {
+  const out = [];
+  if (!api || !start || !end) return out;
+  const r2 = radius*radius;
+  let ids = [];
+  try { ids = (typeof api.getMobIds === "function" ? api.getMobIds() : []) || []; } catch(_) { ids = []; }
+  // Fallback: si getMobIds vide, tente getEntitiesInRect sur la grosse AABB du segment
+  if (!ids.length) {
+    try {
+      if (typeof api.getEntitiesInRect === "function") {
+        const pad = radius + 2;
+        const min = [Math.min(start[0], end[0])-pad, Math.min(start[1], end[1])-pad, Math.min(start[2], end[2])-pad];
+        const max = [Math.max(start[0], end[0])+pad, Math.max(start[1], end[1])+pad, Math.max(start[2], end[2])+pad];
+        ids = api.getEntitiesInRect(min, max) || [];
+      }
+    } catch(_) {}
+  }
+  for (let i = 0; i < ids.length; i++) {
+    const id = ids[i];
+    try {
+      if (deletedEntities.has(String(id))) continue;
+      if (typeof api.getEntityType === "function") {
+        const t = api.getEntityType(id);
+        if (t === "Player") continue;
+      }
+      const p = api.getPosition(id);
+      if (!p) continue;
+      const h0 = [p[0], p[1]+0.25, p[2]], h1 = [p[0], p[1]+1.0, p[2]], h2 = [p[0], p[1]+1.75, p[2]];
+      const d2 = Math.min(segDistSq(h0, start, end), segDistSq(h1, start, end), segDistSq(h2, start, end));
+      if (d2 <= r2+4) out.push({ id, pos: p });
+    } catch(_) {}
+  }
+  return out;
+}
 // isAlive pas fiable -> on track les deletes via onEntityDeleted/onMobDespawned
 const deletedEntities = new Set(); // mobId/thrownId déjà supprimés
 export function markEntityDeleted(entityId) {
@@ -573,19 +619,24 @@ function novaLaserTick(api, now) {
     const dir = l.dir;
     const range = l.range;
     const radius = l.radius ?? 8;
+    // ── nouveau: un seul test sur tout le segment (au lieu de 30 cubes/tick)
+    // plus fiable, couvre toute la trajectoire d'un coup, pas de limite AABB par point
+    try {
+      const end = [l.startPos[0]+dir[0]*range, l.startPos[1]+dir[1]*range, l.startPos[2]+dir[2]*range];
+      const hits = mobsOnBeam(api, l.startPos, end, radius);
+      for (let h = 0; h < hits.length; h++) {
+        try { damageMob(api, hits[h].id, l.dmg, l.ownerId); } catch(_) {}
+      }
+    } catch(_) {}
     const step = 1.2;
     const steps = Math.ceil(range / step);
     for (let s = 1; s <= steps; s++) {
+      if (s % 2 !== 0) continue;
       const t = s * step;
       const x = l.startPos[0] + dir[0]*t;
       const y = l.startPos[1] + dir[1]*t;
       const z = l.startPos[2] + dir[2]*t;
       const pos = [x,y,z];
-      const nears = nearbyMobs(api, pos, radius);
-      for (const { id } of nears) {
-        try { damageMob(api, id, l.dmg, l.ownerId); } catch(_) {}
-      }
-      if (s % 2 !== 0) continue;
       try { spawnAt(api, pos, "novaLaser", { radius: 0.4, height: 0.5 }); } catch(_) {}
     }
     try { spawnAt(api, l.startPos, "novaLaser", { radius: 0.6, height: 0.7 }); } catch(_) {}
