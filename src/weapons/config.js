@@ -146,7 +146,7 @@ export const SET_ABILITIES = {
     laserPerCharge: 20, // ticks = 1s
     laserDps: 9,
     laserRange: 36,
-    laserRadius: 5,
+    laserRadius: 7,
     crescentDamageFrac: 0.65,
     crescentRange: 12,
     crescentSpeed: 1.8,
