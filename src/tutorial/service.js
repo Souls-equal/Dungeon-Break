@@ -1,18 +1,16 @@
 /**
- * Tutoriel jouable ~90s — 3 étapes, groundArrowPath natif.
- * 1) Join → Wooden Key + flèche rouge vers crate [31.5,20,-0.5]
- * 2) generateChest() → message "récupère le loot"
- * 3) Flèche verte vers donjon [2.5,20,-7.5]
+ * Tutorial ~90s — 3 steps, native groundArrowPath.
+ * 1) Join → Wooden Key + red arrow to crate [31.5,20,-0.5]
+ * 2) generateChest() → "collect the loot"
+ * 3) Green arrow to dungeon [2.5,20,-7.5]
  * Flag hasDoneTutorial via api.get/setPlayerDbValue.
  */
 export const TUTORIAL_DB_KEY = "dungeonBreak.tutorial.v1";
 const TUTORIAL_STEP_KEY = "dungeonBreak.tutorial.step";
 export const TUTORIAL_STEPS = ["crate", "loot", "dungeon", "done"];
 
-// Nouvelles coords fournies
 export const TUTORIAL_CRATE_TARGET = [31.5, 20, -0.5];
 export const TUTORIAL_DUNGEON_TARGET = [2.5, 20, -7.5];
-// Positions block correspondantes (pour debug)
 export const TUTORIAL_CRATE_POS = [31, 20, -1];
 export const TUTORIAL_PORTAL_POS = [2, 21, -8];
 
@@ -49,20 +47,18 @@ function clearArrow(api, playerId) {
 }
 
 export const TUTORIAL_MESSAGES = {
-  join: "Tutorial: ouvre la crate → flèche rouge",
-  crateOpened: "Récupère le loot dans la crate !",
-  toDungeon: "Bien ! Cherche des clés dans le donjon → flèche verte",
-  final: "Bien joué !",
+  join: "Tutorial: Use your key on the crate! Follow the red arrow.",
+  crateOpened: "Great! Collect the loot inside the crate.",
+  toDungeon: "Now find Keys inside the dungeon! Follow the green arrow.",
+  final: "Well done!",
 };
 
 export function onTutorialJoin(api, playerId) {
   if (hasDoneTutorial(api, playerId)) return false;
   try { api.setPlayerDbValue(playerId, TUTORIAL_DB_KEY, "started"); api.setPlayerDbValue(playerId, TUTORIAL_STEP_KEY, "crate"); } catch {}
-  // 1) Donne la clé tuto
   try {
     if (typeof api.giveItem === "function") api.giveItem(playerId, "Wooden Key", 1, { customDisplayName: "Tutorial Key", customDescription: "Your first key.\nUsed in the tutorial." });
   } catch {}
-  // Flèche rouge vers crate
   setArrow(api, playerId, "red", TUTORIAL_CRATE_TARGET);
   try { api.sendMessage(playerId, [{ str: TUTORIAL_MESSAGES.join, style: { color: "#ff5555" } }]); } catch {}
   return true;
@@ -74,8 +70,6 @@ export function onTutorialCrateOpened(api, playerId) {
   if (step !== "crate") return;
   advanceStep(api, playerId, "loot");
   try { api.sendMessage(playerId, [{ str: TUTORIAL_MESSAGES.crateOpened, style: { color: "#FFFF55" } }]); } catch {}
-  // 3) Après avoir dit de récupérer, on guide vers le donjon
-  // Petit délai pour laisser le joueur loot, mais on pose déjà la flèche verte
   setArrow(api, playerId, "#69EA5E", TUTORIAL_DUNGEON_TARGET);
   try { api.sendMessage(playerId, [{ str: TUTORIAL_MESSAGES.toDungeon, style: { color: "#69EA5E" } }]); } catch {}
   advanceStep(api, playerId, "dungeon");
@@ -90,12 +84,10 @@ export function onTutorialDungeonEntered(api, playerId) {
   try { api.sendMessage(playerId, [{ str: TUTORIAL_MESSAGES.final, style: { color: "#FFD700" } }]); } catch {}
 }
 
-// Legacy compat: buildTutorialConfig encore importé ailleurs
 export function buildTutorialConfig(portalPos, cratePos) {
   return { portalPos, cratePos, crateTarget: TUTORIAL_CRATE_TARGET, dungeonTarget: TUTORIAL_DUNGEON_TARGET };
 }
 export const TUTORIAL_CONFIG = buildTutorialConfig(TUTORIAL_PORTAL_POS, TUTORIAL_CRATE_POS);
-// keep old tick for compat no-op
 export function tickTutorialArrows() {}
 export function onTutorialComplete(api, playerId) { markDone(api, playerId); }
 export function onTutorialPortalUsed() {}

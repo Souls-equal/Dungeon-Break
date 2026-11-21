@@ -1941,7 +1941,7 @@ onMobDamagingPlayer = (mobId, playerId, damageDealt, ...rest) => {
   if (Number.isFinite(armorModified) && Number.isFinite(Number(dmg))) return armorModified;
   if (scaled !== undefined) return scaled;
 };
-// Environmental damage (lava, fall) — also respect Magmasteel lava resist and Kingly Diamond shield
+// Environmental damage (lava, fall) — lava always hurts, even at spawn
 onPlayerTookDamage = (playerId, damage, cause) => {
   try {
     let dmg = Number(damage);
@@ -1950,14 +1950,12 @@ onPlayerTookDamage = (playerId, damage, cause) => {
     const isLava = causeStr.includes("lava") || causeStr.includes("fire");
     let modified = dmg;
     try {
-      const counts = (()=>{ try{ const c=armorTempDefense(playerId); return c;}catch(_){return 0;}})();
-      // reuse onArmorDamaged for lava resist (it checks isInLava)
       const am = onArmorDamaged(api, playerId, null, dmg);
       if (Number.isFinite(am)) modified = am;
-      if (isLava && am === dmg) {
-        // still apply lava-specific path: onArmorDamaged already did generic; ensure at least resist for pure lava
-      }
     } catch(_){}
+    // never swallow lava damage at spawn: receivingMultiplier is already in the cache
+    // but onArmorDamaged already includes Magmasteel lavaResist — return it explicitly
+    if (isLava && Number.isFinite(modified)) return modified;
     if (modified !== dmg && Number.isFinite(modified)) return modified;
   } catch(_){}
 };
@@ -2012,8 +2010,8 @@ onPlayerAttemptOpenChest = (playerId, x, y, z, isMoonstoneChest, isIronChest) =>
     if (crateIsOwnedByOther(api, [x, y, z], playerId)) {
       let data = null;
       try { data = api.getBlockData(x, y, z); } catch(e) { reportErrorToOwner(e); }
-      let ownerDisplay = data && (data.crateOwnerName || data.crateOwnerId) ? (data.crateOwnerName || data.crateOwnerId) : "another player";
-      try { const n = api.getEntityName ? api.getEntityName(data.crateOwnerId) : null; if (n) ownerDisplay = n; } catch(e) { reportErrorToOwner(e); }
+      let ownerDisplay = (data && (data.crateOwnerName || data.crateOwnerId)) ? (data.crateOwnerName || data.crateOwnerId) : "another player";
+      try { const n = (data && data.crateOwnerId && typeof api.getEntityName === "function") ? api.getEntityName(data.crateOwnerId) : null; if (n) ownerDisplay = n; } catch(e) { reportErrorToOwner(e); }
       api.sendMessage(playerId, [cStr(`This crate belongs to ${ownerDisplay}`, MSG_COLORS.red)]);
       return "preventOpen";
     }
