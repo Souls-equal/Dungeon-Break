@@ -7,36 +7,36 @@
 
 export const ITEM_STAT_OVERRIDES = {
  // ── Tier 1 base materials ──
- "Amethite": { displayName: "Amethite Ingot", description: "Tier 1 crystal ingot. Craft Amethite armor." },
- "Magmasteel": { displayName: "Magmasteel Ingot", description: "Tier 1 molten steel. Craft Magmasteel armor." },
- "Rubellite": { displayName: "Rubellite Gem", description: "Tier 1 blood gem. Craft Rubellite armor." },
- "Serpentite": { displayName: "Serpentite Scale", description: "Tier 1 serpent scale. Craft Serpentite armor." },
+ "Amethite": { displayName: "Amethite Ingot", description: "Tier 1 crystal — Inventaire: 4 Amethite Fragment → 1. → Artisan Bench: armure | Workbench: arme." },
+ "Magmasteel": { displayName: "Magmasteel Ingot", description: "Tier 1 steel — Inventaire: 4 Magmasteel Fragment → 1. → Artisan Bench: armure | Workbench: arme." },
+ "Rubellite": { displayName: "Rubellite Gem", description: "Tier 1 gem — Inventaire: 4 Rubellite Fragment → 1. → Artisan Bench: armure | Workbench: arme." },
+ "Serpentite": { displayName: "Serpentite Scale", description: "Tier 1 scale — Inventaire: 4 Serpentite Fragment → 1. → Artisan Bench: armure | Workbench: arme." },
  "Amethite Fragment": { displayName: "Amethite Fragment", description: "Common shard." },
  "Magmasteel Fragment": { displayName: "Magmasteel Fragment", description: "Common shard." },
  "Rubellite Fragment": { displayName: "Rubellite Fragment", description: "Common shard." },
  "Serpentite Fragment": { displayName: "Serpentite Fragment", description: "Uncommon shard." },
 
  // ── Tier 2 alloys ──
- "Iron Plate": { displayName: "Cursemetal Ingot", description: "Tier 2 cursed alloy. Craft Cursemetal armor at Artisan Bench." },
- "Gold Plate": { displayName: "Kingly Amethite Ingot", description: "Tier 2 royal alloy. Craft Kingly Amethite armor." },
- "Machine Hull": { displayName: "Kingly Diamond Ingot", description: "Tier 2 reinforced core. Craft Kingly Diamond armor." },
+ "Iron Plate": { displayName: "Cursemetal Ingot", description: "Tier 2 — Inventaire: 2 Rubellite Frag + 2 Serpentite Frag + 1 Iron Bar → 1. → Artisan Bench: Cursemetal set." },
+ "Gold Plate": { displayName: "Kingly Amethite Ingot", description: "Tier 2 — Inventaire: 3 Amethite + 2 Gold Bar + 1 Diamond Fragment → 1. → Artisan Bench: Kingly Amethite." },
+ "Machine Hull": { displayName: "Kingly Diamond Ingot", description: "Tier 2 — Inventaire: 2 Diamond + 2 Gold Bar + 2 Amethite Frag → 1. → Artisan Bench: Kingly Diamond." },
 
  // ── Tier 3 alloys ──
- "Steel Bar": { displayName: "Sanguine Alloy", description: "Tier 3 blood-forged alloy. Craft Sanguine armor." },
- "Logic Board": { displayName: "Spectral Essence", description: "Tier 3 ethereal essence. Craft Spectral armor." },
- "Copper Bar": { displayName: "Geo Core", description: "Tier 3 earthen core. Craft Geo armor." },
- "Sanguine Shard": { displayName: "Sanguine Shard", description: "Tier 3 shard. Found in Uncommon+ crates. → Sanguine Alloy." },
- "Spectral Shard": { displayName: "Spectral Shard", description: "Tier 3 shard. Found in Uncommon+ crates. → Spectral Essence." },
- "Geo Shard": { displayName: "Geo Shard", description: "Tier 3 shard. Found in Rare+ crates. → Geo Core." },
- "Voltite Dust": { displayName: "Voltite Dust", description: "Tier 3-4 dust. Found in Rare+ crates. → Voltplate Core." },
+ "Steel Bar": { displayName: "Sanguine Alloy", description: "Tier 3 — Inventaire: 4 Sanguine Shard + 1 Iron Bar → 1. → Sanguine set." },
+ "Logic Board": { displayName: "Spectral Essence", description: "Tier 3 — Inventaire: 4 Spectral Shard + 2 Gold Fragment → 1. → Spectral set." },
+ "Copper Bar": { displayName: "Geo Core", description: "Tier 3 — Inventaire: 4 Geo Shard + 1 Iron Bar → 1. → Geo set." },
+ "Sanguine Shard": { displayName: "Sanguine Shard", description: "Tier 3 — Uncommon+ crate → Inventaire → Sanguine Alloy." },
+ "Spectral Shard": { displayName: "Spectral Shard", description: "Tier 3 — Uncommon+ crate → Inventaire → Spectral Essence." },
+ "Geo Shard": { displayName: "Geo Shard", description: "Tier 3 — Rare+ crate → Inventaire → Geo Core." },
+ "Voltite Dust": { displayName: "Voltite Dust", description: "Tier 3-4 — Rare+ crate → Inventaire → Voltplate Core." },
 
  // ── Tier 4 alloys ──
- "Star Alloy": { displayName: "Astral Essence", description: "Tier 4 cosmic essence. Craft Astral armor." },
- "Voltite Cell": { displayName: "Voltplate Core", description: "Tier 4 charged core. Craft Voltplate armor." },
- "Astral Shard": { displayName: "Astral Shard", description: "Tier 4 shard. Found in Epic+ crates. → Astral Essence." },
- "Comet Shard": { displayName: "Comet Shard", description: "Tier 4 comet fragment. Epic+ crates. Used for Astral armor." },
- "Raw Voltite": { displayName: "Raw Voltite", description: "Tier 4 raw voltite. Epic+ crates. Used for Voltplate armor." },
- "Moonstone Dust": { displayName: "Moonstone Dust", description: "Mystical dust. Used for Spectral & Astral crafts." },
+ "Star Alloy": { displayName: "Astral Essence", description: "Tier 4 — Inventaire: 3 Astral Shard + 2 Comet Shard + 1 Moonstone Dust → 1. → Astral set." },
+ "Voltite Cell": { displayName: "Voltplate Core", description: "Tier 4 — Inventaire: 3 Voltite Dust + 2 Raw Voltite + 1 Copper Wire → 1. → Voltplate set." },
+ "Astral Shard": { displayName: "Astral Shard", description: "Tier 4 — Epic+ crate → Inventaire → Astral Essence." },
+ "Comet Shard": { displayName: "Comet Shard", description: "Tier 4 — Epic+ crate → Astral set." },
+ "Raw Voltite": { displayName: "Raw Voltite", description: "Tier 4 — Epic+ crate → Voltplate set." },
+ "Moonstone Dust": { displayName: "Moonstone Dust", description: "Tier 3-4 — Rare+ crate → Spectral & Astral (Inventaire)." },
  "Comet Core": { displayName: "Comet Core", description: "Rare comet core. Used in endgame crafts." },
 
  // ── Armors Tier 1 ──
@@ -116,7 +116,7 @@ export const ITEM_STAT_OVERRIDES = {
  "Voltplate Gauntlets": { displayName: "Voltplate Gauntlets", description: "Voltplate Armor — Shock on hit. More pieces = more damage/targets, slow and chain lightning with 5 pieces." },
 
  "Moonstone Sword": { displayName: "Moonstone Sword", description: "Tier 5 sword — Balanced blade — high damage, crit 1.35x. 52 dmg. No proc — pure damage after Diamond." },
- "Nova Alloy": { displayName: "Nova Alloy", description: "Tier 6 nova alloy. Craft Nova armor & Nova Blade at Artisan Bench." },
+ "Nova Alloy": { displayName: "Nova Alloy", description: "Tier 6 — Inventaire: 2 Star Alloy + 1 Voltite Cell → 1 Nova Matter. → Artisan: Nova set | Workbench: Nova Blade." },
  "Nova Shard": { displayName: "Nova Shard", description: "Tier 6 shard. Found in Epic+ crates. → Nova Alloy." },
  "Nova Helmet": { displayName: "Nova Helmet", description: "Nova Armor — Charges on kill for damage. Small explosion at 4 charges and major Nova at 10 with full set." },
  "Nova Chestplate": { displayName: "Nova Chestplate", description: "Nova Armor — Charges on kill for damage. Small explosion at 4 charges and major Nova at 10 with full set." },
