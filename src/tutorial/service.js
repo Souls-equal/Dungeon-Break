@@ -3,7 +3,7 @@ import { PRESETS } from "../particles/config.js";
 
 /**
  * Tutoriel jouable ~90s — rapide, visuel, 3 messages max.
- * Couloir: pad VeryEasy → coffre clé → crate Rare → craft Amethite → mob → récompense
+ * Couloir: pad VeryEasy [2,21,-8] → Wood Crate [30,23,3] → craft → mob
  * Guidage par flèches directionnelles (2 types : sol + aérienne), pas de nouveau shop.
  * Flag hasDoneTutorial via api.get/setPlayerDbValue.
  */
@@ -27,9 +27,6 @@ export function shouldRunTutorial(api, playerId) {
   return !hasDoneTutorial(api, playerId);
 }
 
-// Config à remplir avec tes coordonnées (blocks) — null = désactivé jusqu'à coords fournies
-// portalPos: [x,y,z] du premier portail (Lime Concrete Very Easy)
-// cratePos: [x,y,z] de la première crate Rare
 export function buildTutorialConfig(portalPos, cratePos) {
   return {
     portalPos,
@@ -41,12 +38,12 @@ export function buildTutorialConfig(portalPos, cratePos) {
   };
 }
 
-// Renseigne ici dès que tu as les coords (ou laisse null pour désactiver les flèches)
-export const TUTORIAL_CONFIG = buildTutorialConfig(null, null);
+// Coords fournies: Super facile [2,21,-8], Wood Crate [30,23,3]
+export const TUTORIAL_CONFIG = buildTutorialConfig([2, 21, -8], [30, 23, 3]);
 
 export const TUTORIAL_MESSAGES = {
   welcome: "→ Suis la flèche verte → portail",
-  afterPortal: "Coffre → clé → crate Rare",
+  afterPortal: "Coffre → clé → crate",
   final: "Bien joué ! /dbg crafts pour crafter",
 };
 
@@ -60,8 +57,10 @@ export function advanceStep(api, playerId, step) {
   try { api.setPlayerDbValue(playerId, TUTORIAL_STEP_KEY, step); } catch {}
 }
 
+function lerp(a, b, t) { return a + (b - a) * t; }
+
 export function tickTutorialArrows(api, tutorialConfig, playerId) {
-  if (!tutorialConfig || !tutorialConfig.portalPos || !api.getPosition) return;
+  if (!tutorialConfig || !tutorialConfig.portalPos) return;
   const step = getStep(api, playerId);
   let target = null;
   if (step === "portal") target = tutorialConfig.portalPos;
@@ -69,8 +68,32 @@ export function tickTutorialArrows(api, tutorialConfig, playerId) {
   if (!target) return;
   try {
     const col = "#55FF55";
-    const preset = step === "portal" ? PRESETS.padRing(col) : PRESETS.entryVortex(col);
-    spawnParticles(api, [target[0] + 0.5, target[1] + 0.5, target[2] + 0.5], preset, { radius: 0.5, height: 1.2 });
+    // 2 types: 0=anneau au sol (padRing), 1=vortex aérien (entryVortex) — alternés
+    const presetMain = step === "portal" ? PRESETS.padRing(col) : PRESETS.entryVortex(col);
+    spawnParticles(api, [target[0] + 0.5, target[1] + 0.5, target[2] + 0.5], presetMain, { radius: 0.5, height: 1.2 });
+
+    // Flèches intermédiaires le long du trajet (tous les ~4 blocs)
+    // Évite le spam: on tire le trajet depuis position joueur ou lobby vers cible
+    let from = null;
+    try {
+      const p = api.getPosition ? api.getPosition(playerId) : null;
+      if (p && typeof p.x === "number") from = [p.x, p.y, p.z];
+      else if (Array.isArray(p)) from = p;
+    } catch {}
+    if (!from) from = step === "portal" ? [10, 21, 10] : tutorialConfig.portalPos;
+    const dx = target[0] - from[0], dz = target[2] - from[2];
+    const dist = Math.hypot(dx, dz);
+    const steps = Math.min(4, Math.floor(dist / 4));
+    for (let i = 1; i <= steps; i++) {
+      const t = i / (steps + 1);
+      const x = lerp(from[0], target[0], t);
+      const z = lerp(from[2], target[2], t);
+      const y = lerp(from[1], target[1], t) + 0.3;
+      // alterne les 2 types pour montrer la variété
+      const preset = i % 2 === 0 ? PRESETS.padRing(col) : PRESETS.entryVortex(col);
+      const small = { ...preset, manualEmitCount: Math.max(4, Math.floor((preset.manualEmitCount || 12) / 3)), minSize: (preset.minSize || 0.3) * 0.7, maxSize: (preset.maxSize || 0.5) * 0.7 };
+      spawnParticles(api, [x, y, z], small, { radius: 0.3, height: 0.8 });
+    }
   } catch {}
 }
 
