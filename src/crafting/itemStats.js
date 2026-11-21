@@ -6,38 +6,38 @@
  */
 
 export const ITEM_STAT_OVERRIDES = {
- // ── Tier 1 base materials (dungeon shards → ingots) ──
- "Amethite": { displayName: "Amethite Ingot", description: "Dungeon crystal. Inventory: 4 Amethite Fragment → 1. Forged at Artisan Bench (armor) or Workbench (weapons)." },
- "Magmasteel": { displayName: "Magmasteel Ingot", description: "Volcanic alloy forged in deep furnaces. Inventory: 4 Magmasteel Fragment → 1. Artisan Bench: armor | Workbench: weapons." },
- "Rubellite": { displayName: "Rubellite Gem", description: "Blood-red dungeon gem. Inventory: 4 Rubellite Fragment → 1. Artisan Bench: armor | Workbench: weapons." },
- "Serpentite": { displayName: "Serpentite Scale", description: "Hardened scales from dungeon serpents. Inventory: 4 Serpentite Fragment → 1. Artisan Bench: armor | Workbench: weapons." },
- "Amethite Fragment": { displayName: "Amethite Shard", description: "A faintly glowing crystal shard. Found in Common dungeon crates. Combine 4 → Amethite Ingot." },
- "Magmasteel Fragment": { displayName: "Magmasteel Shard", description: "Hot to the touch. Found in Common crates. Combine 4 → Magmasteel Ingot." },
- "Rubellite Fragment": { displayName: "Rubellite Shard", description: "Pulses with inner light. Found in Common crates. Combine 4 → Rubellite Gem." },
- "Serpentite Fragment": { displayName: "Serpentite Scale Fragment", description: "Irregular green scale fragment. Found in Uncommon crates. Combine 4 → Serpentite Scale." },
+ // ── Tier 1 materials ──
+ "Amethite": { displayName: "Amethite Ingot", description: "Material for Amethite set. 4 Amethite Shard → 1 (Inventory)." },
+ "Magmasteel": { displayName: "Magmasteel Ingot", description: "Material for Magmasteel set. 4 Magmasteel Shard → 1 (Inventory)." },
+ "Rubellite": { displayName: "Rubellite Gem", description: "Material for Rubellite set. 4 Rubellite Shard → 1 (Inventory)." },
+ "Serpentite": { displayName: "Serpentite Scale", description: "Material for Serpentite set. 4 Serpentite Fragment → 1 (Inventory)." },
+ "Amethite Fragment": { displayName: "Amethite Shard", description: "Found in Common crates. 4 → 1 Amethite Ingot (Inventory)." },
+ "Magmasteel Fragment": { displayName: "Magmasteel Shard", description: "Found in Common crates. 4 → 1 Magmasteel Ingot (Inventory)." },
+ "Rubellite Fragment": { displayName: "Rubellite Shard", description: "Found in Common crates. 4 → 1 Rubellite Gem (Inventory)." },
+ "Serpentite Fragment": { displayName: "Serpentite Scale Fragment", description: "Found in Uncommon crates. 4 → 1 Serpentite Scale (Inventory)." },
 
- // ── Tier 2 alloys (advanced dungeon alloys) ──
- "Iron Plate": { displayName: "Cursemetal Ingot", description: "Cursed alloy that spreads malice. Inventory: 2 Rubellite Shard + 2 Serpentite Scale Fragment + 1 Iron Bar → 1. Forges the Cursemetal armor set." },
- "Gold Plate": { displayName: "Kingly Amethite Crown Ingot", description: "Royal amethyst infused with gold. Inventory: 3 Amethite Ingot + 2 Gold Bar + 1 Diamond Fragment → 1. Forges the Kingly Amethite set." },
- "Machine Hull": { displayName: "Kingly Diamond Regalia Ingot", description: "A king's ransom in diamond and gold. Inventory: 2 Diamond + 2 Gold Bar + 2 Amethite Shard → 1. Forges the Kingly Diamond set." },
+ // ── Tier 2 materials ──
+ "Iron Plate": { displayName: "Cursemetal Ingot", description: "Material for Cursemetal set. 2 Rubellite Shard + 2 Serpentite Fragment + 1 Iron Bar → 1 (Inventory)." },
+ "Gold Plate": { displayName: "Kingly Amethite Crown Ingot", description: "Material for Kingly Amethite set. 3 Amethite Ingot + 2 Gold Bar + 1 Diamond Fragment → 1 (Inventory)." },
+ "Machine Hull": { displayName: "Kingly Diamond Regalia Ingot", description: "Material for Kingly Diamond set. 2 Diamond + 2 Gold Bar + 2 Amethite Shard → 1 (Inventory)." },
 
- // ── Tier 3 alloys (soul & earth cores) ──
- "Steel Bar": { displayName: "Sanguine Heart Alloy", description: "Beats like a living heart. Inventory: 4 Sanguine Shard + 1 Iron Bar → 1. Forges the Sanguine lifesteal set." },
- "Logic Board": { displayName: "Spectral Veil Essence", description: "Whispers from the other side. Inventory: 4 Spectral Shard + 2 Gold Fragment → 1. Forges the Spectral veil set." },
- "Copper Bar": { displayName: "Geomancer's Core", description: "The dungeon's bedrock, condensed. Inventory: 4 Geo Shard + 1 Iron Bar → 1. Forges the Geo shockwave set." },
- "Sanguine Shard": { displayName: "Sanguine Shard", description: "A blood-warm crystal weeping ichor. Uncommon+ crates → Inventory → Sanguine Heart Alloy." },
- "Spectral Shard": { displayName: "Spectral Shard", description: "Translucent and cold. Uncommon+ crates → Inventory → Spectral Veil Essence." },
- "Geo Shard": { displayName: "Geo Shard", description: "Heavy with the weight of stone. Rare+ crates → Inventory → Geomancer's Core." },
- "Voltite Dust": { displayName: "Voltite Spark", description: "Crackles with static. Rare+ crates → Inventory → Voltplate Core." },
+ // ── Tier 3 materials ──
+ "Steel Bar": { displayName: "Sanguine Heart Alloy", description: "Material for Sanguine set. 4 Sanguine Shard + 1 Iron Bar → 1 (Inventory)." },
+ "Logic Board": { displayName: "Spectral Veil Essence", description: "Material for Spectral set. 4 Spectral Shard + 2 Gold Fragment → 1 (Inventory)." },
+ "Copper Bar": { displayName: "Geomancer's Core", description: "Material for Geo set. 4 Geo Shard + 1 Iron Bar → 1 (Inventory)." },
+ "Sanguine Shard": { displayName: "Sanguine Shard", description: "Found in Uncommon+ crates. → Sanguine Heart Alloy (Inventory)." },
+ "Spectral Shard": { displayName: "Spectral Shard", description: "Found in Uncommon+ crates. → Spectral Veil Essence (Inventory)." },
+ "Geo Shard": { displayName: "Geo Shard", description: "Found in Rare+ crates. → Geomancer's Core (Inventory)." },
+ "Voltite Dust": { displayName: "Voltite Spark", description: "Found in Rare+ crates. → Voltplate Core (Inventory)." },
 
- // ── Tier 4 alloys (cosmic & storm) ──
- "Star Alloy": { displayName: "Astral Conflux Essence", description: "Stardust bound by comet fire. Inventory: 3 Astral Shard + 2 Comet Shard + 1 Moonstone Dust → 1. Forges the Astral set." },
- "Voltite Cell": { displayName: "Voltplate Storm Core", description: "A bottled thunderstorm. Inventory: 3 Voltite Spark + 2 Raw Voltite + 1 Copper Wire → 1. Forges the Voltplate set." },
- "Astral Shard": { displayName: "Astral Shard", description: "Starlight frozen in crystal. Epic+ crates → Inventory → Astral Conflux Essence." },
- "Comet Shard": { displayName: "Comet Shard", description: "Still warm from atmospheric entry. Epic+ crates → Astral set." },
- "Raw Voltite": { displayName: "Raw Voltite Crystal", description: "Unrefined storm crystal. Epic+ crates → Voltplate set." },
- "Moonstone Dust": { displayName: "Moonstone Dust", description: "Lunar dust for binding spectral and astral crafts. Rare+ crates → Spectral & Astral recipes." },
- "Comet Core": { displayName: "Comet Core", description: "Heart of a fallen star. Legendary craft component for endgame Astral forging." },
+ // ── Tier 4 materials ──
+ "Star Alloy": { displayName: "Astral Conflux Essence", description: "Material for Astral set. 3 Astral Shard + 2 Comet Shard + 1 Moonstone Dust → 1 (Inventory)." },
+ "Voltite Cell": { displayName: "Voltplate Storm Core", description: "Material for Voltplate set. 3 Voltite Spark + 2 Raw Voltite + 1 Copper Wire → 1 (Inventory)." },
+ "Astral Shard": { displayName: "Astral Shard", description: "Found in Epic+ crates. → Astral Conflux Essence (Inventory)." },
+ "Comet Shard": { displayName: "Comet Shard", description: "Found in Epic+ crates. Used for Astral set." },
+ "Raw Voltite": { displayName: "Raw Voltite Crystal", description: "Found in Epic+ crates. Used for Voltplate set." },
+ "Moonstone Dust": { displayName: "Moonstone Dust", description: "Found in Rare+ crates. Used for Spectral & Astral crafts." },
+ "Comet Core": { displayName: "Comet Core", description: "Endgame craft component. For Astral forging." },
 
  // ── Armors Tier 1 ──
  "Amethite Helmet": { displayName: "Amethite Helmet", description: "Amethite Armor — Wave on hit. More pieces = higher chance, damage, radius and targets." },
@@ -116,8 +116,8 @@ export const ITEM_STAT_OVERRIDES = {
  "Voltplate Gauntlets": { displayName: "Voltplate Gauntlets", description: "Voltplate Armor — Shock on hit. More pieces = more damage/targets, slow and chain lightning with 5 pieces." },
 
  "Moonstone Sword": { displayName: "Moonstone Sword", description: "Tier 5 sword — Balanced blade — high damage, crit 1.35x. 52 dmg. No proc — pure damage after Diamond." },
- "Nova Alloy": { displayName: "Nova Alloy", description: "Tier 6 singularity matter. Inventory: 2 Astral Conflux Essence + 1 Voltplate Storm Core → 1. Forges the Nova annihilation set and Nova Blade." },
- "Nova Shard": { displayName: "Nova Shard", description: "A fragment of a collapsed star. Found in Epic+ crates. Combine → Nova Alloy." },
+ "Nova Alloy": { displayName: "Nova Alloy", description: "Tier 6 — 2 Star Alloy + 1 Voltite Cell → 1 Nova Matter (Inventory). For Nova set & Blade." },
+ "Nova Shard": { displayName: "Nova Shard", description: "Found in Epic+ crates. → Nova Alloy (Inventory)." },
  "Nova Helmet": { displayName: "Nova Helmet", description: "Nova Armor — Charges on kill for damage. Small explosion at 4 charges and major Nova at 10 with full set." },
  "Nova Chestplate": { displayName: "Nova Chestplate", description: "Nova Armor — Charges on kill for damage. Small explosion at 4 charges and major Nova at 10 with full set." },
  "Nova Leggings": { displayName: "Nova Leggings", description: "Nova Armor — Charges on kill for damage. Small explosion at 4 charges and major Nova at 10 with full set." },
