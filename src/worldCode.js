@@ -55,7 +55,7 @@ import { CRAFTS, ARMOR_SETS, WEAPON_SETS, SHARD_TO_MATERIAL } from "./crafting/c
 import { registerCraftingRecipes } from "./crafting/service.js";
 import { applyItemStats } from "./crafting/itemStats.js";
 import { tickCombatFx, onWeaponHit, onArmorHit, tickArmorShimmer, forgetPlayer as forgetCombatFx } from "./combatFx/service.js";
-import { refreshWeaponStats, tickWeapons, onMobKilled, forgetPlayer as forgetWeaponAbility, markEntityDeleted, onThrowableUsed, onCollision as onWeaponCollision, onCrouchChange as onNovaCrouchChange, tryNovaLaser, isNovaCrouching } from "./weapons/service.js";
+import { refreshWeaponStats, tickWeapons, onMobKilled, forgetPlayer as forgetWeaponAbility, markEntityDeleted, onThrowableUsed, onCollision as onWeaponCollision, onCrouchChange as onNovaCrouchChange, tryNovaLaser, isNovaCrouching, tryNovaCrescent } from "./weapons/service.js";
 import { parseWeaponInfo } from "./combatFx/service.js";
 import { onDamaged as onArmorDamaged, onDealingDamage as onArmorDealingDamage, onMobKilled as onArmorMobKilled, tick as tickArmors, forgetPlayer as forgetArmorAbility, getTemporaryDefense as armorTempDefense, refreshArmorDescriptions } from "./armor/service.js";
 import { shouldRunTutorial, onTutorialJoin, onTutorialCrateOpened, onTutorialDungeonEntered } from "./tutorial/service.js";
@@ -1733,21 +1733,23 @@ onPlayerChat = (playerId, chatMessage, channelName) => {
  * be in front of one must not pay twice.
  */
 onPlayerClick = (playerId, wasAltClick, x, y, z, block, targetEId) => {
-  // Nova Blade: crouch+attack even on click (block/empty) can fire laser
+  // Nova Blade: every click = crescent projectile, crouch+click = laser
   try {
-    if (isNovaCrouching(api, playerId)) {
-      let heldName = null;
-      try { const h = api.getHeldItem ? api.getHeldItem(playerId) : null; if (h && h.name) heldName = h.name; } catch(_) {}
-      if (!heldName) {
-        try {
-          if (typeof api.getSelectedInventorySlotI === "function" && typeof api.getItemSlot === "function") {
-            const idx = api.getSelectedInventorySlotI(playerId);
-            if (Number.isFinite(idx) && idx >=0 && idx <10) { const it = api.getItemSlot(playerId, idx); if (it && it.name) heldName = it.name; }
-          }
-        } catch(_) {}
-      }
-      if (heldName && String(heldName).split("|")[0].trim() === "Nova Blade") {
+    let heldName = null;
+    try { const h = api.getHeldItem ? api.getHeldItem(playerId) : null; if (h && h.name) heldName = h.name; } catch(_) {}
+    if (!heldName) {
+      try {
+        if (typeof api.getSelectedInventorySlotI === "function" && typeof api.getItemSlot === "function") {
+          const idx = api.getSelectedInventorySlotI(playerId);
+          if (Number.isFinite(idx) && idx >=0 && idx <10) { const it = api.getItemSlot(playerId, idx); if (it && it.name) heldName = it.name; }
+        }
+      } catch(_) {}
+    }
+    if (heldName && String(heldName).split("|")[0].trim() === "Nova Blade") {
+      if (isNovaCrouching(api, playerId)) {
         try { tryNovaLaser(api, playerId); } catch(_) {}
+      } else {
+        try { tryNovaCrescent(api, playerId); } catch(_) {}
       }
     }
   } catch(_) {}

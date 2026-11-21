@@ -174,7 +174,7 @@ function tryAmethite(api,pid,levelDef,pos){
   if(Math.random() > (levelDef.chance||0.15)) return;
   setCooldown(amethiteCooldown,pid);
   const dmg=levelDef.damage||6;
-  const radius=levelDef.radius||2.5;
+  const radius=levelDef.radius||5;
   const knock=levelDef.knock||0;
   const maxHits=levelDef.maxHits||1;
   // particles: charge converge then wave
@@ -317,7 +317,7 @@ export function onDamaged(api, playerId, attackerMobId, incomingDamage){
       if(Math.random() < def.dischargeChance && !onCooldown(voltDischargeCd,pid,10)){
         setCooldown(voltDischargeCd,pid);
         const dmg=def.dischargeDmg||5;
-        const radius=def.dischargeRadius||2.5;
+        const radius=def.dischargeRadius||5;
         const targets=def.dischargeTargets||1;
         const nears=nearbyMobs(api,pos,radius);
         let hit=0;
@@ -640,7 +640,7 @@ export function onMobKilled(api, playerId, mobId){
         for(let i=0;i<(mDef.count||2);i++){
           const offset=[(Math.random()-0.5)*2,0,(Math.random()-0.5)*2];
           const minePos=[p[0]+offset[0], p[1], p[2]+offset[2]];
-          geoMines.push({pos:[...minePos],owner:pid,explodeTick:globalTick+mDef.delay, dmg:mDef.damage, radius:mDef.radius, chain:mDef.chain||false, chainRadius:mDef.chainRadius||3, anchorId:id?String(id):null});
+          geoMines.push({pos:[...minePos],owner:pid,explodeTick:globalTick+mDef.delay, dmg:mDef.damage, radius:mDef.radius, chain:mDef.chain||false, chainRadius:mDef.chainRadius||5, anchorId:id?String(id):null});
           try{ spawnAt(api,minePos,"geoMineTick",{radius:0.5,height:0.4}); }catch(_){}
         }
         break;
