@@ -482,7 +482,7 @@ export const PRESETS = {
       { timeFraction: 1, minColor: [...hexToRgb("#8A2BE2"), 0], maxColor: [...hexToRgb("#000000"), 0] },
     ],
   }),
-  // Nova: slash each hit (cyan)
+  // Nova: slash each hit (cyan) — reduced from 20 to 6 after feedback "trop de particules"
   novaSlash: () => ({
     texture: PARTICLE_TEXTURES.star,
     minLifeTime: 0.35, maxLifeTime: 0.6,
@@ -490,13 +490,13 @@ export const PRESETS = {
     minSize: 0.3, maxSize: 0.55,
     gravity: [0, 0, 0],
     blendMode: 1,
-    manualEmitCount: 20,
+    manualEmitCount: 6,
     colorGradients: [
       { timeFraction: 0, minColor: [...hexToRgb("#00FFFF"), 1], maxColor: [...hexToRgb("#FFFFFF"), 1] },
       { timeFraction: 1, minColor: [...hexToRgb("#00FFFF"), 0.2], maxColor: [...hexToRgb("#FFFFFF"), 0] },
     ],
   }),
-  // Nova: green crescent (from Block Pirate Spring/Eagle windBlade) — Lime Quick
+  // Nova: green crescent (from Block Pirate Spring/Eagle windBlade) — Lime Quick — reduced 14->4
   novaCrescent: () => ({
     texture: PARTICLE_TEXTURES.star,
     minLifeTime: 0.32, maxLifeTime: 0.58,
@@ -504,13 +504,13 @@ export const PRESETS = {
     minSize: 0.22, maxSize: 0.44,
     gravity: [0, -0.8, 0],
     blendMode: 1,
-    manualEmitCount: 14,
+    manualEmitCount: 4,
     colorGradients: [
       { timeFraction: 0, minColor: [...hexToRgb("#7CFC00"), 1], maxColor: [...hexToRgb("#ADFF2F"), 1] },
       { timeFraction: 1, minColor: [...hexToRgb("#32CD32"), 0.6], maxColor: [...hexToRgb("#FFFFFF"), 0] },
     ],
   }),
-  // Nova: laser beam (long line)
+  // Nova: laser beam (long line) — reduced 30->8
   novaLaser: () => ({
     texture: PARTICLE_TEXTURES.star,
     minLifeTime: 0.4, maxLifeTime: 0.7,
@@ -518,7 +518,7 @@ export const PRESETS = {
     minSize: 0.35, maxSize: 0.65,
     gravity: [0, 0, 0],
     blendMode: 1,
-    manualEmitCount: 30,
+    manualEmitCount: 8,
     colorGradients: [
       { timeFraction: 0, minColor: [...hexToRgb("#00FFFF"), 1], maxColor: [...hexToRgb("#88FFFF"), 1] },
       { timeFraction: 1, minColor: [...hexToRgb("#FFFFFF"), 0.8], maxColor: [...hexToRgb("#00FFFF"), 0] },
