@@ -80,6 +80,15 @@ function createWorld(onlinePlayerIds, options = {}) {
   }
   // The database, per player, as the game keeps it.
   const dbValues = new Map();
+  // Tutorial is done by default in tests so "Welcome" assertions keep passing;
+  // pass { tutorial: false } to test the first-join flow.
+  if (options.tutorial !== false) {
+    for (const pid of onlinePlayerIds) {
+      const owner = `db-${pid}`;
+      if (!dbValues.has(owner)) dbValues.set(owner, new Map());
+      dbValues.get(owner).set("dungeonBreak.tutorial.v1", true);
+    }
+  }
   /** Every per-player shop item the code asked for: playerId → category → key → item. */
   const playerShop = new Map();
   /** The cards drawn in the top-right corner, and the banners queued mid-screen. */
