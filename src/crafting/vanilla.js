@@ -9,10 +9,10 @@
  * (otherwise craft does nothing / validation fails). So we use
  * valid proxies for Wood/Stone (Stick / Coal).
  *
- * Stations (réorg étape 2):
- *  - Workbench: armes (épées, arcs, etc.)
- *  - Artisan Bench: armures
- *  - Inventaire (""): matériaux (handcraft)
+ * Stations (reorg step 2):
+ *  - Workbench: weapons (swords, bows, etc.)
+ *  - Artisan Bench: armor
+ *  - Inventory (""): materials (handcraft)
  *
  * Quantities based on Bloxd.io wiki (Equipment):
  *  - armor: Helmet 5, Chestplate 8, Leggings 7, Boots 4, Gauntlets 4 (28/set)
