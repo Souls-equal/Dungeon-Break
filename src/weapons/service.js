@@ -289,6 +289,97 @@ function shieldAdd(api, playerId, add, cap) {
   } catch (_) {}
 }
 // ── Nova helpers ────────────────────────────────────────────────────
+// Ported from Block Pirate v3 — src/blocks/010-spring.js (windBlade, Lime Quick)
+// and src/blocks/020-flame.js (laser, LEN 18). Originals use api.getPlayerFacingInfo.dir
+// normalized + frame(f.dir) + eye offset + hitSeg/hitArea. We adapt to Dungeon Break
+// api (nearbyMobs/damageMob/particles). Green crescent chosen per user request.
+// ── math utils (from bpv3 src/utils/fx.js) ──────────────────────────
+function novaNorm(v) {
+  const m = Math.sqrt(v[0]*v[0]+v[1]*v[1]+v[2]*v[2]);
+  return (!m || m < 1e-4) ? [0,0,1] : [v[0]/m, v[1]/m, v[2]/m];
+}
+function novaFrame(d) {
+  const f = novaNorm(d);
+  const hl = Math.sqrt(f[0]*f[0]+f[2]*f[2]);
+  let rx, rz;
+  if (hl > 0.05) { rx = -f[2]/hl; rz = f[0]/hl; }
+  else { rx = 1; rz = 0; }
+  let ux = -rz*f[1], uy = rz*f[0]-rx*f[2], uz = rx*f[1];
+  const ul = Math.sqrt(ux*ux+uy*uy+uz*uz) || 1;
+  return { f, r: [rx,0,rz], u: [ux/ul, uy/ul, uz/ul] };
+}
+function novaFacing(api, playerId) {
+  try {
+    if (typeof api.getPlayerFacingInfo === "function") {
+      const info = api.getPlayerFacingInfo(playerId);
+      if (info && info.dir && Array.isArray(info.dir) && info.dir.length>=3) {
+        const d = info.dir;
+        const len = Math.sqrt(d[0]*d[0]+d[1]*d[1]+d[2]*d[2]);
+        if (len > 1e-6) return [d[0]/len, d[1]/len, d[2]/len];
+      }
+      if (info && info.direction && Array.isArray(info.direction)) {
+        const d = info.direction;
+        const len = Math.sqrt(d[0]*d[0]+d[1]*d[1]+d[2]*d[2]);
+        if (len > 1e-6) return [d[0]/len, d[1]/len, d[2]/len];
+      }
+    }
+  } catch(_) {}
+  return null;
+}
+function novaSoundAt(api, target, name, volume, pitch, maxDist) {
+  try {
+    if (typeof api.broadcastSound === "function") {
+      api.broadcastSound(name, volume ?? 1, pitch ?? 1, { playerIdOrPos: target, maxHearDist: maxDist ?? 20, refDistance: 6 });
+      return;
+    }
+  } catch(_) {}
+  try {
+    if (typeof api.playSound === "function") {
+      try { api.playSound(target, name, volume ?? 1, pitch ?? 1); return; } catch(_) {}
+      try { api.playSound(name, volume ?? 1, pitch ?? 1); return; } catch(_) {}
+    }
+  } catch(_) {}
+  try { if (typeof api.playSoundAt === "function") api.playSoundAt(name, target); } catch(_) {}
+}
+const WIND_ARC = 1.15, WIND_THICK = 1.1, WIND_HT = 2.5, WIND_EYE = 1.2, WIND_PTS = 14;
+function novaCrescentSlash(api, c, fr, t) {
+  for (let i = 0; i < WIND_PTS; i++) {
+    const k = -WIND_ARC + (2 * WIND_ARC) * (i / (WIND_PTS - 1 || 1));
+    const side = Math.sin(k) * (1.6 + t * 0.4);
+    const arc = Math.cos(k) * 0.15;
+    const p = [
+      c[0] + fr.f[0]*0.1 + fr.r[0]*side + fr.u[0]*arc,
+      c[1] + 0.2 + fr.f[1]*0.1 + fr.u[1]*arc,
+      c[2] + fr.f[2]*0.1 + fr.r[2]*side + fr.u[2]*arc,
+    ];
+    try { spawnAt(api, p, "novaCrescent", { radius: 0.35, height: 0.45 }); } catch(_) {}
+  }
+  try { spawnAt(api, c, "novaCrescent", { radius: 0.6, height: 0.7 }); } catch(_) {}
+}
+function novaCrescentHitAt(api, casterId, c, fr, seen, dmg) {
+  const nears = nearbyMobs(api, c, 5);
+  for (const { id, pos } of nears) {
+    const sid = String(id);
+    if (seen[sid]) continue;
+    const p = pos || posOf(api, id, null);
+    if (!p) continue;
+    const a = [p[0]-c[0], (p[1]+0.9)-c[1], p[2]-c[2]];
+    const along = a[0]*fr.f[0] + a[1]*fr.f[1] + a[2]*fr.f[2];
+    if (along < -0.3 || along > WIND_THICK) continue;
+    const side = a[0]*fr.r[0] + a[2]*fr.r[2];
+    if (Math.abs(side) > 1.85) continue;
+    const vert = a[0]*fr.u[0] + a[1]*fr.u[1] + a[2]*fr.u[2];
+    if (Math.abs(vert) > WIND_HT) continue;
+    seen[sid] = 1;
+    try { damageMob(api, id, dmg, casterId); } catch(_) {}
+    try {
+      const kb = 1.1;
+      const vx = fr.f[0]*kb*2, vy = 0.4 + Math.max(0, fr.f[1])*1.1, vz = fr.f[2]*kb*2;
+      if (typeof api.applyImpulse === "function") api.applyImpulse(id, vx, vy, vz);
+      else if (typeof api.setVelocity === "function") api.setVelocity(id, vx, vy, vz);
+    } catch(_) {}
+  }
+}
 // ── Nova crescent helpers ──────────────────────────────────────────
 function spawnNovaCrescent(api, playerId) {
   const k = keyOf(playerId);
@@ -300,40 +391,48 @@ function spawnNovaCrescent(api, playerId) {
   if (now - last < cd) return false;
   const pPos = playerPos(api, playerId);
   if (!pPos) return false;
-  const dir = getLookDir(api, playerId);
+  let dir = novaFacing(api, playerId);
+  if (!dir) dir = getLookDir(api, playerId);
+  const fr = novaFrame(dir);
   const range = abil.crescentRange ?? 12;
-  const speed = abil.crescentSpeed ?? 1.8;
-  const ticks = Math.ceil(range / speed);
+  const step = 0.7; // windBlade_STEP from Block Pirate
+  const ticks = Math.ceil(range / step);
   const base = WEAPON_BASE_DAMAGE["Nova Blade"] || 68;
   const dmg = Math.max(1, Math.round(base * (abil.crescentDamageFrac ?? 0.65)));
-  const start = [pPos[0] + dir[0]*0.8, pPos[1]+0.9 + dir[1]*0.8, pPos[2] + dir[2]*0.8];
-  novaCrescents.push({ ownerId: playerId, pos: [...start], dir: [...dir], ticksLeft: ticks, dmg, radius: 5, speed });
+  const o = [pPos[0] + fr.f[0]*1.2, pPos[1] + WIND_EYE, pPos[2] + fr.f[2]*1.2];
+  const seen = {};
+  novaCrescents.push({
+    ownerId: playerId,
+    pos: [...o],
+    dir: [...fr.f],
+    fr,
+    dist: 0,
+    range,
+    step,
+    ticksLeft: ticks,
+    dmg,
+    seen,
+    itemName: "Nova Blade",
+    speed: abil.crescentSpeed ?? 1.8,
+  });
   novaCrescentCooldown.set(k, now);
-  try { spawnAt(api, start, "novaSlash", { radius: 0.8, height: 0.6 }); } catch(_) {}
+  try { novaSoundAt(api, playerId, "cannonFire3", 0.7, 1.6, 18); } catch(_) {}
+  try { novaCrescentSlash(api, o, fr, 0); } catch(_) {}
   return true;
 }
 function novaCrescentTick(api, now) {
   if (!novaCrescents.length) return;
   for (let i = novaCrescents.length - 1; i >= 0; i--) {
     const c = novaCrescents[i];
-    // move
-    c.pos[0] += c.dir[0] * c.speed;
-    c.pos[1] += c.dir[1] * c.speed;
-    c.pos[2] += c.dir[2] * c.speed;
-    // damage cylinder
-    const nears = nearbyMobs(api, c.pos, c.radius);
-    for (const { id } of nears) {
-      try { damageMob(api, id, c.dmg, c.ownerId); } catch(_) {}
-    }
-    // crescent visual - wider arc
-    try { spawnAt(api, c.pos, "novaSlash", { radius: 0.7, height: 0.5 }); } catch(_) {}
-    try { spawnPreset(api, c.pos, p => p.novaSlash ? p.novaSlash() : null); } catch(_) {}
-    // trail
-    try { spawnAt(api, [c.pos[0]-c.dir[0]*0.5, c.pos[1]-c.dir[1]*0.5, c.pos[2]-c.dir[2]*0.5], "novaSlash", { radius: 0.4, height: 0.3 }); } catch(_) {}
+    const fr = c.fr || novaFrame(c.dir);
+    const t = c.range ? (c.dist / c.range) : 0;
+    const curPos = [c.pos[0] + fr.f[0]*c.dist, c.pos[1] + fr.f[1]*c.dist, c.pos[2] + fr.f[2]*c.dist];
+    try { novaCrescentSlash(api, curPos, fr, t); } catch(_) {}
+    try { novaCrescentHitAt(api, c.ownerId, curPos, fr, c.seen, c.dmg); } catch(_) {}
+    c.dist += c.step;
     c.ticksLeft--;
-    if (c.ticksLeft <= 0) {
-      // end burst
-      try { spawnZone(api, c.pos, "novaSlash", 1.8, 0.6); } catch(_) {}
+    if (c.dist > c.range || c.ticksLeft <= 0) {
+      try { spawnZone(api, curPos, "novaCrescent", 1.8, 0.6); } catch(_) {}
       novaCrescents.splice(i, 1);
     }
   }
@@ -366,6 +465,8 @@ function yawPitchToDir(yaw, pitch) {
   return [dx/len, dy/len, dz/len];
 }
 function getLookDir(api, playerId) {
+  const primary = novaFacing(api, playerId);
+  if (primary) return primary;
   const tryVector = (v) => {
     if (!v) return null;
     if (Array.isArray(v) && v.length >= 3 && v.every(n => Number.isFinite(n))) {
@@ -432,16 +533,21 @@ function triggerNovaLaser(api, playerId) {
   novaLaserCooldown.set(k, now);
   const pPos = playerPos(api, playerId);
   if (!pPos) return false;
-  const dir = getLookDir(api, playerId);
+  let dir = novaFacing(api, playerId);
+  if (!dir) dir = getLookDir(api, playerId);
   const durationTicks = Math.max(20, charges * (abil.laserPerCharge ?? 20));
   const dmg = abil.laserDps ?? 9;
   const range = abil.laserRange ?? 36;
   const radius = abil.laserRadius ?? 5;
+  const eyeY = 1.45;
+  const start = [pPos[0] + dir[0]*0.4, pPos[1] + eyeY + dir[1]*0.2, pPos[2] + dir[2]*0.4];
   novaLasers.push({
     playerId: k,
     ownerId: playerId,
-    startPos: [pPos[0], pPos[1]+0.9, pPos[2]],
-    dir,
+    startPos: [...start],
+    origin: [...start],
+    dir: [...dir],
+    eyeY,
     endTick: now + durationTicks,
     dmg,
     range,
@@ -449,6 +555,7 @@ function triggerNovaLaser(api, playerId) {
     startTick: now,
   });
   novaCharges.set(k, 0);
+  try { novaSoundAt(api, playerId, "cannonFire3", 1, 1.35, 22); } catch(_) {}
   try { flyingMsg(api, playerId, [{ str: "Nova Laser! ", style:{color: abil.color} }, { str: `${charges} charges` }], abil.icon || "Damage"); } catch(_) {}
   return true;
 }
@@ -457,27 +564,34 @@ function novaLaserTick(api, now) {
   for (let i = novaLasers.length - 1; i >= 0; i--) {
     const l = novaLasers[i];
     if (now >= l.endTick) { novaLasers.splice(i,1); continue; }
-    try { const cur = playerPos(api, l.ownerId); if (cur) { l.startPos = [cur[0], cur[1]+0.9, cur[2]]; } } catch(_) {}
+    try {
+      const cur = playerPos(api, l.ownerId);
+      if (cur) {
+        const d = l.dir;
+        l.startPos = [cur[0] + d[0]*0.4, cur[1] + (l.eyeY ?? 1.45) + d[1]*0.2, cur[2] + d[2]*0.4];
+      }
+    } catch(_) {}
     const dir = l.dir;
     const range = l.range;
     const radius = l.radius ?? 5;
-    const step = 1.0;
+    const step = 0.6;
     const steps = Math.ceil(range / step);
+    try { spawnAt(api, l.startPos, "novaLaser", { radius: 0.45, height: 0.55 }); } catch(_) {}
     for (let s = 1; s <= steps; s++) {
       const t = s * step;
       const x = l.startPos[0] + dir[0]*t;
       const y = l.startPos[1] + dir[1]*t;
       const z = l.startPos[2] + dir[2]*t;
       const pos = [x,y,z];
-      if (s % 3 === 0) { try { spawnAt(api, pos, "novaLaser", { radius: 0.5, height: 0.6 }); } catch(_) {} }
-      else { try { spawnPreset(api, pos, p => p.novaLaser ? p.novaLaser() : null); } catch(_) {} }
-      // thicker beam: larger hitbox
+      try {
+        if (s % 2 === 0) spawnAt(api, pos, "novaLaser", { radius: 0.5, height: 0.6 });
+        else spawnPreset(api, pos, p => p.novaLaser ? p.novaLaser() : null);
+      } catch(_) {}
       const nears = nearbyMobs(api, pos, radius);
       for (const { id } of nears) {
         try { damageMob(api, id, l.dmg, l.ownerId); } catch(_) {}
       }
     }
-    // origin glow larger
     try { spawnAt(api, l.startPos, "novaLaser", { radius: 0.9, height: 1.0 }); } catch(_) {}
     try { spawnZone(api, l.startPos, "novaLaser", 1.2, 0.6); } catch(_) {}
   }
