@@ -58,7 +58,7 @@ import { tickCombatFx, onWeaponHit, onArmorHit, tickArmorShimmer, forgetPlayer a
 import { refreshWeaponStats, tickWeapons, onMobKilled, forgetPlayer as forgetWeaponAbility, markEntityDeleted, onThrowableUsed, onCollision as onWeaponCollision, onCrouchChange as onNovaCrouchChange, tryNovaLaser, isNovaCrouching } from "./weapons/service.js";
 import { parseWeaponInfo } from "./combatFx/service.js";
 import { onDamaged as onArmorDamaged, onDealingDamage as onArmorDealingDamage, onMobKilled as onArmorMobKilled, tick as tickArmors, forgetPlayer as forgetArmorAbility, getTemporaryDefense as armorTempDefense, refreshArmorDescriptions } from "./armor/service.js";
-import { shouldRunTutorial, onTutorialJoin, TUTORIAL_CONFIG } from "./tutorial/service.js";
+import { shouldRunTutorial, onTutorialJoin, onTutorialCrateOpened, onTutorialDungeonEntered } from "./tutorial/service.js";
 const OWNER_NAME = "K4miNoK4mi";
 function getOwnerId() {
   if (typeof api.getPlayerId === "function") {
@@ -349,6 +349,7 @@ function completeLobbyCountdown(playerId, countdown) {
     applyBlessingOptions(playerId, baseClientOptions());
     const k = accountKeyOf(playerId);
     for (const ef of effects.runEffects(blessings().runOf(k))) applyRunEffect(playerId, ef);
+    try { onTutorialDungeonEntered(api, playerId); } catch(e) { reportErrorToOwner(e); }
   }
 }
 
@@ -1610,9 +1611,9 @@ onPlayerJoin = (playerId) => {
   try { applyBlessingOptions(playerId, baseClientOptions()); } catch(e) { reportErrorToOwner(e); }
   try { applyRankVisuals(playerId); } catch(e) { reportErrorToOwner(e); }
   try { refreshRanksShop(playerId); } catch(e) { reportErrorToOwner(e); }
-  // Tutoriel rapide : remplace les 2 messages si premier join
+  // Tutoriel: premier join → clé + flèche rouge crate, remplace welcome
   try {
-    if (shouldRunTutorial(api, playerId) && onTutorialJoin(api, playerId, TUTORIAL_CONFIG)) {
+    if (shouldRunTutorial(api, playerId) && onTutorialJoin(api, playerId)) {
       // tuto a pris le relais — pas de welcome normal
     } else {
       const names = DIFFICULTIES.filter((entry) => entry.fromLobby).map((entry) => entry.label).join(", ");
@@ -2054,6 +2055,7 @@ viderCoffre = emptyChest;
 generateChest = (playerId, chestPos, rarity) => {
   const result = crateGenerateChest(api, playerId, chestPos, rarity);
   if (result) {
+    try { onTutorialCrateOpened(api, playerId); } catch(e) { reportErrorToOwner(e); }
     try {
       const newly = ranks().recordCrate(playerId, rarity);
       if (newly && newly.length) handleRankUnlocks(playerId, newly);
