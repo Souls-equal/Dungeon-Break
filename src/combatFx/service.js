@@ -117,6 +117,39 @@ export function forgetPlayer(playerId) {
   hitCounters.delete(String(playerId));
 }
 
+// Complément Bloxd natif : Bloxd joue déjà bruit de coup / particules crit / flash rouge.
+// On ajoute seulement un layer sonore par set + message distinct (ne duplique pas le natif).
+const SET_SOUND = {
+  Amethite: "amethyst_chime",
+  Magmasteel: "lava_pop",
+  Rubellite: "ruby_heart",
+  Serpentite: "poison_hiss",
+  Sanguine: "sanguine_drain",
+  Spectral: "spectral_woosh",
+  Geo: "geo_thud",
+  Astral: "astral_twinkle",
+  Nova: "nova_pulse",
+  Moonstone: "moonstone_chime",
+  Cursemetal: "curse_whisper",
+  "Kingly Amethite": "royal_chime",
+  "Kingly Diamond": "diamond_shine",
+  Voltplate: "volt_zap",
+};
+function playSetSound(api, playerId, setName, pos) {
+  const sound = SET_SOUND[setName];
+  if (!sound) return;
+  const p = pos || posOf(api, playerId);
+  try {
+    if (typeof api.playSound === "function") {
+      try { api.playSound(playerId, sound, 1, 1); return; } catch {}
+      try { api.playSound(sound, p, 1, 1); return; } catch {}
+      try { api.playSound(sound); return; } catch {}
+    }
+    if (typeof api.playSoundAt === "function") api.playSoundAt(sound, p);
+    else if (typeof api.playSoundForPlayer === "function") api.playSoundForPlayer(playerId, sound);
+  } catch {}
+}
+
 function posOf(api, playerId, fallback) {
   try {
     const p = api.getPosition(playerId);
@@ -168,6 +201,14 @@ export function onWeaponHit(api, playerId, opts = {}) {
   ctr.lastProcTick.set(type, globalTick);
 
   try { weaponProcFx(api, playerPos, type, color, tierScale); } catch (_) {}
+  // Son complémentaire par set (Bloxd fait déjà le bruit de base)
+  playSetSound(api, playerId, setName, playerPos);
+  // Texte distinct couleur set (évite doublon avec flash rouge natif)
+  try {
+    if (typeof api.sendFlyingMiddleMessage === "function") {
+      api.sendFlyingMiddleMessage(playerId, [{ str: `${setName} Proc! `, style:{color} }, { str: `x${count}` }], 50, 500);
+    }
+  } catch {}
 
   return { type, setName, count, proc: true, color, tierScale, label: fxCfg.label, ability: abilityResult };
 }
@@ -200,9 +241,10 @@ export function onArmorHit(api, playerId, opts = {}) {
   ctr.lastArmorProcTick = globalTick;
 
   try { armorFx(api, playerPos2, color, tierScale); } catch (_) {}
+  playSetSound(api, playerId, setName, playerPos2);
   try {
     if (typeof api.sendFlyingMiddleMessage === "function") {
-      api.sendFlyingMiddleMessage(playerId, [{ str: "Guard! ", style:{color} }, { icon: "HealthShield" }], 50, 600);
+      api.sendFlyingMiddleMessage(playerId, [{ str: `${setName} Guard! `, style:{color} }, { icon: "HealthShield" }], 50, 600);
     }
   } catch (_) {}
   return { setName, count, proc: true, color, tierScale };
