@@ -2012,8 +2012,8 @@ onPlayerAttemptOpenChest = (playerId, x, y, z, isMoonstoneChest, isIronChest) =>
     if (crateIsOwnedByOther(api, [x, y, z], playerId)) {
       let data = null;
       try { data = api.getBlockData(x, y, z); } catch(e) { reportErrorToOwner(e); }
-      let ownerDisplay = data && (data.crateOwnerName || data.crateOwnerId) ? (data.crateOwnerName || data.crateOwnerId) : "another player";
-      try { const n = api.getEntityName ? api.getEntityName(data.crateOwnerId) : null; if (n) ownerDisplay = n; } catch(e) { reportErrorToOwner(e); }
+      let ownerDisplay = (data && (data.crateOwnerName || data.crateOwnerId)) ? (data.crateOwnerName || data.crateOwnerId) : "another player";
+      try { const n = (data && data.crateOwnerId && typeof api.getEntityName === "function") ? api.getEntityName(data.crateOwnerId) : null; if (n) ownerDisplay = n; } catch(e) { reportErrorToOwner(e); }
       api.sendMessage(playerId, [cStr(`This crate belongs to ${ownerDisplay}`, MSG_COLORS.red)]);
       return "preventOpen";
     }
