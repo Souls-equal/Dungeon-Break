@@ -188,7 +188,7 @@ export const BLESSINGS = [
   {
     id: "thorned_coat",
     name: "Thorned Coat",
-    category: "equipment",
+    category: "potion",
     rarity: "rare",
     scope: "run",
     icon: "Thorns",
@@ -350,7 +350,7 @@ export const BLESSINGS = [
   {
     id: "berserkers_brew",
     name: "Berserker's Brew",
-    category: "potion",
+    category: "equipment",
     rarity: "uncommon",
     scope: "run",
     icon: "Damage",
@@ -450,7 +450,7 @@ export const BLESSINGS = [
   {
     id: "ember_core",
     name: "Ember Core",
-    category: "potion",
+    category: "equipment",
     rarity: "rare",
     scope: "run",
     icon: "Damage",
@@ -517,7 +517,7 @@ export const BLESSINGS = [
   {
     id: "chrono_haste",
     name: "Chrono Haste",
-    category: "potion",
+    category: "physical",
     rarity: "epic",
     scope: "run",
     icon: "Haste",
@@ -529,7 +529,7 @@ export const BLESSINGS = [
   {
     id: "nightstalker",
     name: "Nightstalker",
-    category: "potion",
+    category: "physical",
     rarity: "legendary",
     scope: "run",
     icon: "Invisibility",
@@ -551,7 +551,7 @@ export const BLESSINGS = [
   {
     id: "singularity",
     name: "Singularity",
-    category: "potion",
+    category: "equipment",
     rarity: "legendary",
     scope: "run",
     icon: "VoidJump",
@@ -573,7 +573,7 @@ export const BLESSINGS = [
   {
     id: "void_pact_run",
     name: "Void Pact",
-    category: "potion",
+    category: "equipment",
     rarity: "legendary",
     scope: "run",
     icon: "Brain Rot",
