@@ -20,13 +20,9 @@
 **Métrique :** `analytics.combat.hit` + `analytics.combat.kill_time_avg`
 **Impact :** ⭐⭐⭐ / Effort : **S**
 
-### [ ] 2. Preview craft + arbre de progression
-**Problème :** Les crafts sont obscurs (`/dbg crafts`). 40% churn avant 1er craft.
-**Faire :**
-- Dans Artisan Bench : affiche arme/armure *après craft* vs équipé (dégâts/effet)
-- Arbre visuel Shards → Alloy → Set (données déjà dans `CRAFTS`, `ARMOR_SETS`, `WEAPON_SETS`, `SHARD_TO_MATERIAL`)
-- Tooltip "Il te manque 2x Sanguine Shard (Rare crate)"
-**Fichiers :** `src/crafting/config.js`, `src/crafting/itemStats.js`, `src/crafting/service.js`, shop UI
+### [x] 2. Preview craft + arbre de progression — réorg stations (2/2 done)
+**Fait :** stations réorganisées — Workbench = armes (épées/etc.), Artisan Bench = armures, Inventaire (`station: ""`) = matériaux (shards→lingots). Clarifie progression vs TODO initial (preview UI reste TODO futur).
+**Fichiers :** `src/crafting/config.js`, `src/crafting/vanilla.js`, `src/crafting/itemStats.js`, `src/crafting/service.js`, shop UI
 **Métrique :** `analytics.craft.preview_open`, `analytics.craft.success_rate`, `analytics.craft.time_to_first_craft`
 **Impact :** ⭐⭐⭐ / Effort : **M**
 

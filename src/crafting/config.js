@@ -6,9 +6,10 @@
  * Each set is Diamond-level by default, tunable via setItemStat if needed.
  * Shards are dungeon currency, materials are the visible intermediate craft step.
  *
- * Stations:
- *  - Workbench: Tier 1 (Amethite, Magmasteel, Rubellite, Serpentite)
- *  - Artisan Bench: Tier 2+ (Cursemetal, Kingly, Sanguine, Spectral, Geo, Astral, Voltplate)
+ * Stations (réorg étape 2):
+ *  - Workbench: toutes les armes (épées, dagues, arcs, etc.)
+ *  - Artisan Bench: toutes les armures (5 pièces par set)
+ *  - Inventaire (station ""): tous les matériaux (shards -> lingots/alloy)
  */
 
 // Helper to declare a craft: result = itemName, requires = [{items:[], amt}]
@@ -18,32 +19,32 @@ export const CRAFTS = [
   { isStarterRecipe: true,
     result: "Amethite",
     produces: 1,
-    station: "Workbench",
+    station: "",
     requires: [{ items: ["Amethite Fragment"], amt: 4 }],
   },
   { isStarterRecipe: true,
     result: "Magmasteel",
     produces: 1,
-    station: "Workbench",
+    station: "",
     requires: [{ items: ["Magmasteel Fragment"], amt: 4 }],
   },
   { isStarterRecipe: true,
     result: "Rubellite",
     produces: 1,
-    station: "Workbench",
+    station: "",
     requires: [{ items: ["Rubellite Fragment"], amt: 4 }],
   },
   { isStarterRecipe: true,
     result: "Serpentite",
     produces: 1,
-    station: "Workbench",
+    station: "",
     requires: [{ items: ["Serpentite Fragment"], amt: 4 }],
   },
   // Tier 2 — Cursemetal alloy (Rubellite + Serpentite mix)
   { isStarterRecipe: true,
     result: "Iron Plate",
     produces: 1,
-    station: "Workbench",
+    station: "",
     requires: [
       { items: ["Rubellite Fragment"], amt: 2 },
       { items: ["Serpentite Fragment"], amt: 2 },
@@ -55,7 +56,7 @@ export const CRAFTS = [
   { isStarterRecipe: true,
     result: "Gold Plate",
     produces: 1,
-    station: "Artisan Bench",
+    station: "",
     requires: [
       { items: ["Amethite"], amt: 3 },
       { items: ["Gold Bar"], amt: 2 },
@@ -67,7 +68,7 @@ export const CRAFTS = [
   { isStarterRecipe: true,
     result: "Machine Hull",
     produces: 1,
-    station: "Artisan Bench",
+    station: "",
     requires: [
       { items: ["Diamond"], amt: 2 },
       { items: ["Gold Bar"], amt: 2 },
@@ -79,7 +80,7 @@ export const CRAFTS = [
   { isStarterRecipe: true,
     result: "Steel Bar",
     produces: 1,
-    station: "Artisan Bench",
+    station: "",
     requires: [
       { items: ["Sanguine Shard"], amt: 4 },
       { items: ["Iron Bar"], amt: 1 },
@@ -89,7 +90,7 @@ export const CRAFTS = [
   { isStarterRecipe: true,
     result: "Logic Board",
     produces: 1,
-    station: "Artisan Bench",
+    station: "",
     requires: [
       { items: ["Spectral Shard"], amt: 4 },
       { items: ["Gold Fragment"], amt: 2 },
@@ -99,7 +100,7 @@ export const CRAFTS = [
   { isStarterRecipe: true,
     result: "Copper Bar",
     produces: 1,
-    station: "Artisan Bench",
+    station: "",
     requires: [
       { items: ["Geo Shard"], amt: 4 },
       { items: ["Iron Bar"], amt: 1 },
@@ -109,7 +110,7 @@ export const CRAFTS = [
   { isStarterRecipe: true,
     result: "Star Alloy",
     produces: 1,
-    station: "Artisan Bench",
+    station: "",
     requires: [
       { items: ["Astral Shard"], amt: 3 },
       { items: ["Comet Shard"], amt: 2 },
@@ -120,7 +121,7 @@ export const CRAFTS = [
   { isStarterRecipe: true,
     result: "Voltite Cell",
     produces: 1,
-    station: "Artisan Bench",
+    station: "",
     requires: [
       { items: ["Voltite Dust"], amt: 3 },
       { items: ["Raw Voltite"], amt: 2 },
@@ -131,7 +132,7 @@ export const CRAFTS = [
   { isStarterRecipe: true,
     result: "Nova Matter",
     produces: 1,
-    station: "Workbench",
+    station: "",
     requires: [
       { items: ["Star Alloy"], amt: 2 },
       { items: ["Voltite Cell"], amt: 1 },
@@ -147,32 +148,32 @@ export const CRAFTS = [
   // Each set has a secondary thematic filler
 
   // Amethite — Workbench + Iron Bar filler
-  { isStarterRecipe: true, result: "Amethite Helmet", produces: 1, station: "Workbench", requires: [{ items: ["Amethite"], amt: 5 }, { items: ["Iron Bar"], amt: 2 }] },
-  { isStarterRecipe: true, result: "Amethite Chestplate", produces: 1, station: "Workbench", requires: [{ items: ["Amethite"], amt: 8 }, { items: ["Iron Bar"], amt: 3 }] },
-  { isStarterRecipe: true, result: "Amethite Leggings", produces: 1, station: "Workbench", requires: [{ items: ["Amethite"], amt: 7 }, { items: ["Iron Bar"], amt: 3 }] },
-  { isStarterRecipe: true, result: "Amethite Boots", produces: 1, station: "Workbench", requires: [{ items: ["Amethite"], amt: 4 }, { items: ["Iron Bar"], amt: 2 }] },
-  { isStarterRecipe: true, result: "Amethite Gauntlets", produces: 1, station: "Workbench", requires: [{ items: ["Amethite"], amt: 4 }, { items: ["Iron Bar"], amt: 2 }] },
+  { isStarterRecipe: true, result: "Amethite Helmet", produces: 1, station: "Artisan Bench", requires: [{ items: ["Amethite"], amt: 5 }, { items: ["Iron Bar"], amt: 2 }] },
+  { isStarterRecipe: true, result: "Amethite Chestplate", produces: 1, station: "Artisan Bench", requires: [{ items: ["Amethite"], amt: 8 }, { items: ["Iron Bar"], amt: 3 }] },
+  { isStarterRecipe: true, result: "Amethite Leggings", produces: 1, station: "Artisan Bench", requires: [{ items: ["Amethite"], amt: 7 }, { items: ["Iron Bar"], amt: 3 }] },
+  { isStarterRecipe: true, result: "Amethite Boots", produces: 1, station: "Artisan Bench", requires: [{ items: ["Amethite"], amt: 4 }, { items: ["Iron Bar"], amt: 2 }] },
+  { isStarterRecipe: true, result: "Amethite Gauntlets", produces: 1, station: "Artisan Bench", requires: [{ items: ["Amethite"], amt: 4 }, { items: ["Iron Bar"], amt: 2 }] },
 
   // Magmasteel — Workbench + Coal (fire)
-  { isStarterRecipe: true, result: "Magmasteel Helmet", produces: 1, station: "Workbench", requires: [{ items: ["Magmasteel"], amt: 5 }, { items: ["Coal"], amt: 2 }] },
-  { isStarterRecipe: true, result: "Magmasteel Chestplate", produces: 1, station: "Workbench", requires: [{ items: ["Magmasteel"], amt: 8 }, { items: ["Coal"], amt: 3 }] },
-  { isStarterRecipe: true, result: "Magmasteel Leggings", produces: 1, station: "Workbench", requires: [{ items: ["Magmasteel"], amt: 7 }, { items: ["Coal"], amt: 3 }] },
-  { isStarterRecipe: true, result: "Magmasteel Boots", produces: 1, station: "Workbench", requires: [{ items: ["Magmasteel"], amt: 4 }, { items: ["Coal"], amt: 2 }] },
-  { isStarterRecipe: true, result: "Magmasteel Gauntlets", produces: 1, station: "Workbench", requires: [{ items: ["Magmasteel"], amt: 4 }, { items: ["Coal"], amt: 2 }] },
+  { isStarterRecipe: true, result: "Magmasteel Helmet", produces: 1, station: "Artisan Bench", requires: [{ items: ["Magmasteel"], amt: 5 }, { items: ["Coal"], amt: 2 }] },
+  { isStarterRecipe: true, result: "Magmasteel Chestplate", produces: 1, station: "Artisan Bench", requires: [{ items: ["Magmasteel"], amt: 8 }, { items: ["Coal"], amt: 3 }] },
+  { isStarterRecipe: true, result: "Magmasteel Leggings", produces: 1, station: "Artisan Bench", requires: [{ items: ["Magmasteel"], amt: 7 }, { items: ["Coal"], amt: 3 }] },
+  { isStarterRecipe: true, result: "Magmasteel Boots", produces: 1, station: "Artisan Bench", requires: [{ items: ["Magmasteel"], amt: 4 }, { items: ["Coal"], amt: 2 }] },
+  { isStarterRecipe: true, result: "Magmasteel Gauntlets", produces: 1, station: "Artisan Bench", requires: [{ items: ["Magmasteel"], amt: 4 }, { items: ["Coal"], amt: 2 }] },
 
   // Rubellite — Workbench + Gold Fragment (gem)
-  { isStarterRecipe: true, result: "Rubellite Helmet", produces: 1, station: "Workbench", requires: [{ items: ["Rubellite"], amt: 5 }, { items: ["Gold Fragment"], amt: 2 }] },
-  { isStarterRecipe: true, result: "Rubellite Chestplate", produces: 1, station: "Workbench", requires: [{ items: ["Rubellite"], amt: 8 }, { items: ["Gold Fragment"], amt: 3 }] },
-  { isStarterRecipe: true, result: "Rubellite Leggings", produces: 1, station: "Workbench", requires: [{ items: ["Rubellite"], amt: 7 }, { items: ["Gold Fragment"], amt: 3 }] },
-  { isStarterRecipe: true, result: "Rubellite Boots", produces: 1, station: "Workbench", requires: [{ items: ["Rubellite"], amt: 4 }, { items: ["Gold Fragment"], amt: 2 }] },
-  { isStarterRecipe: true, result: "Rubellite Gauntlets", produces: 1, station: "Workbench", requires: [{ items: ["Rubellite"], amt: 4 }, { items: ["Gold Fragment"], amt: 2 }] },
+  { isStarterRecipe: true, result: "Rubellite Helmet", produces: 1, station: "Artisan Bench", requires: [{ items: ["Rubellite"], amt: 5 }, { items: ["Gold Fragment"], amt: 2 }] },
+  { isStarterRecipe: true, result: "Rubellite Chestplate", produces: 1, station: "Artisan Bench", requires: [{ items: ["Rubellite"], amt: 8 }, { items: ["Gold Fragment"], amt: 3 }] },
+  { isStarterRecipe: true, result: "Rubellite Leggings", produces: 1, station: "Artisan Bench", requires: [{ items: ["Rubellite"], amt: 7 }, { items: ["Gold Fragment"], amt: 3 }] },
+  { isStarterRecipe: true, result: "Rubellite Boots", produces: 1, station: "Artisan Bench", requires: [{ items: ["Rubellite"], amt: 4 }, { items: ["Gold Fragment"], amt: 2 }] },
+  { isStarterRecipe: true, result: "Rubellite Gauntlets", produces: 1, station: "Artisan Bench", requires: [{ items: ["Rubellite"], amt: 4 }, { items: ["Gold Fragment"], amt: 2 }] },
 
   // Serpentite — Workbench + Iron Fragment (scale)
-  { isStarterRecipe: true, result: "Serpentite Helmet", produces: 1, station: "Workbench", requires: [{ items: ["Serpentite"], amt: 5 }, { items: ["Iron Fragment"], amt: 2 }] },
-  { isStarterRecipe: true, result: "Serpentite Chestplate", produces: 1, station: "Workbench", requires: [{ items: ["Serpentite"], amt: 8 }, { items: ["Iron Fragment"], amt: 3 }] },
-  { isStarterRecipe: true, result: "Serpentite Leggings", produces: 1, station: "Workbench", requires: [{ items: ["Serpentite"], amt: 7 }, { items: ["Iron Fragment"], amt: 3 }] },
-  { isStarterRecipe: true, result: "Serpentite Boots", produces: 1, station: "Workbench", requires: [{ items: ["Serpentite"], amt: 4 }, { items: ["Iron Fragment"], amt: 2 }] },
-  { isStarterRecipe: true, result: "Serpentite Gauntlets", produces: 1, station: "Workbench", requires: [{ items: ["Serpentite"], amt: 4 }, { items: ["Iron Fragment"], amt: 2 }] },
+  { isStarterRecipe: true, result: "Serpentite Helmet", produces: 1, station: "Artisan Bench", requires: [{ items: ["Serpentite"], amt: 5 }, { items: ["Iron Fragment"], amt: 2 }] },
+  { isStarterRecipe: true, result: "Serpentite Chestplate", produces: 1, station: "Artisan Bench", requires: [{ items: ["Serpentite"], amt: 8 }, { items: ["Iron Fragment"], amt: 3 }] },
+  { isStarterRecipe: true, result: "Serpentite Leggings", produces: 1, station: "Artisan Bench", requires: [{ items: ["Serpentite"], amt: 7 }, { items: ["Iron Fragment"], amt: 3 }] },
+  { isStarterRecipe: true, result: "Serpentite Boots", produces: 1, station: "Artisan Bench", requires: [{ items: ["Serpentite"], amt: 4 }, { items: ["Iron Fragment"], amt: 2 }] },
+  { isStarterRecipe: true, result: "Serpentite Gauntlets", produces: 1, station: "Artisan Bench", requires: [{ items: ["Serpentite"], amt: 4 }, { items: ["Iron Fragment"], amt: 2 }] },
 
   // Cursemetal — Artisan Bench (Iron Plate = Cursemetal Ingot) + Gold Fragment
   { isStarterRecipe: true, result: "Cursemetal Helmet", produces: 1, station: "Artisan Bench", requires: [{ items: ["Iron Plate"], amt: 5 }, { items: ["Gold Fragment"], amt: 2 }] },
@@ -278,45 +279,45 @@ export const WEAPON_CRAFTS = [
   { isStarterRecipe: true, result: "Serpentite Crossbow", produces: 1, station: "Workbench", requires: [{ items: ["Serpentite"], amt: 4 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }, { items: ["Iron Bar"], amt: 2 }] },
   { isStarterRecipe: true, result: "Serpentite Boomerang", produces: 1, station: "Workbench", requires: [{ items: ["Serpentite"], amt: 2 }, { items: ["Stick"], amt: 1 }] },
   // Sanguine — Artisan Bench (Steel Bar = Sanguine Alloy)
-  { isStarterRecipe: true, result: "Sanguine Sword", produces: 1, station: "Artisan Bench", requires: [{ items: ["Steel Bar"], amt: 2 }, { items: ["Stick"], amt: 1 }] },
-  { isStarterRecipe: true, result: "Sanguine Dagger", produces: 1, station: "Artisan Bench", requires: [{ items: ["Steel Bar"], amt: 1 }, { items: ["Stick"], amt: 1 }] },
-  { isStarterRecipe: true, result: "Sanguine Spear", produces: 1, station: "Artisan Bench", requires: [{ items: ["Steel Bar"], amt: 1 }, { items: ["Stick"], amt: 2 }] },
-  { isStarterRecipe: true, result: "Sanguine Club", produces: 1, station: "Artisan Bench", requires: [{ items: ["Steel Bar"], amt: 3 }, { items: ["Stick"], amt: 1 }] },
-  { isStarterRecipe: true, result: "Sanguine Mace", produces: 1, station: "Artisan Bench", requires: [{ items: ["Steel Bar"], amt: 2 }, { items: ["Stick"], amt: 1 }, { items: ["Iron Bar"], amt: 1 }] },
-  { isStarterRecipe: true, result: "Sanguine Whip", produces: 1, station: "Artisan Bench", requires: [{ items: ["Steel Bar"], amt: 1 }, { items: ["Cotton"], amt: 1 }] },
-  { isStarterRecipe: true, result: "Sanguine Bow", produces: 1, station: "Artisan Bench", requires: [{ items: ["Steel Bar"], amt: 3 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }] },
-  { isStarterRecipe: true, result: "Sanguine Crossbow", produces: 1, station: "Artisan Bench", requires: [{ items: ["Steel Bar"], amt: 4 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }, { items: ["Iron Bar"], amt: 2 }] },
-  { isStarterRecipe: true, result: "Sanguine Staff", produces: 1, station: "Artisan Bench", requires: [{ items: ["Steel Bar"], amt: 2 }, { items: ["Stick"], amt: 2 }, { items: ["Gold Bar"], amt: 1 }] },
+  { isStarterRecipe: true, result: "Sanguine Sword", produces: 1, station: "Workbench", requires: [{ items: ["Steel Bar"], amt: 2 }, { items: ["Stick"], amt: 1 }] },
+  { isStarterRecipe: true, result: "Sanguine Dagger", produces: 1, station: "Workbench", requires: [{ items: ["Steel Bar"], amt: 1 }, { items: ["Stick"], amt: 1 }] },
+  { isStarterRecipe: true, result: "Sanguine Spear", produces: 1, station: "Workbench", requires: [{ items: ["Steel Bar"], amt: 1 }, { items: ["Stick"], amt: 2 }] },
+  { isStarterRecipe: true, result: "Sanguine Club", produces: 1, station: "Workbench", requires: [{ items: ["Steel Bar"], amt: 3 }, { items: ["Stick"], amt: 1 }] },
+  { isStarterRecipe: true, result: "Sanguine Mace", produces: 1, station: "Workbench", requires: [{ items: ["Steel Bar"], amt: 2 }, { items: ["Stick"], amt: 1 }, { items: ["Iron Bar"], amt: 1 }] },
+  { isStarterRecipe: true, result: "Sanguine Whip", produces: 1, station: "Workbench", requires: [{ items: ["Steel Bar"], amt: 1 }, { items: ["Cotton"], amt: 1 }] },
+  { isStarterRecipe: true, result: "Sanguine Bow", produces: 1, station: "Workbench", requires: [{ items: ["Steel Bar"], amt: 3 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }] },
+  { isStarterRecipe: true, result: "Sanguine Crossbow", produces: 1, station: "Workbench", requires: [{ items: ["Steel Bar"], amt: 4 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }, { items: ["Iron Bar"], amt: 2 }] },
+  { isStarterRecipe: true, result: "Sanguine Staff", produces: 1, station: "Workbench", requires: [{ items: ["Steel Bar"], amt: 2 }, { items: ["Stick"], amt: 2 }, { items: ["Gold Bar"], amt: 1 }] },
   // Spectral — Artisan Bench (Logic Board = Spectral Essence)
-  { isStarterRecipe: true, result: "Spectral Sword", produces: 1, station: "Artisan Bench", requires: [{ items: ["Logic Board"], amt: 2 }, { items: ["Stick"], amt: 1 }] },
-  { isStarterRecipe: true, result: "Spectral Dagger", produces: 1, station: "Artisan Bench", requires: [{ items: ["Logic Board"], amt: 1 }, { items: ["Stick"], amt: 1 }] },
-  { isStarterRecipe: true, result: "Spectral Spear", produces: 1, station: "Artisan Bench", requires: [{ items: ["Logic Board"], amt: 1 }, { items: ["Stick"], amt: 2 }] },
-  { isStarterRecipe: true, result: "Spectral Club", produces: 1, station: "Artisan Bench", requires: [{ items: ["Logic Board"], amt: 3 }, { items: ["Stick"], amt: 1 }] },
-  { isStarterRecipe: true, result: "Spectral Mace", produces: 1, station: "Artisan Bench", requires: [{ items: ["Logic Board"], amt: 2 }, { items: ["Stick"], amt: 1 }, { items: ["Iron Bar"], amt: 1 }] },
-  { isStarterRecipe: true, result: "Spectral Whip", produces: 1, station: "Artisan Bench", requires: [{ items: ["Logic Board"], amt: 1 }, { items: ["Cotton"], amt: 1 }] },
-  { isStarterRecipe: true, result: "Spectral Bow", produces: 1, station: "Artisan Bench", requires: [{ items: ["Logic Board"], amt: 3 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }] },
-  { isStarterRecipe: true, result: "Spectral Crossbow", produces: 1, station: "Artisan Bench", requires: [{ items: ["Logic Board"], amt: 4 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }, { items: ["Iron Bar"], amt: 2 }] },
-  { isStarterRecipe: true, result: "Spectral Staff", produces: 1, station: "Artisan Bench", requires: [{ items: ["Logic Board"], amt: 2 }, { items: ["Stick"], amt: 2 }, { items: ["Moonstone Dust"], amt: 1 }] },
+  { isStarterRecipe: true, result: "Spectral Sword", produces: 1, station: "Workbench", requires: [{ items: ["Logic Board"], amt: 2 }, { items: ["Stick"], amt: 1 }] },
+  { isStarterRecipe: true, result: "Spectral Dagger", produces: 1, station: "Workbench", requires: [{ items: ["Logic Board"], amt: 1 }, { items: ["Stick"], amt: 1 }] },
+  { isStarterRecipe: true, result: "Spectral Spear", produces: 1, station: "Workbench", requires: [{ items: ["Logic Board"], amt: 1 }, { items: ["Stick"], amt: 2 }] },
+  { isStarterRecipe: true, result: "Spectral Club", produces: 1, station: "Workbench", requires: [{ items: ["Logic Board"], amt: 3 }, { items: ["Stick"], amt: 1 }] },
+  { isStarterRecipe: true, result: "Spectral Mace", produces: 1, station: "Workbench", requires: [{ items: ["Logic Board"], amt: 2 }, { items: ["Stick"], amt: 1 }, { items: ["Iron Bar"], amt: 1 }] },
+  { isStarterRecipe: true, result: "Spectral Whip", produces: 1, station: "Workbench", requires: [{ items: ["Logic Board"], amt: 1 }, { items: ["Cotton"], amt: 1 }] },
+  { isStarterRecipe: true, result: "Spectral Bow", produces: 1, station: "Workbench", requires: [{ items: ["Logic Board"], amt: 3 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }] },
+  { isStarterRecipe: true, result: "Spectral Crossbow", produces: 1, station: "Workbench", requires: [{ items: ["Logic Board"], amt: 4 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }, { items: ["Iron Bar"], amt: 2 }] },
+  { isStarterRecipe: true, result: "Spectral Staff", produces: 1, station: "Workbench", requires: [{ items: ["Logic Board"], amt: 2 }, { items: ["Stick"], amt: 2 }, { items: ["Moonstone Dust"], amt: 1 }] },
   // Geo — Artisan Bench (Copper Bar = Geo Core)
-  { isStarterRecipe: true, result: "Geo Sword", produces: 1, station: "Artisan Bench", requires: [{ items: ["Copper Bar"], amt: 2 }, { items: ["Stick"], amt: 1 }] },
-  { isStarterRecipe: true, result: "Geo Dagger", produces: 1, station: "Artisan Bench", requires: [{ items: ["Copper Bar"], amt: 1 }, { items: ["Stick"], amt: 1 }] },
-  { isStarterRecipe: true, result: "Geo Spear", produces: 1, station: "Artisan Bench", requires: [{ items: ["Copper Bar"], amt: 1 }, { items: ["Stick"], amt: 2 }] },
-  { isStarterRecipe: true, result: "Geo Club", produces: 1, station: "Artisan Bench", requires: [{ items: ["Copper Bar"], amt: 3 }, { items: ["Stick"], amt: 1 }] },
-  { isStarterRecipe: true, result: "Geo Mace", produces: 1, station: "Artisan Bench", requires: [{ items: ["Copper Bar"], amt: 2 }, { items: ["Stick"], amt: 1 }, { items: ["Iron Bar"], amt: 1 }] },
-  { isStarterRecipe: true, result: "Geo Whip", produces: 1, station: "Artisan Bench", requires: [{ items: ["Copper Bar"], amt: 1 }, { items: ["Cotton"], amt: 1 }] },
-  { isStarterRecipe: true, result: "Geo Bow", produces: 1, station: "Artisan Bench", requires: [{ items: ["Copper Bar"], amt: 3 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }] },
-  { isStarterRecipe: true, result: "Geo Crossbow", produces: 1, station: "Artisan Bench", requires: [{ items: ["Copper Bar"], amt: 4 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }, { items: ["Iron Bar"], amt: 2 }] },
-  { isStarterRecipe: true, result: "Geo Staff", produces: 1, station: "Artisan Bench", requires: [{ items: ["Copper Bar"], amt: 2 }, { items: ["Stick"], amt: 2 }, { items: ["Iron Bar"], amt: 1 }] },
+  { isStarterRecipe: true, result: "Geo Sword", produces: 1, station: "Workbench", requires: [{ items: ["Copper Bar"], amt: 2 }, { items: ["Stick"], amt: 1 }] },
+  { isStarterRecipe: true, result: "Geo Dagger", produces: 1, station: "Workbench", requires: [{ items: ["Copper Bar"], amt: 1 }, { items: ["Stick"], amt: 1 }] },
+  { isStarterRecipe: true, result: "Geo Spear", produces: 1, station: "Workbench", requires: [{ items: ["Copper Bar"], amt: 1 }, { items: ["Stick"], amt: 2 }] },
+  { isStarterRecipe: true, result: "Geo Club", produces: 1, station: "Workbench", requires: [{ items: ["Copper Bar"], amt: 3 }, { items: ["Stick"], amt: 1 }] },
+  { isStarterRecipe: true, result: "Geo Mace", produces: 1, station: "Workbench", requires: [{ items: ["Copper Bar"], amt: 2 }, { items: ["Stick"], amt: 1 }, { items: ["Iron Bar"], amt: 1 }] },
+  { isStarterRecipe: true, result: "Geo Whip", produces: 1, station: "Workbench", requires: [{ items: ["Copper Bar"], amt: 1 }, { items: ["Cotton"], amt: 1 }] },
+  { isStarterRecipe: true, result: "Geo Bow", produces: 1, station: "Workbench", requires: [{ items: ["Copper Bar"], amt: 3 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }] },
+  { isStarterRecipe: true, result: "Geo Crossbow", produces: 1, station: "Workbench", requires: [{ items: ["Copper Bar"], amt: 4 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }, { items: ["Iron Bar"], amt: 2 }] },
+  { isStarterRecipe: true, result: "Geo Staff", produces: 1, station: "Workbench", requires: [{ items: ["Copper Bar"], amt: 2 }, { items: ["Stick"], amt: 2 }, { items: ["Iron Bar"], amt: 1 }] },
   // Astral — Artisan Bench (Star Alloy = Astral Essence)
-  { isStarterRecipe: true, result: "Astral Sword", produces: 1, station: "Artisan Bench", requires: [{ items: ["Star Alloy"], amt: 2 }, { items: ["Stick"], amt: 1 }] },
-  { isStarterRecipe: true, result: "Astral Dagger", produces: 1, station: "Artisan Bench", requires: [{ items: ["Star Alloy"], amt: 1 }, { items: ["Stick"], amt: 1 }] },
-  { isStarterRecipe: true, result: "Astral Spear", produces: 1, station: "Artisan Bench", requires: [{ items: ["Star Alloy"], amt: 1 }, { items: ["Stick"], amt: 2 }] },
-  { isStarterRecipe: true, result: "Astral Club", produces: 1, station: "Artisan Bench", requires: [{ items: ["Star Alloy"], amt: 3 }, { items: ["Stick"], amt: 1 }] },
-  { isStarterRecipe: true, result: "Astral Mace", produces: 1, station: "Artisan Bench", requires: [{ items: ["Star Alloy"], amt: 2 }, { items: ["Stick"], amt: 1 }, { items: ["Iron Bar"], amt: 1 }] },
-  { isStarterRecipe: true, result: "Astral Whip", produces: 1, station: "Artisan Bench", requires: [{ items: ["Star Alloy"], amt: 1 }, { items: ["Cotton"], amt: 1 }] },
-  { isStarterRecipe: true, result: "Astral Bow", produces: 1, station: "Artisan Bench", requires: [{ items: ["Star Alloy"], amt: 3 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }] },
-  { isStarterRecipe: true, result: "Astral Crossbow", produces: 1, station: "Artisan Bench", requires: [{ items: ["Star Alloy"], amt: 4 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }, { items: ["Iron Bar"], amt: 2 }] },
-  { isStarterRecipe: true, result: "Astral Staff", produces: 1, station: "Artisan Bench", requires: [{ items: ["Star Alloy"], amt: 2 }, { items: ["Stick"], amt: 2 }, { items: ["Comet Shard"], amt: 1 }] },
+  { isStarterRecipe: true, result: "Astral Sword", produces: 1, station: "Workbench", requires: [{ items: ["Star Alloy"], amt: 2 }, { items: ["Stick"], amt: 1 }] },
+  { isStarterRecipe: true, result: "Astral Dagger", produces: 1, station: "Workbench", requires: [{ items: ["Star Alloy"], amt: 1 }, { items: ["Stick"], amt: 1 }] },
+  { isStarterRecipe: true, result: "Astral Spear", produces: 1, station: "Workbench", requires: [{ items: ["Star Alloy"], amt: 1 }, { items: ["Stick"], amt: 2 }] },
+  { isStarterRecipe: true, result: "Astral Club", produces: 1, station: "Workbench", requires: [{ items: ["Star Alloy"], amt: 3 }, { items: ["Stick"], amt: 1 }] },
+  { isStarterRecipe: true, result: "Astral Mace", produces: 1, station: "Workbench", requires: [{ items: ["Star Alloy"], amt: 2 }, { items: ["Stick"], amt: 1 }, { items: ["Iron Bar"], amt: 1 }] },
+  { isStarterRecipe: true, result: "Astral Whip", produces: 1, station: "Workbench", requires: [{ items: ["Star Alloy"], amt: 1 }, { items: ["Cotton"], amt: 1 }] },
+  { isStarterRecipe: true, result: "Astral Bow", produces: 1, station: "Workbench", requires: [{ items: ["Star Alloy"], amt: 3 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }] },
+  { isStarterRecipe: true, result: "Astral Crossbow", produces: 1, station: "Workbench", requires: [{ items: ["Star Alloy"], amt: 4 }, { items: ["Cotton"], amt: 1 }, { items: ["Stick"], amt: 2 }, { items: ["Iron Bar"], amt: 2 }] },
+  { isStarterRecipe: true, result: "Astral Staff", produces: 1, station: "Workbench", requires: [{ items: ["Star Alloy"], amt: 2 }, { items: ["Stick"], amt: 2 }, { items: ["Comet Shard"], amt: 1 }] },
   // Moonstone Sword — juste après Diamond, plus de dégâts, Workbench
   { isStarterRecipe: true, result: "Moonstone Sword", produces: 1, station: "Workbench", requires: [{ items: ["Moonstone"], amt: 2 }, { items: ["Stick"], amt: 1 }] },
   // Nova Blade — dernière arme, Workbench

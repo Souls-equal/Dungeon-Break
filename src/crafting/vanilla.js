@@ -9,9 +9,10 @@
  * (otherwise craft does nothing / validation fails). So we use
  * valid proxies for Wood/Stone (Stick / Coal).
  *
- * Stations:
- *  - Wood: handcraft (no station)
- *  - Stone/Iron/Gold/Diamond/Moonstone: Workbench
+ * Stations (réorg étape 2):
+ *  - Workbench: armes (épées, arcs, etc.)
+ *  - Artisan Bench: armures
+ *  - Inventaire (""): matériaux (handcraft)
  *
  * Quantities based on Bloxd.io wiki (Equipment):
  *  - armor: Helmet 5, Chestplate 8, Leggings 7, Boots 4, Gauntlets 4 (28/set)
@@ -48,10 +49,11 @@ const STONE_ING = ["Coal"];
 
 export const VANILLA_CRAFTS = [
   // ────────────────────────── VANILLA ARMORS ──────────────────────────
+  // Réorg étape 2 : armures → Artisan Bench (Workbench = armes), Wood reste inventaire
   ...armorSet("Wood", "Stick", undefined),
-  ...armorSet("Iron", "Iron Bar", "Workbench"),
-  ...armorSet("Gold", "Gold Bar", "Workbench"),
-  ...armorSet("Diamond", "Diamond", "Workbench"),
+  ...armorSet("Iron", "Iron Bar", "Artisan Bench"),
+  ...armorSet("Gold", "Gold Bar", "Artisan Bench"),
+  ...armorSet("Diamond", "Diamond", "Artisan Bench"),
 
   // ────────────────────────── VANILLA TOOLS ──────────────────────────
   craft("Wood Pickaxe", undefined, [{ items: WOOD_ING, amt: 4 }]),
