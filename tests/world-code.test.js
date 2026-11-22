@@ -1199,9 +1199,11 @@ test("a join offers the roll, and a fresh player has nothing to spend", () => {
   // tile a player reads before spending. They are still in `/dbg blessings`.
   assert.ok(!/Common \d+%/.test(roll.description), "the odds are back on the roll tile");
   assert.equal(roll.description.split("\n").length, 1, "the roll tile is more than one line");
-  // **One tile and nothing else.** The three choices do not exist until there is an offer,
-  // and the removal is a real one — no disabled ghost tiles, no "Last roll".
-  assert.deepEqual([...tiles.keys()], ["Roll a Blessing"], "the category has extra tiles");
+  // Roll + Stats (Stats always visible). Choices only when offer.
+  assert.ok(tiles.has("Roll a Blessing"), "roll missing");
+  assert.ok(tiles.has("Stats"), "Stats tile missing");
+  assert.equal(tiles.has("Last roll"), false, "the last-roll tile is back");
+  assert.ok(![...tiles.keys()].some(k => k.startsWith("Choice")), "choices shown without offer");
   assert.equal(tiles.has("Last roll"), false, "the last-roll tile is back");
 });
 
@@ -1285,7 +1287,9 @@ test("a roll offers three blessings and reserves the point; the choice spends it
   // **removed**, not hidden — `resetShopItemForPlayer`, which is the API's way to delete a
   // player's tile; `hidden` left them on screen, which is what the owner kept seeing.
   const after = blessingTiles(world);
-  assert.deepEqual([...after.keys()], ["Roll a Blessing"], "a choice tile survived the pick");
+  assert.ok(after.has("Roll a Blessing"), "roll missing after pick");
+  assert.ok(after.has("Stats"), "Stats missing after pick");
+  assert.equal([...after.keys()].filter(k=>k.startsWith("Choice")).length, 0, "a choice tile survived the pick");
   assert.equal(after.get("Roll a Blessing").customTitle, "Roll a Blessing");
   assert.match(after.get("Roll a Blessing").description, /2 points/);
   // Every refresh re-asserts the removal (the call is a no-op when the override is gone),
@@ -1354,7 +1358,9 @@ test("nothing is saved: a reconnection starts from zero", () => {
   assert.equal(world.aurasReset.length, resetsBefore, "the arena was reset on the join but should keep XP");
   assert.equal(offerTiles(world).length, 0, "a reconnection brought the offer back");
   const tiles = blessingTiles(world);
-  assert.deepEqual([...tiles.keys()], ["Roll a Blessing"], "a reconnection left tiles behind");
+  assert.ok(tiles.has("Roll a Blessing"), "roll missing after reconnect");
+  assert.ok(tiles.has("Stats"), "Stats missing after reconnect");
+  assert.equal([...tiles.keys()].filter(k=>k.startsWith("Choice")).length, 0, "a reconnection left choices behind");
   // points from level 5 should still be there (XP kept), Roll should be buyable if points left
   const hasBlessingsDb2 = [...world.dbValues.values()].some(m => m.has("dungeonBreak.blessings.v1"));
   assert.equal(hasBlessingsDb2, false, "the join wrote to the player database");
@@ -1370,12 +1376,14 @@ test("a choice is removed for real, and the roll tile never is", () => {
   const beforeRoll = world.removedTiles.length;
   world.context.onPlayerBoughtShopItem("p1", "Blessings", "Roll a Blessing", {}, "");
   const offered = [...blessingTiles(world).keys()].sort();
-  assert.deepEqual(offered, ["Choice 1", "Choice 2", "Choice 3", "Roll a Blessing"].sort(),
-    "the offer is not the roll plus three choices");
+  assert.ok(offered.includes("Roll a Blessing") && offered.includes("Stats"), "offer missing roll/stats");
+  assert.equal(offered.filter(k=>k.startsWith("Choice")).length, 3, "the offer is not the roll plus three choices");
   assert.equal(world.removedTiles.length, beforeRoll, "tiles were removed while the offer was live");
   rollAndChoose(world);
   const after = blessingTiles(world);
-  assert.deepEqual([...after.keys()], ["Roll a Blessing"], "the choices are still in the category");
+  assert.ok(after.has("Roll a Blessing"), "roll missing after");
+  assert.ok(after.has("Stats"), "Stats missing after");
+  assert.equal([...after.keys()].filter(k=>k.startsWith("Choice")).length, 0, "the choices are still in the category");
   assert.deepEqual([...new Set(world.removedTiles.map((entry) => entry.itemKey))].sort(),
     ["Choice 1", "Choice 2", "Choice 3"]);
   assert.ok(!world.removedTiles.some((entry) => entry.itemKey === "Roll a Blessing"),

@@ -738,6 +738,7 @@ const SPAWN_ITEM = "Teleport to spawn";
 
 const BLESSING_CATEGORY = "Blessings";
 const ROLL_ITEM = "Roll a Blessing";
+const STATS_ITEM = "Stats";
 /**
  * The keys of the three choice tiles, and **the only tiles that ever come and go**.
  *
@@ -943,6 +944,49 @@ function blessingSummary(playerId, level) {
  * a currency the game refuses is a missing HUD line, while an exception on a join is not.
  * `persistent: false` is the owner's rule written where it is enforced.
  */
+function statsDescriptionOf(playerId) {
+  try {
+    const key = accountKeyOf(playerId);
+    const cur = effects.optionsFrom(blessings().permanentOf(key), blessings().runOf(key), effects.BASE_CLIENT_OPTIONS);
+    const base = effects.BASE_CLIENT_OPTIONS;
+    const lines = [];
+    const green = "#55FF55", red = "#FF5555", gray = "#AAAAAA", gold="#FFD700", aqua="#55FFFF";
+    const pct = (v) => Math.round(v*100);
+    // Damage dealt
+    const deal = cur.dealingDamageMultiplier ?? base.dealingDamageMultiplier;
+    const dealPct = pct(deal);
+    const dealCol = deal > base.dealingDamageMultiplier ? green : deal < base.dealingDamageMultiplier ? red : gray;
+    lines.push({str:`Damage Dealt: ${dealPct}%\n`, style:{color: dealCol}});
+    // Damage taken (lower is better)
+    const take = cur.receivingDamageMultiplier ?? base.receivingDamageMultiplier;
+    const takePct = pct(take);
+    const takeCol = take < base.receivingDamageMultiplier ? green : take > base.receivingDamageMultiplier ? red : gray;
+    lines.push({str:`Damage Taken: ${takePct}%\n`, style:{color: takeCol}});
+    // Max Health
+    const hp = cur.maxHealth ?? base.maxHealth;
+    const hpBase = base.maxHealth;
+    const hpCol = hp > hpBase ? green : hp < hpBase ? red : gray;
+    const hpDiff = hp - hpBase;
+    const hpSign = hpDiff > 0 ? ` (+${hpDiff})` : hpDiff < 0 ? ` (${hpDiff})` : "";
+    lines.push({str:`Max Health: ${hp}${hpSign}\n`, style:{color: hpCol}});
+    // Speed
+    const spd = cur.speedMultiplier ?? base.speedMultiplier;
+    const spdPct = pct(spd);
+    const spdCol = spd > base.speedMultiplier ? aqua : spd < base.speedMultiplier ? red : gray;
+    lines.push({str:`Speed: ${spdPct}%\n`, style:{color: spdCol}});
+    // Regen
+    const regen = cur.healthRegenAmount ?? base.healthRegenAmount;
+    const regenBase = base.healthRegenAmount;
+    const regenCol = regen > regenBase ? green : regen < regenBase ? red : gray;
+    lines.push({str:`Health Regen: ${regen}\n`, style:{color: regenCol}});
+    // Wall climb (bonus rare)
+    if (cur.canClimbWalls) lines.push({str:`Wall Climb: ON\n`, style:{color: gold}});
+    else if (base.canClimbWalls) lines.push({str:`Wall Climb: OFF\n`, style:{color: gray}});
+    // If nothing changed, still show base line count
+    return lines;
+  } catch(_) { return [{str:"No stats\n", style:{color:"#AAAAAA"}}]; }
+}
+
 function showPoints(playerId, points) {
   api.setCurrency(playerId, POINTS_CURRENCY, {
     amount: points,
@@ -1042,6 +1086,19 @@ function refreshBlessingTiles(playerId) {
       logShopFailure(itemKey, error);
     }
   });
+  }
+  // Stats — simple bonus/malus display, always visible
+  try {
+    api.createShopItemForPlayer(playerId, BLESSING_CATEGORY, STATS_ITEM, {
+      image: "Book",
+      customTitle: "Stats",
+      description: statsDescriptionOf(playerId),
+      canBuy: false,
+      redDot: false,
+      sortPriority: 30,
+    });
+  } catch (error) {
+    logShopFailure(STATS_ITEM, error);
   }
 
   try {
