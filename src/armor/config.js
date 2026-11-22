@@ -193,15 +193,15 @@ export function getArmorDescriptionForCount(setId, count) {
   const lvl = armorLevelForCount(count);
   if (lvl <= 0) {
     const preview = getLevelDef(setId, 1)?.desc || "";
-    return `[0/5] Inactive — Equip 1 to activate: ${preview}`;
+    return `[0/5] Inactive\nEquip 1 to activate:\n${preview}`;
   }
   const cur = getLevelDef(setId, lvl)?.desc || "";
-  let out = `[${count}/5] ${cur}`;
+  let out = `[${count}/5]\n${cur}`;
   if (lvl < 5) {
     const nxt = getLevelDef(setId, lvl + 1)?.desc || "";
-    if (nxt) out += ` | Next [${count + 1}/5]: ${nxt}`;
+    if (nxt) out += `\nNext [${count + 1}/5]:\n${nxt}`;
   } else {
-    out += ` | MAX`;
+    out += `\nMAX`;
   }
   return out;
 }
@@ -210,10 +210,10 @@ export function getArmorDescriptionCurrentOnly(setId, count) {
   const lvl = armorLevelForCount(count);
   if (lvl <= 0) {
     const preview = getLevelDef(setId, 1)?.desc || "";
-    return `[0/5] Inactive — Equip 1 to activate: ${preview}`;
+    return `[0/5] Inactive\nEquip 1 to activate:\n${preview}`;
   }
   const cur = getLevelDef(setId, lvl)?.desc || "";
-  return `[${count}/5] ${cur}`;
+  return `[${count}/5]\n${cur}`;
 }
 export function allArmorIds() { return ARMOR_IDS.slice(); }
 export function validateArmorCatalog() {

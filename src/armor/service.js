@@ -106,11 +106,14 @@ function healthRatio(api,pid){
 // Armor counting
 const ARMOR_SLOTS = [47,48,49,50,51];
 const FALLBACK_SLOTS = [36,37,38,39,40]; // some Bloxd versions
+// Extra slots to cover Gauntlets and version differences (46 is helmet in some guesses, 52 for 5th piece)
+const EXTRA_SLOTS = [46,52];
 export function getArmorCounts(api, playerId){
   const counts=new Map();
   if(!api||!playerId||typeof api.getItemSlot!=="function") return counts;
-  const seen=new Set();
-  for(const slot of [...ARMOR_SLOTS, ...FALLBACK_SLOTS]){
+  const seenNames=new Set(); // dedupe by full item name, not slot — prevents double-counting same piece in primary+fallback
+  const allSlots=[...ARMOR_SLOTS, ...FALLBACK_SLOTS, ...EXTRA_SLOTS];
+  for(const slot of allSlots){
     try{
       const it=api.getItemSlot(playerId, slot);
       if(!it||!it.name||it.name==="Air") continue;
@@ -121,17 +124,9 @@ export function getArmorCounts(api, playerId){
         if(name.startsWith(setId+" ")){ matched=setId; break; }
       }
       if(!matched) continue;
-      // avoid double counting same item name in fallback duplicate slots? Use item+slot uniqueness, but simplest: count each slot, fallback may duplicate -> dedupe by name+slot
-      const key=`${slot}:${name}`;
-      if(seen.has(key)) continue; seen.add(key);
-      // Deduplicate if same armor piece appears in both primary and fallback slots? We'll count only primary if duplicate - but fallback only counted if primary not present? Simpler: if counts from primary already has 5, skip fallback.
-      // For now count all, but if duplicate counting, fallback slots that duplicate primary names will double count. To avoid, we check if slot is fallback and we already counted same name in primary slots -> skip.
-      if(FALLBACK_SLOTS.includes(slot)){
-        // if we already counted this name in primary, skip
-        let already=false;
-        for(const s of ARMOR_SLOTS){ try{ const it2=api.getItemSlot(playerId,s); if(it2&&it2.name&&String(it2.name).split("|")[0].trim()===name) already=true; }catch(_){} }
-        if(already) continue;
-      }
+      // Deduplicate same exact item appearing in multiple slots (primary+fallback sync duplicate)
+      if(seenNames.has(name)) continue;
+      seenNames.add(name);
       counts.set(matched, (counts.get(matched)||0)+1);
     }catch(_){}
   }
