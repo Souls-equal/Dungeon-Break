@@ -46,6 +46,7 @@ export const QUEST_TEMPLATES = [
     }),
     icon: "⚔️",
     color: "#FF5555",
+    passXpBase: 250,
   },
   {
     id: "treasure_hunter",
@@ -61,6 +62,7 @@ export const QUEST_TEMPLATES = [
     }),
     icon: "🗝️",
     color: "#FFD700",
+    passXpBase: 300,
   },
   {
     id: "exterminator",
@@ -76,6 +78,7 @@ export const QUEST_TEMPLATES = [
     }),
     icon: "💀",
     color: "#AA00AA",
+    passXpBase: 350,
   },
   {
     id: "collector",
@@ -91,6 +94,7 @@ export const QUEST_TEMPLATES = [
     }),
     icon: "📦",
     color: "#55FFFF",
+    passXpBase: 400,
   },
   {
     id: "berserker",
@@ -106,6 +110,7 @@ export const QUEST_TEMPLATES = [
     }),
     icon: "🔥",
     color: "#FF6B00",
+    passXpBase: 500,
   },
 ];
 

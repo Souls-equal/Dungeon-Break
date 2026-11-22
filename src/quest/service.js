@@ -33,7 +33,7 @@ import {
   findTemplate,
   todayDateUTC,
 } from "./config.js";
-import { PASS_XP_PER_QUEST } from "../pass/config.js";
+import { rollQuestPassXp } from "../pass/config.js";
 import { addPassXp } from "../pass/service.js";
 
 let npcId = null;
@@ -232,8 +232,25 @@ function giveReward(api, playerId, state) {
       api.applyAuraChange(playerId, reward.aura);
     }
   } catch (_) {}
-  // Pass XP — every claimed quest progresses the Pass
-  try { addPassXp(api, playerId, PASS_XP_PER_QUEST); } catch (_) {}
+  // Pass XP — random in [x-100, x+100] where x depends on quest difficulty (template + power scaling)
+  try {
+    const passXp = rollQuestPassXp(tpl, state.power);
+    addPassXp(api, playerId, passXp);
+    // show Pass XP gain in chat alongside quest reward
+    try {
+      if (typeof api.sendMessage === "function") {
+        api.sendMessage(playerId, [
+          { str: `+${passXp} Pass XP`, style: { color: "#55FFFF", fontWeight: "bold" } },
+          { str: ` (Tier progress)`, style: { color: "#AAAAAA" } },
+        ]);
+      }
+    } catch (_) {}
+    try {
+      if (typeof api.sendFlyingMiddleMessage === "function") {
+        api.sendFlyingMiddleMessage(playerId, [{ str: `+${passXp} Pass XP`, style: { color: "#55FFFF" } }], 500, 800);
+      }
+    } catch (_) {}
+  } catch (_) {}
   // Chat line with multiple colors for readability
   try {
     if (typeof api.sendMessage === "function") {

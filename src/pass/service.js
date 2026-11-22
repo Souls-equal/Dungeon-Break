@@ -5,7 +5,7 @@
  * - Each tier has 2 shop tiles: [Reward clickable] [Description textStyling, no icon if possible]
  */
 
-import { PASS_CATEGORY, PASS_DB_KEY, PASS_MAX_TIER, PASS_XP_PER_TIER, PASS_TIERS, PASS_XP_PER_QUEST, tierRequirement } from "./config.js";
+import { PASS_CATEGORY, PASS_DB_KEY, PASS_MAX_TIER, PASS_XP_PER_TIER, PASS_TIERS, tierRequirement } from "./config.js";
 
 const cache = new Map(); // pid -> {xp:number, claimed:number[]}  claimed = list of tier numbers
 

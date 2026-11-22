@@ -8,7 +8,29 @@ export const PASS_CATEGORY = "Pass";
 export const PASS_XP_PER_TIER = 500;
 export const PASS_MAX_TIER = 20;
 export const PASS_DB_KEY = "dungeonBreak.pass.v1";
-export const PASS_XP_PER_QUEST = 100; // XP added per completed quest
+export const PASS_XP_PER_QUEST = 100; // fallback for old code — now dynamic per quest difficulty
+
+/**
+ * Pass XP for a quest — random in [x-100, x+100] where x is based on difficulty.
+ *  - x = template.passXpBase (+ power scaling) → harder quests give more XP
+ *  - power 0..8 adds 20 XP per point (scaled difficulty for geared players)
+ *  - result clamped to [50, 2000] and random +/-100
+ */
+export function rollQuestPassXp(template, power) {
+  const base = (template && Number.isFinite(template.passXpBase)) ? template.passXpBase : 250;
+  const p = Number.isFinite(power) ? Math.max(0, Math.min(8, power|0)) : 0;
+  const x = base + p * 20;
+  const min = Math.max(50, x - 100);
+  const max = x + 100;
+  // inclusive random
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+export function questPassXpRange(template, power) {
+  const base = (template && Number.isFinite(template.passXpBase)) ? template.passXpBase : 250;
+  const p = Number.isFinite(power) ? Math.max(0, Math.min(8, power|0)) : 0;
+  const x = base + p * 20;
+  return { x, min: Math.max(50, x - 100), max: x + 100 };
+}
 
 // Helper to make reward descriptors
 // Each tier has: { tier, title, icon, rewards: [{type,gold/item/aura,amount,name}], extraDesc }
