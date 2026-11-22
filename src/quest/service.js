@@ -303,6 +303,42 @@ function spawnQuestNPC(api) {
   } catch (_) {}
 }
 
+function refreshNpcLabelForPlayer(api, playerId, targetId) {
+  const nid = targetId || npcId;
+  if (!nid || !playerId) return;
+  try {
+    if (typeof api.setOtherEntitySetting !== "function") return;
+    // Explains the 2 interactions: Click vs Crouch+Click
+    const box = {
+      content: [
+        "Quest Master",
+        "Click: Get / Claim Quest",
+        "Crouch + Click: New Quest"
+      ],
+      customTextStyling: {
+        color: "#FFD700",
+        fontSize: "18px",
+        fontWeight: "bold",
+        textAlign: "center",
+        backgroundColor: "#000000AA",
+        textShadow: "1px 1px 2px #000000",
+        padding: "6px",
+        borderRadius: "6px"
+      }
+    };
+    // Relevant player sees the NPC's box: (viewer, target, setting, value)
+    api.setOtherEntitySetting(playerId, nid, "multilineTextBox", box);
+  } catch(_) {}
+}
+
+function refreshNpcLabelForAll(api) {
+  if (!npcId) return;
+  try {
+    const ids = typeof api.getPlayerIds === "function" ? api.getPlayerIds() : [];
+    for (const pid of ids) refreshNpcLabelForPlayer(api, pid, npcId);
+  } catch(_) {}
+}
+
 function applyNpcTuning(api, id) {
   if (typeof api.setMobSetting !== "function") return;
   const settings = [
@@ -321,6 +357,8 @@ function applyNpcTuning(api, id) {
   for (const [k, v] of settings) {
     try { api.setMobSetting(id, k, v); } catch (_) {}
   }
+  // Also apply the explanatory multilineTextBox next to the NPC (custom styling)
+  try { refreshNpcLabelForAll(api); } catch(_){}
 }
 
 function updateNpcLook(api) {
@@ -385,6 +423,8 @@ export function onQuestPlayerJoin(api, playerId) {
   try {
     if (!npcId) spawnQuestNPC(api);
     refreshSidebar(api, playerId);
+    // Show explanatory label next to NPC for this player
+    try { refreshNpcLabelForPlayer(api, playerId, npcId); } catch(_){}
   } catch (_) {}
 }
 
