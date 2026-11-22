@@ -58,6 +58,7 @@ import { applyItemStats } from "./crafting/itemStats.js";
 import { tickCombatFx, onWeaponHit, onArmorHit, tickArmorShimmer, forgetPlayer as forgetCombatFx } from "./combatFx/service.js";
 import { refreshWeaponStats, tickWeapons, onMobKilled, forgetPlayer as forgetWeaponAbility, markEntityDeleted, onThrowableUsed, onCollision as onWeaponCollision, onCrouchChange as onNovaCrouchChange, tryNovaLaser, isNovaCrouching, tryNovaCrescent } from "./weapons/service.js";
 import { parseWeaponInfo } from "./combatFx/service.js";
+import { initQuestSystem, onQuestPlayerJoin, onQuestTick, onQuestMobKilled, onQuestCrateOpened, onQuestMobDespawned, onQuestEntityDeleted, onQuestPlayerLeave, onQuestInteract } from "./quest/service.js";
 import { onDamaged as onArmorDamaged, onDealingDamage as onArmorDealingDamage, onMobKilled as onArmorMobKilled, tick as tickArmors, forgetPlayer as forgetArmorAbility, getTemporaryDefense as armorTempDefense, refreshArmorDescriptions, getArmorLevel as getArmorLevelForHeat } from "./armor/service.js";
 import { shouldRunTutorial, onTutorialJoin, onTutorialCrateOpened, onTutorialDungeonEntered, tickTutorialHighlight } from "./tutorial/service.js";
 const OWNER_NAME = "K4miNoK4mi";
@@ -1636,6 +1637,7 @@ tick = () => {
   try { tickArmorShimmer(api); } catch(e) { reportErrorToOwner(e); }
   try { tickLavaDamage(); } catch(e) { reportErrorToOwner(e); }
   try { tickTutorialHighlight(api); } catch(e) { reportErrorToOwner(e); }
+  try { onQuestTick(api); } catch(e) { reportErrorToOwner(e); }
   // ranks time tracking
   try {
     rankTickCounter++;
@@ -1683,6 +1685,7 @@ onPlayerJoin = (playerId) => {
   try { applyMusic(playerId); } catch(e) { reportErrorToOwner(e); }
   try { applyRankVisuals(playerId); } catch(e) { reportErrorToOwner(e); }
   try { refreshRanksShop(playerId); } catch(e) { reportErrorToOwner(e); }
+  try { onQuestPlayerJoin(api, playerId); } catch(e) { reportErrorToOwner(e); }
   // Tutoriel: premier join → clé + flèche rouge crate, remplace welcome
   try {
     if (shouldRunTutorial(api, playerId) && onTutorialJoin(api, playerId)) {
@@ -1775,6 +1778,7 @@ onPlayerLeave = (playerId) => {
     showPoints(playerId, 0);
   } catch(e) { reportErrorToOwner(e); }
   try { ranks().forget(playerId); } catch(e) { reportErrorToOwner(e); }
+  try { onQuestPlayerLeave(api, playerId); } catch(e) { reportErrorToOwner(e); }
 };
 
 // ---- chat ranks ----
@@ -1805,6 +1809,8 @@ onPlayerChat = (playerId, chatMessage, channelName) => {
  * be in front of one must not pay twice.
  */
 onPlayerClick = (playerId, wasAltClick, x, y, z, block, targetEId) => {
+  // Quest NPC interaction — click on NPC entity
+  try { if (targetEId && onQuestInteract(api, playerId, targetEId)) return; } catch(_) {}
   // Nova Blade: every click = crescent projectile, crouch+click = laser
   try {
     let heldName = null;
@@ -1893,6 +1899,7 @@ onPlayerKilledMob = (playerId, mobId) => {
     const newly = ranks().recordKill(playerId);
     if (newly && newly.length) handleRankUnlocks(playerId, newly);
   } catch(e) { reportErrorToOwner(e); }
+  try { onQuestMobKilled(api, playerId); } catch(e) { reportErrorToOwner(e); }
 };
 
 /**
@@ -1903,6 +1910,7 @@ onPlayerKilledMob = (playerId, mobId) => {
  */
 onMobDespawned = (mobId) => {
   try { markEntityDeleted(mobId); } catch(e) { reportErrorToOwner(e); }
+  try { onQuestMobDespawned(api, mobId); } catch(e) { reportErrorToOwner(e); }
   try {
     service().mobGone(mobId);
   } catch (_) {
@@ -1912,6 +1920,7 @@ onMobDespawned = (mobId) => {
 // Ne plus utiliser isAlive (pas fiable) — on track les deletes avec onEntityDeleted (ajout 28 Aug 2026)
 onEntityDeleted = (entityId) => {
   try { markEntityDeleted(entityId); } catch(e) { reportErrorToOwner(e); }
+  try { onQuestEntityDeleted(api, entityId); } catch(e) { reportErrorToOwner(e); }
 };
 onPlayerUsedThrowable = (playerId, throwableName, thrownEntityId) => {
   try { onThrowableUsed(api, playerId, throwableName, thrownEntityId); } catch(e) { reportErrorToOwner(e); }
@@ -1942,6 +1951,7 @@ onPlayerDamagingOtherPlayer = (attackingPlayer, damagedPlayer, damageDealt, with
 // For custom weapons, effective damage is already in `damage` stat (refreshWeaponStats),
 // so we don't apply 2x multiplier. Only add elemental procs.
 onPlayerDamagingMob = (playerId, mobId, damageDealt, ...rest) => {
+  try { if (api.getEntityName && api.getEntityName(mobId) === "Quest") return "preventDamage"; } catch(_) {}
   let baseDmg = Number(damageDealt);
   const hasBase = Number.isFinite(baseDmg);
   // Custom weapon detection: if player holds one of our sets, damage stat is already effective
@@ -2213,6 +2223,7 @@ viderCoffre = emptyChest;
 generateChest = (playerId, chestPos, rarity) => {
   const result = crateGenerateChest(api, playerId, chestPos, rarity);
   if (result) {
+    try { onQuestCrateOpened(api, playerId); } catch(e) { reportErrorToOwner(e); }
     try { onTutorialCrateOpened(api, playerId); } catch(e) { reportErrorToOwner(e); }
     try {
       const newly = ranks().recordCrate(playerId, rarity);
@@ -2258,3 +2269,6 @@ scheduleInterval(() => {
 
 // The shop is registered once at load; `onPlayerJoin` repeats it for the first player.
 registerShopItems();
+
+// Daily Quests — NPC [5.5,21,4.5] direct spawn, never despawn, look 5s, sidebar
+try { initQuestSystem(api); } catch(e) { reportErrorToOwner(e); }
