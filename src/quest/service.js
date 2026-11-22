@@ -2,8 +2,8 @@
  * Daily Quests — service
  *
  * - NPC spawns directly at [5.5,21,4.5], never despawns, looks at nearest player every 5s
- * - No default quest: player must double-click NPC to get one (inspired by block-pirate NPCs)
- * - Crouch + double-click to draw another quest (reroll)
+ * - No default quest: player gets one with a single click on NPC
+ * - Crouch + click to draw another quest (reroll)
  * - Sidebar RightInfoText with extensible text format + rewards
  * - Quest scaled to player strength (gold/stats/optional equipment)
  * - Daily storage via PlayerDbValue + gold/aura rewards
@@ -16,7 +16,7 @@
  *   onQuestTick(api)                  // tick (sidebar refresh + NPC respawn guard)
  *   onQuestMobDespawned(mobId)        // onMobDespawned / onEntityDeleted
  *   onQuestPlayerLeave(pid)           // onPlayerLeave (cleanup sidebar)
- *   onQuestInteract(api, pid, targetId) // onPlayerClick / onPlayerDamagingMob with double-click
+ *   onQuestInteract(api, pid, targetId) // onPlayerClick / onPlayerDamagingMob
  */
 
 import { setTimeout as scheduleTimeout } from "../utils/scheduler.js";
@@ -42,12 +42,9 @@ let initialized = false;
 
 const questCache = new Map();
 
-// Double-click handling (inspired by block-pirate confirmAction)
-// playerId -> { key, ts }
-const pendingConfirm = new Map();
+// Debounce for rapid double events (click + damage same tick)
 const NPC_ATTACK_DEBOUNCE_MS = 100;
-const confirmMap = new Map(); // for debounce of NPC clicks
-const CONFIRM_MS = 3000;
+const confirmMap = new Map();
 
 /** Helpers */
 function nowMs() {
@@ -55,21 +52,6 @@ function nowMs() {
     if (typeof api !== "undefined" && typeof api.now === "function") return api.now();
   } catch (_) {}
   try { return Date.now(); } catch (_) { return 0; }
-}
-
-function isDoubleClickConfirmed(playerId, key) {
-  const pid = String(playerId);
-  const now = nowMs();
-  // clean expired
-  const pending = pendingConfirm.get(pid);
-  if (pending && pending.ts + CONFIRM_MS < now) pendingConfirm.delete(pid);
-  const current = pendingConfirm.get(pid);
-  if (current && current.key === key) {
-    pendingConfirm.delete(pid);
-    return true;
-  }
-  pendingConfirm.set(pid, { key, ts: now });
-  return false;
 }
 
 function isNpcDebounced(playerId, mobId) {
@@ -156,12 +138,10 @@ function createNewQuest(api, playerId, excludeId) {
     if (pool.length === 0) {
       template = findTemplate(excludeId);
     } else {
-      // random pick from remaining (excluding current) — inspired by block-pirate reroll
       const idx = Math.floor(Math.random() * pool.length);
       template = pool[idx];
     }
   } else {
-    // For initial take, use deterministic daily pick (like before) — keeps daily feel
     template = pickTemplateForToday(pidStr, today);
   }
   if (!template) template = QUEST_TEMPLATES[0];
@@ -180,15 +160,13 @@ function createNewQuest(api, playerId, excludeId) {
   return fresh;
 }
 
-/** Sidebar */
+/** Sidebar — no NPC coords, minimal */
 function buildSidebarLines(api, playerId, state) {
   if (!state) {
     return [
       { str: "══ Daily Quest ══\n", style: { color: "#FFD700", fontWeight: "bold" } },
       { str: "No quest yet\n", style: { color: "#AAAAAA" } },
-      { str: "Double-click the NPC to get one\n", style: { color: "#FFFFFF" } },
-      { str: "Crouch + double-click to reroll\n", style: { color: "#55FFFF" } },
-      { str: "NPC: [5.5,21,4.5]\n", style: { color: "#777777", fontSize: "12px" } },
+      { str: "Click the Quest NPC\n", style: { color: "#FFFFFF" } },
     ];
   }
   const tpl = templateForState(state);
@@ -201,24 +179,16 @@ function buildSidebarLines(api, playerId, state) {
   lines.push({ str: `${tpl.icon || "★"} ${tpl.title}\n`, style: { color: tpl.color || "#FFFFFF", fontWeight: "bold" } });
   lines.push({ str: tpl.description(state.target) + "\n", style: { color: "#FFFFFF" } });
   if (state.completed) {
-    lines.push({ str: "✔ Completed!\n", style: { color: "#55FF55", fontWeight: "bold" } });
+    lines.push({ str: "Completed!\n", style: { color: "#55FF55", fontWeight: "bold" } });
   } else {
     const detail = tpl.detail ? tpl.detail(state.progress, state.target) : `${state.progress}/${state.target}`;
     const pct = state.target > 0 ? Math.min(100, Math.round((state.progress / state.target) * 100)) : 0;
-    lines.push({ str: `${detail}  (${pct}%)\n`, style: { color: "#AAAAAA" } });
+    lines.push({ str: `${detail} (${pct}%)\n`, style: { color: "#AAAAAA" } });
     const filled = Math.round((state.progress / Math.max(1, state.target)) * 10);
     const bar = "█".repeat(Math.min(10, filled)) + "░".repeat(Math.max(0, 10 - filled));
     lines.push({ str: bar + "\n", style: { color: state.progress > 0 ? "#55FF55" : "#555555" } });
   }
   lines.push({ str: `Reward: ${reward.label}\n`, style: { color: "#FFD700" } });
-  if (state.completed && !state.claimed) {
-    lines.push({ str: "→ Double-click NPC to claim!\n", style: { color: "#55FFFF" } });
-  } else if (state.claimed) {
-    lines.push({ str: "Reward claimed\n", style: { color: "#55FF55" } });
-  } else {
-    lines.push({ str: "Crouch+double-click to reroll\n", style: { color: "#777777", fontSize: "12px" } });
-  }
-  lines.push({ str: "NPC: [5.5,21,4.5]\n", style: { color: "#777777", fontSize: "12px" } });
   return lines;
 }
 
@@ -242,7 +212,7 @@ function clearSidebar(api, playerId) {
   } catch (_) {}
 }
 
-/** Reward */
+/** Reward — minimal chat (1 line) */
 function giveReward(api, playerId, state) {
   const tpl = templateForState(state);
   if (!tpl) return;
@@ -260,13 +230,10 @@ function giveReward(api, playerId, state) {
       api.applyAuraChange(playerId, reward.aura);
     }
   } catch (_) {}
+  // Single concise chat line + flying text
   try {
     if (typeof api.sendMessage === "function") {
-      api.sendMessage(playerId, [
-        { str: "✔ Quest completed! ", style: { color: "#55FF55", fontWeight: "bold" } },
-        { str: `+${reward.gold} gold`, style: { color: "#FFD700" } },
-        { str: ` +${reward.aura} Aura`, style: { color: "#AA00FF" } },
-      ]);
+      api.sendMessage(playerId, [{ str: `Quest done! +${reward.gold} gold +${reward.aura} Aura`, style: { color: "#55FF55" } }]);
     }
     if (typeof api.sendFlyingMiddleMessage === "function") {
       api.sendFlyingMiddleMessage(playerId, [{ str: `+${reward.gold} Gold`, style: { color: "#FFD700" } }], 600, 900);
@@ -284,9 +251,10 @@ function addProgress(api, playerId, type, amount = 1) {
     state.progress = Math.min(state.target, (state.progress || 0) + amount);
     if (state.progress >= state.target) {
       state.completed = true;
+      // Minimal completion hint (flying only, not chat flood)
       try {
         if (typeof api.sendFlyingMiddleMessage === "function") {
-          api.sendFlyingMiddleMessage(playerId, [{ str: "Quest completed! Talk to the NPC", style: { color: "#55FF55" } }], 400, 600);
+          api.sendFlyingMiddleMessage(playerId, [{ str: "Quest complete! Click NPC", style: { color: "#55FF55" } }], 400, 600);
         }
       } catch(_) {}
     }
@@ -489,7 +457,7 @@ export function onQuestEntityDeleted(api, entityId) {
   onQuestMobDespawned(api, entityId);
 }
 
-// Double-click inspired by block-pirate confirmAction + crouch reroll
+// Single-click to take (if no quest), crouch+click to reroll, click to claim (with 1s removal)
 export function onQuestInteract(api, playerId, targetId) {
   if (!targetId || !npcId) return false;
   if (String(targetId) !== String(npcId)) return false;
@@ -498,94 +466,50 @@ export function onQuestInteract(api, playerId, targetId) {
   const crouching = isPlayerCrouching(api, playerId);
   const state = loadQuestState(api, playerId);
 
-  // No quest yet -> double-click to take one
+  // No quest -> single click gives one immediately
   if (!state) {
-    if (!isDoubleClickConfirmed(playerId, "quest_take")) {
-      try {
-        // Preview what quest would be offered (daily deterministic)
-        const preview = pickTemplateForToday(String(playerId), todayDateUTC());
-        const power = powerScore(api, playerId, getAuraLevel.bind(null, api), getGoldAmount.bind(null, api));
-        const target = scaledTarget(preview.baseTarget, power);
-        const reward = preview.reward(target);
-        api.sendMessage(playerId, [
-          { str: `${preview.icon} ${preview.title}: `, style: { color: preview.color, fontWeight: "bold" } },
-          { str: preview.description(target), style: { color: "#FFFFFF" } },
-          { str: ` — Reward: ${reward.label}`, style: { color: "#FFD700" } },
-          { str: "\nDouble-click again within 3s to accept.", style: { color: "#55FF55", fontWeight: "bold" } },
-        ]);
-      } catch(_) {}
-      return true;
-    }
     const fresh = createNewQuest(api, playerId);
     const tpl = templateForState(fresh);
     try {
-      api.sendMessage(playerId, [
-        { str: "✔ Quest started: ", style: { color: "#55FF55", fontWeight: "bold" } },
-        { str: `${tpl.icon} ${tpl.title} — `, style: { color: tpl.color } },
-        { str: tpl.description(fresh.target), style: { color: "#FFFFFF" } },
-      ]);
+      api.sendMessage(playerId, [{ str: `Quest: ${tpl.title} - ${tpl.description(fresh.target)}`, style: { color: "#55FF55" } }]);
     } catch(_) {}
     refreshSidebar(api, playerId);
     return true;
   }
 
-  // Has quest — crouch + double-click to reroll
+  // Has quest — crouch+click to reroll (even if completed, reroll takes priority)
   if (crouching) {
-    if (!isDoubleClickConfirmed(playerId, "quest_reroll")) {
-      try {
-        api.sendMessage(playerId, [
-          { str: "↻ Reroll quest? ", style: { color: "#FF6B00", fontWeight: "bold" } },
-          { str: "Your current progress will be lost. Double-click again (crouching) within 3s to confirm.", style: { color: "#FFFFFF" } },
-        ]);
-      } catch(_) {}
-      return true;
-    }
     const fresh = createNewQuest(api, playerId, state.questId);
     const tpl = templateForState(fresh);
     try {
-      api.sendMessage(playerId, [
-        { str: "↻ New quest: ", style: { color: "#55FFFF", fontWeight: "bold" } },
-        { str: `${tpl.icon} ${tpl.title} — `, style: { color: tpl.color } },
-        { str: tpl.description(fresh.target), style: { color: "#FFFFFF" } },
-      ]);
+      api.sendMessage(playerId, [{ str: `New quest: ${tpl.title} - ${tpl.description(fresh.target)}`, style: { color: "#55FFFF" } }]);
     } catch(_) {}
     refreshSidebar(api, playerId);
     return true;
   }
 
-  // Has quest, completed but not claimed -> double-click to claim
+  // Has quest, completed -> click to claim, then remove from sidebar 1s after
   if (state.completed && !state.claimed) {
-    if (!isDoubleClickConfirmed(playerId, "quest_claim")) {
-      try {
-        const tpl = templateForState(state);
-        const reward = tpl.reward(state.target);
-        api.sendMessage(playerId, [
-          { str: "✔ Quest ready to claim: ", style: { color: "#55FF55", fontWeight: "bold" } },
-          { str: `${reward.label}`, style: { color: "#FFD700" } },
-          { str: " — Double-click again within 3s to claim.", style: { color: "#FFFFFF" } },
-        ]);
-      } catch(_) {}
-      return true;
-    }
     giveReward(api, playerId, state);
     state.claimed = true;
     saveQuestState(api, playerId, state);
     refreshSidebar(api, playerId);
+    // Remove from sidebar 1s later (20 ticks)
+    try {
+      scheduleTimeout(() => {
+        try {
+          saveQuestState(api, playerId, null);
+          refreshSidebar(api, playerId);
+        } catch(_) {}
+      }, 20);
+    } catch(_) {
+      // fallback if scheduler unavailable: clear immediately
+      try { saveQuestState(api, playerId, null); } catch(_) {}
+    }
     return true;
   }
 
-  // Has quest in progress, not crouching -> just show progress (single click)
-  refreshSidebar(api, playerId);
-  try {
-    const tpl = templateForState(state);
-    if (tpl) {
-      api.sendMessage(playerId, [
-        { str: `${tpl.icon} ${tpl.title}: `, style: { color: tpl.color || "#FFFFFF", fontWeight: "bold" } },
-        { str: tpl.description(state.target), style: { color: "#FFFFFF" } },
-        { str: ` — ${state.progress}/${state.target}`, style: { color: state.completed ? "#55FF55" : "#AAAAAA" } },
-      ]);
-    }
-  } catch(_) {}
+  // Has quest in progress, not crouching -> no chat flood, just keep sidebar (already visible)
   return true;
 }
 
@@ -594,7 +518,6 @@ export function onQuestClickNear(api, playerId, x, y, z) {
   if (!npcId) return false;
   const dx = x - QUEST_NPC_POS[0], dy = y - QUEST_NPC_POS[1], dz = z - QUEST_NPC_POS[2];
   if (dx*dx+dy*dy+dz*dz > 9) return false;
-  // Treat as NPC click (mobile fallback inspired by block-pirate npcNearPoint)
   return onQuestInteract(api, playerId, npcId);
 }
 
@@ -605,7 +528,6 @@ export function _resetForTests() {
   sidebarCounter = 0;
   initialized = false;
   questCache.clear();
-  pendingConfirm.clear();
   confirmMap.clear();
 }
 
