@@ -9,6 +9,7 @@ import {
   CHOICE_COUNT,
   MAX_AURA_LEVEL,
   POINTS_PER_LEVEL,
+  BLESSING_LEVEL_STEP,
   CATEGORIES,
   RARITIES,
   blessingsOf,
@@ -182,20 +183,21 @@ test("three choices are drawn, all different, from the whole wheel", () => {
 // ------------------------------------------------------------------ points --
 
 test("the world sets its own aura scale and ceiling", () => {
-  // The owner asked for a lower cap: the pool of points is the ladder itself.
+  // XP not limited: cap high, blessing every 2 levels.
   assert.ok(AURA_PER_LEVEL > 0);
   assert.ok(MAX_AURA_LEVEL > AURA_LEVEL_BASE);
-  assert.equal(maxPoints(), (MAX_AURA_LEVEL - AURA_LEVEL_BASE) * POINTS_PER_LEVEL);
-  // An aura room is still worth more in a deeper level, and that is a separate table.
-  assert.ok(MAX_AURA_LEVEL <= 100, "the cap is not lower than the game's own ladder");
+  assert.equal(maxPoints(), Math.floor((MAX_AURA_LEVEL - AURA_LEVEL_BASE) / BLESSING_LEVEL_STEP));
+  assert.ok(MAX_AURA_LEVEL <= 2000, "the cap is absurdly high");
 });
 
 test("an aura level pays one point, and the first level pays none", () => {
   assert.equal(AURA_LEVEL_BASE, 1);
   assert.equal(pointsEarned(1), 0, "a brand-new player was given a point for nothing");
-  assert.equal(pointsEarned(2), 1);
-  assert.equal(pointsEarned(7), 6);
-  assert.equal(pointsLeft(4, 2), 1);
+  assert.equal(pointsEarned(2), 0, "blessing every 2 levels: level 2 gives 0");
+  assert.equal(pointsEarned(3), 1, "level 3 gives first point");
+  assert.equal(pointsEarned(5), 2);
+  assert.equal(pointsEarned(7), 3);
+  assert.equal(pointsLeft(5, 1), 1);
   assert.equal(pointsLeft(4, 99), 0, "spending more than earned went negative");
   assert.equal(pointsLeft(NaN, NaN), 0);
 });
@@ -204,61 +206,52 @@ test("an aura level pays one point, and the first level pays none", () => {
 
 test("a roll lays out three choices and reserves exactly one point", () => {
   const service = createBlessingService({ random: () => 0.5 });
-  assert.equal(service.pointsFor("p1", 3), 2);
-  const offer = service.roll("p1", 3);
+  assert.equal(service.pointsFor("p1", 5), 2);
+  const offer = service.roll("p1", 5);
   assert.equal(offer.length, 3, "the roll did not offer three blessings");
   assert.equal(new Set(offer.map((draw) => draw.blessing.id)).size, 3, "a choice was duplicated");
-  // The point is **reserved**, not spent: three cards on the table are one point promised,
-  // and a second offer cannot be rolled on credit.
-  assert.equal(service.pointsFor("p1", 3), 1);
+  assert.equal(service.pointsFor("p1", 5), 1);
   assert.equal(service.accountOf("p1").spent, 0);
   assert.deepEqual(service.accountOf("p1").history, []);
 });
 
 test("rolling again while an offer is open shows the same three", () => {
-  // Otherwise a player could roll, look, and roll again until the three were good — which
-  // is a reroll nobody paid for, at a price nobody paid.
   const service = createBlessingService({ random: () => 0.5 });
-  const first = service.roll("p1", 4);
-  const second = service.roll("p1", 4);
+  const first = service.roll("p1", 5);
+  const second = service.roll("p1", 5);
   assert.deepEqual(second.map((draw) => draw.blessing.id), first.map((draw) => draw.blessing.id));
   assert.equal(service.accountOf("p1").reserved, 1, "a second roll promised a second point");
 });
 
 test("choosing spends exactly one point, and only once", () => {
   const service = createBlessingService({ random: () => 0.5 });
-  const offer = service.roll("p1", 3);
-  assert.equal(service.pointsFor("p1", 3), 1, "the offer did not reserve a point");
-  const chosen = service.choose("p1", 3, 1);
+  const offer = service.roll("p1", 5);
+  assert.equal(service.pointsFor("p1", 5), 1, "the offer did not reserve a point");
+  const chosen = service.choose("p1", 5, 1);
   assert.ok(chosen, "a point was available and the choice did nothing");
   assert.equal(chosen.blessing.id, offer[1].blessing.id, "the choice is not the card that was picked");
-  // The reservation became a spend: the total left does not move.
   assert.equal(chosen.pointsLeft, 1);
-  assert.equal(service.pointsFor("p1", 3), 1);
+  assert.equal(service.pointsFor("p1", 5), 1);
   assert.equal(service.accountOf("p1").spent, 1);
   assert.equal(service.accountOf("p1").reserved, 0, "a finished choice still holds a reservation");
   assert.deepEqual(service.accountOf("p1").history.map((entry) => entry.id), [chosen.blessing.id]);
-  // The offer is consumed: the same pick cannot be made twice.
-  assert.equal(service.choose("p1", 3, 1), null, "one offer paid for two choices");
+  assert.equal(service.choose("p1", 5, 1), null, "one offer paid for two choices");
   assert.equal(service.accountOf("p1").spent, 1);
 });
 
 test("dropping an offer gives its point back", () => {
-  // A promise that is not kept is not a payment: the roll is refused only while the offer is
-  // on the table, and clearing it must return the point rather than burn it.
   const service = createBlessingService({ random: () => 0.5 });
-  service.roll("p1", 3);
-  assert.equal(service.pointsFor("p1", 3), 1);
+  service.roll("p1", 5);
+  assert.equal(service.pointsFor("p1", 5), 1);
   service.clearOffer("p1");
-  assert.equal(service.pointsFor("p1", 3), 2, "dropping the offer burned the point it held");
-  // Clearing twice must not hand out a second refund.
+  assert.equal(service.pointsFor("p1", 5), 2, "dropping the offer burned the point it held");
   service.clearOffer("p1");
-  assert.equal(service.pointsFor("p1", 3), 2);
+  assert.equal(service.pointsFor("p1", 5), 2);
 });
 
 test("a choice that is not in the offer costs nothing", () => {
   const service = createBlessingService({ random: () => 0.5 });
-  service.roll("p1", 3);
+  service.roll("p1", 5);
   const before = { ...service.accountOf("p1") };
   for (const index of [-1, 3, 99, 1.5, undefined]) {
     assert.equal(service.choose("p1", 3, index), null, `index ${index} was accepted`);
@@ -272,27 +265,23 @@ test("a choice that is not in the offer costs nothing", () => {
 test("a roll and a choice with no point left are refused", () => {
   const service = createBlessingService({ random: () => 0.5 });
   assert.equal(service.roll("p1", 1), null, "the first level paid a point");
+  assert.equal(service.roll("p1", 2), null, "level 2 still gives no point with 1/2 levels");
   const broke = createBlessingService({ random: () => 0.5 });
-  broke.roll("p2", 2);
-  broke.choose("p2", 2, 0);
-  assert.equal(broke.roll("p2", 1), null, "a spent point came back as a free roll");
+  broke.roll("p2", 5);
+  broke.choose("p2", 5, 0);
+  assert.equal(broke.roll("p2", 3), null, "a spent point came back as a free roll");
 });
 
 test("an account is memory, and a new session starts from nothing", () => {
   const service = createBlessingService({ random: () => 0.5 });
-  service.roll("p1", 5);
-  service.choose("p1", 5, 0);
-  assert.equal(service.pointsFor("p1", 5), 3);
-
-  // The owner's rule: nothing survives a reconnection. Forgetting a player is what a leave
-  // and a join both do — there is no `load`, and no database involved at all.
+  service.roll("p1", 7);
+  service.choose("p1", 7, 0);
+  assert.equal(service.pointsFor("p1", 7), 2);
   service.forget("p1");
-  assert.equal(service.pointsFor("p1", 5), 4, "a forgotten session kept its spending");
+  assert.equal(service.pointsFor("p1", 7), 3, "a forgotten session kept its spending");
   assert.deepEqual(service.offerOf("p1"), []);
   assert.deepEqual(service.accountOf("p1").history, []);
-
-  // A key nobody has seen is an empty account, not a crash.
-  assert.equal(service.pointsFor("p2", 4), 3);
+  assert.equal(service.pointsFor("p2", 5), 2);
   assert.deepEqual(service.accountOf("p2").history, []);
   assert.deepEqual(service.offerOf("p2"), []);
 });

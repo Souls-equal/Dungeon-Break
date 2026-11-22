@@ -740,7 +740,7 @@ export const AURA_PER_LEVEL = 50;
  * The highest level this world allows. **Lowered from the game's own ceiling**, and the
  * pool of points is the level itself: a player who reaches it holds the whole ladder.
  */
-export const MAX_AURA_LEVEL = 40;
+export const MAX_AURA_LEVEL = 999;
 
 /**
  * The level a player starts at: a fresh player is level 1 with no aura, and therefore
@@ -749,12 +749,13 @@ export const MAX_AURA_LEVEL = 40;
  */
 export const AURA_LEVEL_BASE = 1;
 
-/** Points earned per aura level. The owner asked for one. */
-export const POINTS_PER_LEVEL = 1;
+/** Points earned per aura level — 1 blessing every 2 aura levels (owner request). */
+export const POINTS_PER_LEVEL = 0.5;
+export const BLESSING_LEVEL_STEP = 2;
 
 /** Every point this world can pay out: the whole ladder, from level 1 to the cap. */
 export function maxPoints() {
-  return (MAX_AURA_LEVEL - AURA_LEVEL_BASE) * POINTS_PER_LEVEL;
+  return Math.floor((MAX_AURA_LEVEL - AURA_LEVEL_BASE) / BLESSING_LEVEL_STEP);
 }
 
 /**
@@ -882,7 +883,7 @@ export function drawChoices(random = Math.random, catalogue = BLESSINGS) {
 /** Points earned by reaching this aura level, spending included. */
 export function pointsEarned(level) {
   const reached = Number.isFinite(level) ? Math.floor(level) : AURA_LEVEL_BASE;
-  return Math.max(0, reached - AURA_LEVEL_BASE) * POINTS_PER_LEVEL;
+  return Math.floor(Math.max(0, reached - AURA_LEVEL_BASE) / BLESSING_LEVEL_STEP);
 }
 
 /**
