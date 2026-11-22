@@ -173,6 +173,11 @@ export function createDungeonService(options) {
     }
     loader.newOrigin(difficulty, playerId);
     const origin = loader.levelState(difficulty, playerId).origin;
+    if (!origin) {
+      try { api.sendMessage(playerId, [cStr("Failed to find origin", MSG_COLORS.red)]); } catch(_){}
+      log(`newOrigin failed for ${playerId} on ${difficulty.label}`);
+      return null;
+    }
 
     // The player is put **in** the entrance chunk immediately, and that is deliberate:
     // a chunk is only sent when someone is near it, so this teleport is what makes the

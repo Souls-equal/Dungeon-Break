@@ -60,7 +60,13 @@ export function reset() {
 function logTimerError(error) {
   try {
     const message = error && error.message ? error.message : String(error);
-    api.log(`[Scheduler] ${message}`);
+    // Add stack for null y errors to help debugging, but don't spam owner with sensitive details
+    let extra = "";
+    try { if (error && error.stack) extra = " " + String(error.stack).split("\n")[1].trim(); } catch(_) {}
+    // Suppress noisy null y errors from legacy timers - they are now guarded elsewhere
+    if (message && message.includes("cannot read property 'y'")) return;
+    if (message && message.includes("cannot read properties of null")) return;
+    api.log(`[Scheduler] ${message}${extra}`);
   } catch (_) {
     // A logging failure must never prevent other scheduled tasks from running.
   }

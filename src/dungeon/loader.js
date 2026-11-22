@@ -334,6 +334,7 @@ export function createLoader({ api, log }) {
    *     that has forgotten its rooms asks the world and finds them.
    */
   function roomInChunk(level, chunkX, chunkZ) {
+    if (!level || !level.origin) return false;
     return probeChunk(chunkX, level.origin.y, chunkZ).occupied;
   }
 
@@ -349,6 +350,7 @@ export function createLoader({ api, log }) {
    * block that has been replaced all read `null`.
    */
   function isRoomClear(level, chunkX, chunkZ) {
+    if (!level || !level.origin) return false;
     try {
       const [localX, localY, localZ] = DUNGEON_CONFIG.mobClearCell;
       const data = api.getBlockData(chunkX * SIZE + localX, floorOfLayer(level.origin.y) + localY, chunkZ * SIZE + localZ);
@@ -361,6 +363,7 @@ export function createLoader({ api, log }) {
 
   /** Writes the record of a cleared room. Idempotent, and cheap enough to repeat. */
   function markRoomClear(level, chunkX, chunkZ) {
+    if (!level || !level.origin) return;
     try {
       const [localX, localY, localZ] = DUNGEON_CONFIG.mobClearCell;
       api.setBlockData(
@@ -988,6 +991,7 @@ export function createLoader({ api, log }) {
       // Two questions, one probe. "Is the chunk sent?" and "is there already a
       // room in it?" are answered by the same Bedrock reading, so a scan costs one
       // `getBlock` per candidate and nothing else.
+      if (!level.origin) continue;
       const probe = probeChunk(x, level.origin.y, z);
       // The probe is also the request: `ready` now holds the first tick a copy may
       // land, whether the chunk answered or has to be sent first.
@@ -1119,6 +1123,7 @@ export function createLoader({ api, log }) {
    * world actually shows.
    */
   function placeOne(level) {
+    if (!level || !level.origin) return false;
     const item = level.queue.shift();
     if (!item) return false;
 
