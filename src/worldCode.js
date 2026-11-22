@@ -1692,8 +1692,7 @@ onPlayerJoin = (playerId) => {
     if (shouldRunTutorial(api, playerId) && onTutorialJoin(api, playerId)) {
       // tuto a pris le relais — pas de welcome normal
     } else {
-      const names = DIFFICULTIES.filter((entry) => entry.fromLobby).map((entry) => entry.label).join(", ");
-      api.sendMessage(playerId, [cStr("Welcome to Dungeon Break! ", MSG_COLORS.gold), cStr(`(${names})`, MSG_COLORS.white)]);
+      api.sendMessage(playerId, [cStr("Welcome to Dungeon Break!", MSG_COLORS.gold)]);
       api.sendMessage(playerId, [cStr("Simple craft: ", MSG_COLORS.aqua), cStr("Inventory=materials", MSG_COLORS.white), cStr(" | ", MSG_COLORS.gray), cStr("Workbench=weapons", MSG_COLORS.white), cStr(" | ", MSG_COLORS.gray), cStr("Artisan=armor", MSG_COLORS.white), cStr(" — /dbg crafts", MSG_COLORS.gray)])
     }
   } catch(e) { reportErrorToOwner(e); }

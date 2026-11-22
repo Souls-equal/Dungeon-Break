@@ -47,7 +47,7 @@ test("a pad block leads to exactly one difficulty", () => {
 
 test("the lobby offers only the three first difficulties", () => {
   const labels = lobbyDifficulties().map((entry) => entry.label);
-  assert.deepEqual(labels, ["Very Easy", "Easy", "Medium"]);
+  assert.deepEqual(labels, ["Very Easy", "Easy", "Normal"]);
 });
 
 test("Hell is the last level, and the pad after it leads nowhere", () => {
@@ -60,7 +60,7 @@ test("Hell is the last level, and the pad after it leads nowhere", () => {
 test("a difficulty is found by id, label or object, and never invented", () => {
   assert.equal(findDifficulty("veryEasy").label, "Very Easy");
   assert.equal(findDifficulty("VERY EASY").label, "Very Easy");
-  assert.equal(findDifficulty(DIFFICULTIES[2]).id, "medium");
+  assert.equal(findDifficulty(DIFFICULTIES[2]).id, "normal");
   assert.equal(findDifficulty("nope"), null);
   assert.equal(findDifficulty(null), null);
   assert.equal(findDifficulty({ label: "Very Easy" }), null, "an object without an id was trusted");

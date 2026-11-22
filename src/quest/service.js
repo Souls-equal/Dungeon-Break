@@ -523,19 +523,14 @@ export function onQuestInteract(api, playerId, targetId) {
     return true;
   }
 
-  // Has quest in progress — give feedback (multi-color) so NPC isn't silent
+  // Has quest already — simple feedback (multi-color, not single-color)
   try {
-    const tpl = templateForState(state);
-    if (tpl) {
-      const reward = tpl.reward(state.target);
-      api.sendMessage(playerId, [
-        { str: `${tpl.icon} `, style: { color: tpl.color, fontWeight: "bold" } },
-        { str: `${tpl.title}: `, style: { color: tpl.color, fontWeight: "bold" } },
-        { str: `${tpl.description(state.target)} `, style: { color: "#FFFFFF" } },
-        { str: `${state.progress}/${state.target}`, style: { color: "#FFD700", fontWeight: "bold" } },
-        { str: ` — ${reward.label}`, style: { color: "#AAAAAA" } },
-      ]);
-    }
+    api.sendMessage(playerId, [
+      { str: "⌬ A ", style: { color: "#CCCCCC" } },
+      { str: "quest", style: { color: "#FFD700", fontWeight: "bold" } },
+      { str: " is already ", style: { color: "#CCCCCC" } },
+      { str: "active", style: { color: "#55FF55", fontWeight: "bold" } },
+    ]);
   } catch(_) {}
   return true;
 }
