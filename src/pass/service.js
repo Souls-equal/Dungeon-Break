@@ -234,22 +234,13 @@ export function refreshPassShop(api, playerId) {
       else descLines.push({ str: `Locked — need ${req - xp} more XP`, style: { color: "#FF5555" } });
 
       const item = {
-        // try no image: omit image field -> Bloxd may default but we attempt
         customTitle: `Tier ${t} Info`,
         description: descLines,
         canBuy: false,
         redDot: false,
         sortPriority: 1000 - (t*2),
       };
-      // Attempt to set no icon: if api requires image, fallback to invisible-ish
-      // We intentionally do NOT set image to satisfy "pas d'image si possible"
-      // But provide it only if the call would fail without — we catch and retry with fallback
-      try {
-        api.createShopItemForPlayer(playerId, PASS_CATEGORY, infoKey, item);
-      } catch (e) {
-        // fallback with transparent icon if platform requires image
-        try { api.createShopItemForPlayer(playerId, PASS_CATEGORY, infoKey, { ...item, image: "Air" }); } catch(_){}
-      }
+      api.createShopItemForPlayer(playerId, PASS_CATEGORY, infoKey, item);
     } catch (_) {}
   }
 }
