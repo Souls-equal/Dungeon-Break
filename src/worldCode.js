@@ -21,7 +21,7 @@ import {
   setTimeout as scheduleTimeout,
   step as stepScheduler,
 } from "./utils/scheduler.js";
-import { DIFFICULTIES, DUNGEON_CONFIG, DUNGEON_VARIATION, difficultyForPadBlock, priceForDifficulty, formatGold, UNLOCK_CURRENCY, UNLOCK_DB_KEY, DUNGEON_PRICES, mobAuraFor } from "./dungeon/config.js";
+import { DIFFICULTIES, DUNGEON_CONFIG, difficultyForPadBlock, priceForDifficulty, formatGold, UNLOCK_CURRENCY, UNLOCK_DB_KEY, DUNGEON_PRICES, mobAuraFor } from "./dungeon/config.js";
 import { LOBBY_POSITION, createDungeonService } from "./dungeon/service.js";
 import { isChestBlock } from "./dungeon/loot.js";
 import { AURA_PER_LEVEL, MAX_AURA_LEVEL, categoryOf } from "./blessing/config.js";
@@ -213,6 +213,7 @@ function syncPlayerSpawnState(playerId) {
   const wasSpawn = spawnMode.get(String(playerId));
   if (wasSpawn === shouldSpawn) return;
   spawnMode.set(String(playerId), shouldSpawn);
+  try { applyMusic(playerId); } catch (_) {}
   if (shouldSpawn) {
     applyBlessingOptions(playerId, baseClientOptions());
     const k = accountKeyOf(playerId);
@@ -278,6 +279,27 @@ function service() {
   return dungeonService;
 }
 
+// -------------------------------------------------------------- music --
+
+const MUSIC_DUNGEON = "Wild Infernos";
+const MUSIC_LOBBY = "ramblinglibrarian-I-Have-Often-T";
+
+function applyMusic(playerId) {
+  try {
+    const desired = service().inDungeon(playerId) ? MUSIC_DUNGEON : MUSIC_LOBBY;
+    let current = null;
+    try { if (typeof api.getClientOption === "function") current = api.getClientOption(playerId, "music"); } catch (_) {}
+    if (current !== desired) api.setClientOption(playerId, "music", desired);
+  } catch (e) { reportErrorToOwner(e); }
+}
+
+function tickMusic() {
+  try {
+    const ids = typeof api.getPlayerIds === "function" ? api.getPlayerIds() : [];
+    for (const pid of ids) applyMusic(pid);
+  } catch (e) { reportErrorToOwner(e); }
+}
+
 // -------------------------------------------------------------- the lobby --
 
 const lobbyCountdowns = {};
@@ -310,20 +332,6 @@ function cancelLobbyCountdown(playerId) {
   }
 }
 
-/**
- * Variation — only on entry.
- * In custom game switch from "default" (lobby) to `DUNGEON_VARIATION`.
- * In world API does not exist → silent fail.
- */
-function switchToDungeonVariation(playerId) {
-  try {
-    if (typeof api.getVariation !== "function" || typeof api.matchmakeToVariation !== "function") return;
-    const current = api.getVariation();
-    if (current !== "default") return;
-    api.matchmakeToVariation(playerId, DUNGEON_VARIATION);
-  } catch(e) { reportErrorToOwner(e); }
-}
-
 function completeLobbyCountdown(playerId, countdown) {
   if (lobbyCountdowns[playerId] !== countdown) return;
   countdown.completed = true;
@@ -351,6 +359,7 @@ function completeLobbyCountdown(playerId, countdown) {
     const k = accountKeyOf(playerId);
     for (const ef of effects.runEffects(blessings().runOf(k))) applyRunEffect(playerId, ef);
     try { onTutorialDungeonEntered(api, playerId); } catch(e) { reportErrorToOwner(e); }
+    try { applyMusic(playerId); } catch(e) { reportErrorToOwner(e); }
   }
 }
 
@@ -439,6 +448,7 @@ function onPadStart(playerId, x, y, z, difficulty) {
       spawnMode.set(String(playerId), false);
       ensureSurvivalGamemode(playerId);
       applyBlessingOptions(playerId, baseClientOptions());
+      try { applyMusic(playerId); } catch(e) { reportErrorToOwner(e); }
     }
     return;
   }
@@ -1599,6 +1609,7 @@ onPlayerBoughtShopItem = (playerId, categoryKey, itemKey, itemOrInput, userInput
   try { spawnMode.set(String(playerId), true); } catch(e) { reportErrorToOwner(e); }
   try { ensureSurvivalGamemode(playerId); } catch(e) { reportErrorToOwner(e); }
   try { applyBlessingOptions(playerId, baseClientOptions()); } catch(e) { reportErrorToOwner(e); }
+  try { applyMusic(playerId); } catch(e) { reportErrorToOwner(e); }
   api.setClientOption(playerId, "middleTextUpper", "");
   closeShop(playerId);
   api.sendMessage(playerId, [{ str: { translationKey: "classicGame:teleportedToSpawn" } }]);
@@ -1667,6 +1678,7 @@ onPlayerJoin = (playerId) => {
   try { ensureSurvivalGamemode(playerId); } catch(e) { reportErrorToOwner(e); }
   // In spawn, keep blessings but fix speed for navigation (no slowdown)
   try { applyBlessingOptions(playerId, baseClientOptions()); } catch(e) { reportErrorToOwner(e); }
+  try { applyMusic(playerId); } catch(e) { reportErrorToOwner(e); }
   try { applyRankVisuals(playerId); } catch(e) { reportErrorToOwner(e); }
   try { refreshRanksShop(playerId); } catch(e) { reportErrorToOwner(e); }
   // Tutoriel: premier join → clé + flèche rouge crate, remplace welcome
@@ -2091,6 +2103,7 @@ onRespawnRequest = (playerId) => {
   try { spawnMode.set(String(playerId), true); } catch(e) { reportErrorToOwner(e); }
   try { ensureSurvivalGamemode(playerId); } catch(e) { reportErrorToOwner(e); }
   try { applyBlessingOptions(playerId, baseClientOptions()); } catch(e) { reportErrorToOwner(e); }
+  try { applyMusic(playerId); } catch(e) { reportErrorToOwner(e); }
   api.setClientOption(playerId, "middleTextUpper", "");
   endRun(playerId, [cStr("You died — run lost, permanent stay", MSG_COLORS.gray)]);
   // XP gardé en mourrant: on ne reset plus l'aura, on garde le niveau
@@ -2198,6 +2211,11 @@ scheduleInterval(() => {
 scheduleInterval(() => {
   try { crateTickClear(api); } catch(e) { reportErrorToOwner(e); }
 }, 1);
+
+// Music loop — enforce correct track in dungeon vs lobby (loop)
+scheduleInterval(() => {
+  try { tickMusic(); } catch(e) { reportErrorToOwner(e); }
+}, 100);
 
 // The shop is registered once at load; `onPlayerJoin` repeats it for the first player.
 registerShopItems();

@@ -456,9 +456,4 @@ export function floorOfLayer(chunkY) {
   return chunkY * DUNGEON_CONFIG.chunkSize;
 }
 
-/**
- * Dungeon variation (custom games only).
- * `default` = lobby/spawn, `dungeon` = inside dungeon.
- * Worlds have no variations — call fails silently.
- */
-export const DUNGEON_VARIATION = "dungeon";
+

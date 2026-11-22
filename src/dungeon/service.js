@@ -18,7 +18,6 @@ import { chestOfClick, drawChestKey, openChest } from "./loot.js";
 import { keyItemName } from "./reward.js";
 import {
   DUNGEON_CONFIG,
-  DUNGEON_VARIATION,
   findDifficulty,
   floorOfLayer,
   nextDifficulty,
@@ -142,20 +141,6 @@ export function createDungeonService(options) {
     return false;
   }
 
-  /**
-   * Variation — only on entry.
-   * In custom game, switch from `default` (lobby) to `dungeon`.
-   * In world or if API missing, fails silently.
-   */
-  function switchToDungeonVariation(playerId) {
-    try {
-      if (typeof api.getVariation !== "function" || typeof api.matchmakeToVariation !== "function") return;
-      const current = api.getVariation();
-      if (current !== "default") return; // already in dungeon
-      api.matchmakeToVariation(playerId, DUNGEON_VARIATION);
-    } catch (_) {}
-  }
-
   function enterDifficulty(playerId, difficultyReference, onReady) {
     const difficulty = findDifficulty(difficultyReference);
     if (!difficulty) {
@@ -163,8 +148,6 @@ export function createDungeonService(options) {
       return null;
     }
     if (!gateDifficulty(playerId, difficulty)) return null;
-    // switch variation only on entry (not on return to spawn)
-    switchToDungeonVariation(playerId);
     const level = loader.levelState(difficulty, playerId);
     if (level.templates.length === 0) {
       try { api.sendMessage(playerId, [cStr(difficulty.label, MSG_COLORS.gold), cStr(" has no rooms yet", MSG_COLORS.gray)]); } catch(_){}
