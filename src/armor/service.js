@@ -44,7 +44,7 @@ function spawnZone(api,pos,key,radius=2,height=0.3){
 }
 function isMobEntityIdArmor(api, id){
   if(!id) return false;
-  try{ const sid=String(id); if(sid==="-127"||sid==="-1"||sid==="0") return false; if(/^-?\d+$/.test(sid)&&sid.length<=4&&Number(sid)<0) return false;
+  try{ const sid=String(id).trim(); if(sid==="0"||sid==="-0") return false; if(/^-\d+$/.test(sid)) return false; if(/^-?\d+$/.test(sid)&&Number(sid)<0) return false;
     if(typeof api.getEntityType==="function"){ const t=api.getEntityType(id); if(!t||typeof t!=="string") return false; if(t==="Player"||t==="PLAYER"||t==="NPC"||t==="Item"||t==="Mesh") return false; const low=t.toLowerCase(); if(low==="player"||low==="npc"||low==="item"||low==="mesh"||low.includes("throw")||low.includes("proj")) return false; }
   }catch(_){return false;} return true;
 }
@@ -65,6 +65,7 @@ function nearbyMobs(api, center, radius){
   return out;
 }
 function applyEffectSafe(api,eid,name,dur,level=1){
+  if(!eid) return; try{ const s=String(eid).trim(); if(s==="0"||s==="-0"||/^-\d+$/.test(s)) return; }catch(_){}
   try{ if(typeof api.applyEffect==="function") api.applyEffect(eid,name,dur,{inbuiltLevel:level}); }catch(_){}
 }
 function damageMob(api,mobId,amt,attackerId){

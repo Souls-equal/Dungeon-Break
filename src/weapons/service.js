@@ -140,10 +140,11 @@ function isMobEntityId(api, id) {
       if (low === "player" || low === "npc" || low === "item" || low === "mesh" || low.includes("throw") || low.includes("proj")) return false;
     }
   } catch(_) { return false; }
-  // "-127" et ids numériques invalides: filtrer
-  const sid = String(id);
-  if (sid === "-127" || sid === "-1" || sid === "0") return false;
-  if (/^-?\d+$/.test(sid) && sid.length <= 4 && Number(sid) < 0) return false;
+  // ids numériques invalides: tout ID négatif ou 0 rejeté
+  const sid = String(id).trim();
+  if (sid === "0" || sid === "-0") return false;
+  if (/^-\d+$/.test(sid)) return false;
+  if (/^-?\d+$/.test(sid) && Number(sid) < 0) return false;
   return true;
 }
 function nearbyMobs(api, centerPos, radius) {
@@ -297,6 +298,9 @@ function isMobAlive(api, mobId) {
   return true;
 }
 function applyEffectSafe(api, eid, name, durationMs, level=1) {
+  // garde-fou: ne jamais appeler avec un ID invalide (-1520, -127, etc.)
+  if (!eid) return;
+  try { const s=String(eid).trim(); if (s==="0"||s==="-0"||/^-\d+$/.test(s)) return; } catch(_) {}
   // api.applyEffect(lifeformId, effectName, duration, customEffectInfo) -> 4 args obligatoires
   // ex: api.applyEffect(playerId, "Invisible", 5000, {})  -> Invisible = bon nom Bloxd (pas "Invisibility")
   try {
