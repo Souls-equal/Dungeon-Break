@@ -2028,15 +2028,35 @@ onPlayerTookDamage = (playerId, damage, cause) => {
   try {
     let dmg = Number(damage);
     if (!Number.isFinite(dmg) || dmg <= 0) return;
-    const causeStr = String(cause || "").toLowerCase();
-    const isLava = causeStr.includes("lava") || causeStr.includes("fire");
+    // cause peut être string "lava" ou objet {cause:"lava", damageType:"fire", ...}
+    // on dump tout pour détecter lave même si Bloxd change la forme
+    let causeStr = "";
+    try {
+      if (typeof cause === "string") causeStr = cause;
+      else if (cause && typeof cause === "object") causeStr = [cause.cause, cause.type, cause.damageType, cause.damageCause, cause.source, cause.reason, cause.name, JSON.stringify(cause)].filter(Boolean).join(" ");
+      else causeStr = String(cause || "");
+    } catch(_) { causeStr = String(cause || ""); }
+    causeStr = causeStr.toLowerCase();
+    let isLava = causeStr.includes("lava") || causeStr.includes("fire");
+    // fallback: si le joueur est littéralement dans un bloc de lave, c'est de la lave même si cause mal formée
+    if (!isLava) {
+      try {
+        const p = api.getPosition(playerId);
+        if (p) {
+          for (const dy of [0, -0.5]) {
+            const b = api.getBlock(Math.floor(p[0]), Math.floor(p[1] + dy), Math.floor(p[2]));
+            if (b && String(b).toLowerCase().includes("lava")) { isLava = true; break; }
+          }
+        }
+      } catch(_){}
+    }
     let modified = dmg;
     try {
       const am = onArmorDamaged(api, playerId, null, dmg);
       if (Number.isFinite(am)) modified = am;
     } catch(_){}
     // never swallow lava damage at spawn: receivingMultiplier is already in the cache
-    // but onArmorDamaged already includes Magmasteel lavaResist — return it explicitly
+    // but onArmorDamaged déjà inclut Magmasteel lavaResist (25%→60%) — on le retourne explicitement
     if (isLava && Number.isFinite(modified)) return modified;
     if (modified !== dmg && Number.isFinite(modified)) return modified;
   } catch(_){}
