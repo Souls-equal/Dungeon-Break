@@ -284,7 +284,32 @@ export function isChestLocked(api, chestPos, playerId) {
  * Empties a chest without error even if full (Argument too large).
  * Fix: 36 slots (not 27), no undefined args, sanitize BlockData, clearStandardChest first.
  */
+function isCrateInUse(api, chestPos) {
+  try {
+    const p = normalizeChestPos(chestPos);
+    if (!p) return false;
+    const data = (()=>{ try{ return api.getBlockData(p.x,p.y,p.z)||{} }catch(_){return {}} })();
+    if (!data || !data.crateLockUntil) return false;
+    const now = nowMs(api);
+    if (now >= data.crateLockUntil) return false;
+    // si proprio encore à <6 blocks, on considère qu'il fouille encore
+    try {
+      const ownerPos = api.getPosition ? api.getPosition(data.crateOwnerId) : null;
+      if (ownerPos && Array.isArray(ownerPos)) {
+        const dx=ownerPos[0]-(p.x+0.5), dy=ownerPos[1]-(p.y+0.5), dz=ownerPos[2]-(p.z+0.5);
+        if (Math.sqrt(dx*dx+dy*dy+dz*dz) <= CRATE_CLEAR_DISTANCE) return true;
+      } else {
+        // pas de pos (deco?) mais lock actif → on bloque quand même pour éviter clear fantôme
+        return true;
+      }
+    } catch(_){ return true; }
+  } catch(_){}
+  return false;
+}
+
 export function clearChestInventory(api, chestPos) {
+  // anti clear forcé mid-view (retours crate)
+  if (isCrateInUse(api, chestPos)) return;
   const p = normalizeChestPos(chestPos);
   if (!p) return;
   const posArr = [p.x, p.y, p.z];
@@ -368,6 +393,11 @@ export function isChestClearQueueBusy() {
  * Use this for manual "vider coffre" command.
  */
 export function clearChestInventoryChunked(api, chestPos, onDone) {
+  if (isCrateInUse(api, chestPos)) {
+    if (onDone) try { onDone(false); } catch(_){}
+    try { const pp = normalizeChestPos(chestPos); if (pp) { const n = (()=>{try{return api.getBlockData(pp.x,pp.y,pp.z)||{}}catch(_){return{}}})().crateOwnerName; if (n) api.sendMessage(n, [{str:"Crate in use — cannot clear", style:{color:"#ff5555"}}]); } } catch(_){}
+    return false;
+  }
   const p = normalizeChestPos(chestPos);
   if (!p) { if (onDone) try { onDone(); } catch(_){} return true; }
   const posArr = [p.x, p.y, p.z];
@@ -417,6 +447,29 @@ export function generateChest(api, playerId, chestPos, rarity, random = Math.ran
     }
     try { api.sendMessage(playerId, [{str:"Busy — wait ", style:{color:"#ff5555"}}, {str:`${remaining}s`, style:{color:"#ffd700"}}]); } catch(_) { try { api.sendMessage(playerId, "This crate is being used by " + ownerDisplay + " - please wait " + remaining + "s"); } catch(_){} }
     return false;
+  }
+  // Anti double-open par le proprio pendant qu'il fouille (5-15s): isChestLocked laisse passer le proprio, on bloque ici explicitement
+  {
+    const data = getChestData(api, chestPos);
+    if (data && data.crateOwnerId === playerId && data.crateLockUntil) {
+      const now = nowMs(api);
+      if (now < data.crateLockUntil) {
+        // même proprio mais lock encore actif (= il est encore dedans ou vient d'ouvrir) → on bloque le re-roll qui ferait un clear forcé mid-view
+        const remaining = Math.ceil((data.crateLockUntil - now) / 1000);
+        try { api.sendMessage(playerId, [{str:"Already opened — wait ", style:{color:"#ff5555"}}, {str:`${remaining}s`, style:{color:"#ffd700"}}, {str:" or move 6 blocks", style:{color:"#aaaaaa"}}]); } catch(_) {}
+        return false;
+      }
+    }
+    // aussi checker la position après abaissement (lowerChestOneBlock change de y)
+    const altPos = (()=>{ const p=normalizeChestPos(chestPos); if(!p) return null; return [p.x, p.y-1, p.z]; })();
+    if (altPos) {
+      const data2 = (()=>{ try{ return api.getBlockData(altPos[0],altPos[1],altPos[2])||{} }catch(_){return {}} })();
+      if (data2 && data2.crateOwnerId === playerId && data2.crateLockUntil && nowMs(api) < data2.crateLockUntil) {
+        const remaining = Math.ceil((data2.crateLockUntil - nowMs(api)) / 1000);
+        try { api.sendMessage(playerId, [{str:"Already opened — wait ", style:{color:"#ff5555"}}, {str:`${remaining}s`, style:{color:"#ffd700"}}]); } catch(_) {}
+        return false;
+      }
+    }
   }
   if (!hasKey(api, playerId, rarity)) {
     try { api.sendMessage(playerId, [{str:"Need ", style:{color:"#ff5555"}}, {str:CRATE_KEYS[rarity], style:{color:"#ffd700"}}]); } catch(_) { try { api.sendMessage(playerId, "You need a " + CRATE_KEYS[rarity] + " to open this chest!"); } catch(_){} }
