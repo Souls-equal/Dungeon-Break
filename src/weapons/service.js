@@ -138,13 +138,12 @@ function isMobEntityId(api, id) {
       if (t === "Player" || t === "PLAYER" || t === "NPC" || t === "Item" || t === "Mesh") return false;
       const low = t.toLowerCase();
       if (low === "player" || low === "npc" || low === "item" || low === "mesh" || low.includes("throw") || low.includes("proj")) return false;
+      return true; // "Draugr Zombie", "Pig", etc.
     }
   } catch(_) { return false; }
-  // ids numériques invalides: tout ID négatif ou 0 rejeté
+  // fallback si getEntityType indisponible (tests): rejette juste 0/"" 
   const sid = String(id).trim();
-  if (sid === "0" || sid === "-0") return false;
-  if (/^-\d+$/.test(sid)) return false;
-  if (/^-?\d+$/.test(sid) && Number(sid) < 0) return false;
+  if (!sid || sid === "0" || sid === "-0") return false;
   return true;
 }
 function nearbyMobs(api, centerPos, radius) {
@@ -298,20 +297,10 @@ function isMobAlive(api, mobId) {
   return true;
 }
 function applyEffectSafe(api, eid, name, durationMs, level=1) {
-  // garde-fou: ne jamais appeler avec un ID invalide (-1520, -127, etc.)
   if (!eid) return;
-  try { const s=String(eid).trim(); if (s==="0"||s==="-0"||/^-\d+$/.test(s)) return; } catch(_) {}
-  // api.applyEffect(lifeformId, effectName, duration, customEffectInfo) -> 4 args obligatoires
-  // ex: api.applyEffect(playerId, "Invisible", 5000, {})  -> Invisible = bon nom Bloxd (pas "Invisibility")
-  try {
-    if (typeof api.applyEffect === "function") api.applyEffect(eid, name, durationMs, { inbuiltLevel: level });
-  } catch (e) {
-    try {
-      const ownerId = (typeof api.getPlayerId === "function" ? api.getPlayerId("K4miNoK4mi") : null) || (typeof api.getPlayerIds === "function" ? api.getPlayerIds().find(id => String(id)==="K4miNoK4mi" || (typeof api.getEntityName==="function" && api.getEntityName(id)==="K4miNoK4mi")) : null);
-      if (ownerId) api.sendMessage(ownerId, `[Effect] ${name} ${e && e.message ? e.message : String(e)} duration=${durationMs} level=${level}`);
-    } catch(_) {}
-  }
+  try { if (typeof api.applyEffect === "function") api.applyEffect(eid, name, durationMs, { inbuiltLevel: level }); } catch (_) {}
 }
+
 function shouldSuppressInactiveError(api, mobId, attackerId, errMsg) {
   const msg = errMsg ? String(errMsg).toLowerCase() : "";
   if (msg.includes("inactive") || msg.includes("invalid") || msg.includes("deleted") || msg.includes("not found")) return true;
