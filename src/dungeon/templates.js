@@ -112,7 +112,6 @@ const READY_ROOMS = [
 /** The sixty rooms still to build, in the same series. Uncomment as they land. */
 const PLANNED_ROOMS = [
   // [-38, 1, 0],
-  // [-38, 1, 0],
   // [-40, 1, 0],
   // [-42, 1, 0],
   // [-44, 1, 0],
