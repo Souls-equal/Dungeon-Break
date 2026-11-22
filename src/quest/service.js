@@ -308,26 +308,12 @@ function refreshNpcLabelForPlayer(api, playerId, targetId) {
   if (!nid || !playerId) return;
   try {
     if (typeof api.setOtherEntitySetting !== "function") return;
-    // Explains the 2 interactions: Click vs Crouch+Click
-    const box = {
-      content: [
-        "Quest Master",
-        "Click: Get / Claim Quest",
-        "Crouch + Click: New Quest"
-      ],
-      customTextStyling: {
-        color: "#FFD700",
-        fontSize: "18px",
-        fontWeight: "bold",
-        textAlign: "center",
-        backgroundColor: "#000000AA",
-        textShadow: "1px 1px 2px #000000",
-        padding: "6px",
-        borderRadius: "6px"
-      }
-    };
-    // Relevant player sees the NPC's box: (viewer, target, setting, value)
-    api.setOtherEntitySetting(playerId, nid, "multilineTextBox", box);
+    api.setOtherEntitySetting(playerId, nid, "multilineTextBox", { content: [
+        {str:"Click:", style:{color:"lightgray"}},
+        {str:" Get / Claim Quest", style:{color:"white"}},
+        {str:"\nCrouch + Click:", style:{color:"lightgray"}},
+        {str:" Change of Quest", style:{color:"white"}},
+    ]});
   } catch(_) {}
 }
 
