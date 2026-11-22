@@ -1,10 +1,11 @@
 /**
  * Tutorial ~90s — 3 steps, native groundArrowPath.
- * 1) Join → Wooden Key + red arrow to crate [31.5,20,-0.5]
- * 2) generateChest() → "collect the loot"
+ * 1) Join → Wooden Key + red arrow to crate [31.5,20,-0.5] + highlight hotbar slot
+ * 2) generateChest() → "collect the loot" + remove highlight
  * 3) Green arrow to dungeon [2.5,20,-7.5]
  * Flag hasDoneTutorial via api.get/setPlayerDbValue with t:0/t:1 (persisted).
  */
+import { setTimeout as scheduleTimeout } from "../utils/scheduler.js";
 export const TUTORIAL_DB_KEY = "t";
 const LEGACY_TUTORIAL_KEY = "dungeonBreak.tutorial.v1";
 const TUTORIAL_STEP_KEY = "dungeonBreak.tutorial.step";
@@ -58,6 +59,75 @@ function clearArrow(api, playerId) {
   } catch {}
 }
 
+function findWoodenKeyHotbarSlot(api, playerId) {
+  if (!api || !playerId || typeof api.getItemSlot !== "function") return null;
+  for (let i = 0; i < 10; i++) {
+    try {
+      const it = api.getItemSlot(playerId, i);
+      if (!it || !it.name) continue;
+      const n = String(it.name).toLowerCase();
+      if (n.includes("wooden key")) return i;
+    } catch {}
+  }
+  return null;
+}
+function findWoodenKeyAnySlot(api, playerId) {
+  if (!api || !playerId || typeof api.getItemSlot !== "function") return null;
+  for (let i = 0; i < 60; i++) {
+    try {
+      const it = api.getItemSlot(playerId, i);
+      if (!it || !it.name) continue;
+      const n = String(it.name).toLowerCase();
+      if (n.includes("wooden key")) return i;
+    } catch {}
+  }
+  return null;
+}
+export function highlightWoodenKey(api, playerId) {
+  try {
+    let slot = findWoodenKeyHotbarSlot(api, playerId);
+    if (slot === null) {
+      // pas encore en hotbar (giveItem async) → retry 1 tick
+      try {
+        scheduleTimeout(() => {
+          try {
+            const s = findWoodenKeyHotbarSlot(api, playerId);
+            if (s !== null) api.setClientOption(playerId, "highlightedHotbarSlots", [s]);
+          } catch {}
+        }, 1);
+      } catch {}
+      return;
+    }
+    api.setClientOption(playerId, "highlightedHotbarSlots", [slot]);
+  } catch {}
+}
+export function clearHighlight(api, playerId) {
+  try { api.setClientOption(playerId, "highlightedHotbarSlots", []); } catch {}
+}
+export function tickTutorialHighlight(api) {
+  // si le joueur a bougé la clé en hotbar pendant le step crate, on re-highlight
+  try {
+    const ids = typeof api.getPlayerIds === "function" ? api.getPlayerIds() : [];
+    for (const pid of ids) {
+      if (hasDoneTutorial(api, pid)) continue;
+      const step = getStep(api, pid);
+      if (step !== "crate") continue;
+      let cur = null;
+      try { cur = api.getClientOption ? api.getClientOption(pid, "highlightedHotbarSlots") : null; } catch {}
+      const hasHighlight = Array.isArray(cur) && cur.length > 0;
+      const slot = findWoodenKeyHotbarSlot(api, pid);
+      if (slot !== null && !hasHighlight) {
+        try { api.setClientOption(pid, "highlightedHotbarSlots", [slot]); } catch {}
+      } else if (slot === null && hasHighlight) {
+        const anySlot = findWoodenKeyAnySlot(api, pid);
+        if (anySlot === null) {
+          try { api.setClientOption(pid, "highlightedHotbarSlots", []); } catch {}
+        }
+      }
+    }
+  } catch {}
+}
+
 export const TUTORIAL_MESSAGES = {
   join: "Tutorial: Use your key on the crate! Follow the red arrow.",
   crateOpened: "Great! Collect the loot inside the crate.",
@@ -77,6 +147,7 @@ export function onTutorialJoin(api, playerId) {
     if (typeof api.giveItem === "function") api.giveItem(playerId, "Wooden Key", 1, { customDisplayName: "Tutorial Key", customDescription: "Your first key.\nUsed in the tutorial." });
   } catch {}
   setArrow(api, playerId, "red", TUTORIAL_CRATE_TARGET);
+  try { highlightWoodenKey(api, playerId); } catch {}
   try { api.sendMessage(playerId, [{ str: TUTORIAL_MESSAGES.join, style: { color: "#ff5555" } }]); } catch {}
   return true;
 }
@@ -85,6 +156,7 @@ export function onTutorialCrateOpened(api, playerId) {
   if (hasDoneTutorial(api, playerId)) return;
   const step = getStep(api, playerId);
   if (step !== "crate") return;
+  try { clearHighlight(api, playerId); } catch {}
   advanceStep(api, playerId, "loot");
   try { api.sendMessage(playerId, [{ str: TUTORIAL_MESSAGES.crateOpened, style: { color: "#FFFF55" } }]); } catch {}
   setArrow(api, playerId, "#69EA5E", TUTORIAL_DUNGEON_TARGET);
@@ -98,6 +170,7 @@ export function onTutorialDungeonEntered(api, playerId) {
   if (step !== "dungeon" && step !== "loot") return;
   markDone(api, playerId);
   clearArrow(api, playerId);
+  try { clearHighlight(api, playerId); } catch {}
   try { api.sendMessage(playerId, [{ str: TUTORIAL_MESSAGES.final, style: { color: "#FFD700" } }]); } catch {}
 }
 
@@ -106,5 +179,5 @@ export function buildTutorialConfig(portalPos, cratePos) {
 }
 export const TUTORIAL_CONFIG = buildTutorialConfig(TUTORIAL_PORTAL_POS, TUTORIAL_CRATE_POS);
 export function tickTutorialArrows() {}
-export function onTutorialComplete(api, playerId) { markDone(api, playerId); }
+export function onTutorialComplete(api, playerId) { markDone(api, playerId); clearHighlight(api, playerId); }
 export function onTutorialPortalUsed() {}

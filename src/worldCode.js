@@ -59,7 +59,7 @@ import { tickCombatFx, onWeaponHit, onArmorHit, tickArmorShimmer, forgetPlayer a
 import { refreshWeaponStats, tickWeapons, onMobKilled, forgetPlayer as forgetWeaponAbility, markEntityDeleted, onThrowableUsed, onCollision as onWeaponCollision, onCrouchChange as onNovaCrouchChange, tryNovaLaser, isNovaCrouching, tryNovaCrescent } from "./weapons/service.js";
 import { parseWeaponInfo } from "./combatFx/service.js";
 import { onDamaged as onArmorDamaged, onDealingDamage as onArmorDealingDamage, onMobKilled as onArmorMobKilled, tick as tickArmors, forgetPlayer as forgetArmorAbility, getTemporaryDefense as armorTempDefense, refreshArmorDescriptions, getArmorLevel as getArmorLevelForHeat } from "./armor/service.js";
-import { shouldRunTutorial, onTutorialJoin, onTutorialCrateOpened, onTutorialDungeonEntered } from "./tutorial/service.js";
+import { shouldRunTutorial, onTutorialJoin, onTutorialCrateOpened, onTutorialDungeonEntered, tickTutorialHighlight } from "./tutorial/service.js";
 const OWNER_NAME = "K4miNoK4mi";
 function getOwnerId() {
   if (typeof api.getPlayerId === "function") {
@@ -1635,6 +1635,7 @@ tick = () => {
   try { tickArmors(api); } catch(e) { reportErrorToOwner(e); }
   try { tickArmorShimmer(api); } catch(e) { reportErrorToOwner(e); }
   try { tickLavaDamage(); } catch(e) { reportErrorToOwner(e); }
+  try { tickTutorialHighlight(api); } catch(e) { reportErrorToOwner(e); }
   // ranks time tracking
   try {
     rankTickCounter++;
