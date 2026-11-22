@@ -94,7 +94,7 @@ function safeSendMessage(playerId, message) {
 }
 
 const LOBBY_CONFIG = {
-  countdownSeconds: 10,
+  countdownSeconds: 5,
   ticksPerSecond: 20,
   // Bloxd starts the new block callback before stopping the old one, so a player
   // crossing two pads of the same colour would otherwise restart the countdown.
@@ -1634,6 +1634,7 @@ tick = () => {
   try { tickWeapons(api); } catch(e) { reportErrorToOwner(e); }
   try { tickArmors(api); } catch(e) { reportErrorToOwner(e); }
   try { tickArmorShimmer(api); } catch(e) { reportErrorToOwner(e); }
+  try { tickLavaDamage(); } catch(e) { reportErrorToOwner(e); }
   // ranks time tracking
   try {
     rankTickCounter++;
@@ -2036,12 +2037,12 @@ onMobDamagingPlayer = (mobId, playerId, damageDealt, ...rest) => {
   if (scaled !== undefined) return scaled;
 };
 // Environmental damage (lava, fall) — lava always hurts, even at spawn
+// Fallback tick-based lava damage is also enforced (see tickLavaDamage) because
+// Bloxd's onPlayerTookDamage is not reliably fired for lava on this host.
 onPlayerTookDamage = (playerId, damage, cause) => {
   try {
     let dmg = Number(damage);
     if (!Number.isFinite(dmg) || dmg <= 0) return;
-    // cause peut être string "lava" ou objet {cause:"lava", damageType:"fire", ...}
-    // on dump tout pour détecter lave même si Bloxd change la forme
     let causeStr = "";
     try {
       if (typeof cause === "string") causeStr = cause;
@@ -2049,13 +2050,12 @@ onPlayerTookDamage = (playerId, damage, cause) => {
       else causeStr = String(cause || "");
     } catch(_) { causeStr = String(cause || ""); }
     causeStr = causeStr.toLowerCase();
-    let isLava = causeStr.includes("lava") || causeStr.includes("fire");
-    // fallback: si le joueur est littéralement dans un bloc de lave, c'est de la lave même si cause mal formée
+    let isLava = causeStr.includes("lava") || causeStr.includes("fire") || causeStr.includes("burn");
     if (!isLava) {
       try {
         const p = api.getPosition(playerId);
         if (p) {
-          for (const dy of [0, -0.5]) {
+          for (const dy of [0, -0.5, 0.5]) {
             const b = api.getBlock(Math.floor(p[0]), Math.floor(p[1] + dy), Math.floor(p[2]));
             if (b && String(b).toLowerCase().includes("lava")) { isLava = true; break; }
           }
@@ -2067,18 +2067,56 @@ onPlayerTookDamage = (playerId, damage, cause) => {
       const am = onArmorDamaged(api, playerId, null, dmg);
       if (Number.isFinite(am)) modified = am;
     } catch(_){}
-    // lava always hurts at spawn — sauf si Heat Resistance (Magmasteel) actif, on laisse l'effet bloquer
-    if (isLava && Number.isFinite(modified)) {
+    // Magmasteel = Heat Resistance → laisse Bloxd bloquer (return undefined = immunité)
+    if (isLava) {
       try { if (typeof getArmorLevelForHeat === "function" && getArmorLevelForHeat(api, playerId, "Magmasteel") > 0) {
-        // Magmasteel → Heat Resistance effect, on ne force pas les dégâts
-        if (modified !== dmg && Number.isFinite(modified)) return modified;
-        return; // laisse Bloxd gérer l'immunité
+        if (Number.isFinite(modified) && modified !== dmg) return modified;
+        return; // immune via Heat Resistance effect (tick toutes les 1s)
       }} catch(_){}
-      return modified;
+      if (Number.isFinite(modified)) return modified;
+      return dmg;
     }
     if (modified !== dmg && Number.isFinite(modified)) return modified;
   } catch(_){}
 };
+
+let _lavaTick = 0;
+function tickLavaDamage() {
+  _lavaTick++;
+  if (_lavaTick % 10 !== 0) return; // 2×/sec (10 ticks = 0.5s)
+  let pids = [];
+  try { pids = typeof api.getPlayerIds === "function" ? api.getPlayerIds() : []; } catch(_){}
+  for (const pid of pids) {
+    try {
+      // Magmasteel immune via Heat Resistance
+      if (typeof getArmorLevelForHeat === "function" && getArmorLevelForHeat(api, pid, "Magmasteel") > 0) continue;
+      const p = api.getPosition(pid);
+      if (!p || !Array.isArray(p)) continue;
+      let inLava = false;
+      for (const dy of [0, -0.5, 0.3, 0.8]) {
+        try {
+          const b = api.getBlock(Math.floor(p[0]), Math.floor(p[1] + dy), Math.floor(p[2]));
+          if (b && String(b).toLowerCase().includes("lava")) { inLava = true; break; }
+        } catch(_){}
+      }
+      if (!inLava) continue;
+      // 4 dmg ≈ 2 cœurs par tick (0.5s) → meurt en ~5 ticks (2.5s) avec 20hp, comme vanilla lava
+      let dmg = 4;
+      try {
+        const am = onArmorDamaged(api, pid, null, dmg);
+        if (Number.isFinite(am)) dmg = am;
+      } catch(_){}
+      if (!Number.isFinite(dmg) || dmg <= 0) continue;
+      try {
+        if (typeof api.applyHealthChange === "function") api.applyHealthChange(pid, -Math.max(1, Math.round(dmg)), undefined, false);
+        else if (typeof api.setHealth === "function" && typeof api.getHealth === "function") {
+          const cur = api.getHealth(pid);
+          if (Number.isFinite(cur)) api.setHealth(pid, Math.max(0, cur - dmg));
+        }
+      } catch(_){}
+    } catch(e) { reportErrorToOwner(e); }
+  }
+}
 
 /**
  * A player died. **Dying is a way out now**, and it is the same way as the shop button.
