@@ -73,8 +73,7 @@ function getOwnerId() {
     for (const id of ids) {
       if (String(id) === OWNER_NAME) return id;
       if (typeof api.getEntityName === "function") {
-        const n = api.getEntityName(id);
-        if (n === OWNER_NAME) return id;
+        try { const n = api.getEntityName(id); if (n === OWNER_NAME) return id; } catch(_) {}
       }
     }
   }
@@ -1954,9 +1953,16 @@ onPlayerDamagingOtherPlayer = (attackingPlayer, damagedPlayer, damageDealt, with
 // so we don't apply 2x multiplier. Only add elemental procs.
 onPlayerDamagingMob = (playerId, mobId, damageDealt, ...rest) => {
   try {
-    if (api.getEntityName && api.getEntityName(mobId) === "Quest") {
-      try { onQuestInteract(api, playerId, mobId); } catch(_) {}
-      return "preventDamage";
+    // Guard: mobId must be a plausible entity ID, not a numeric damage value like "-290"
+    const mid = mobId != null ? String(mobId) : "";
+    const isPlausibleId = mid && isNaN(Number(mid)) || (mid.length > 8 && mid.includes("-"));
+    if (isPlausibleId && api.getEntityName) {
+      let entName = null;
+      try { entName = api.getEntityName(mid); } catch(_) { entName = null; }
+      if (entName === "Quest") {
+        try { onQuestInteract(api, playerId, mid); } catch(_) {}
+        return "preventDamage";
+      }
     }
   } catch(_) {}
   let baseDmg = Number(damageDealt);
@@ -2188,7 +2194,7 @@ onPlayerAttemptOpenChest = (playerId, x, y, z, isMoonstoneChest, isIronChest) =>
       let data = null;
       try { data = api.getBlockData(x, y, z); } catch(e) { reportErrorToOwner(e); }
       let ownerDisplay = (data && (data.crateOwnerName || data.crateOwnerId)) ? (data.crateOwnerName || data.crateOwnerId) : "another player";
-      try { const n = (data && data.crateOwnerId && typeof api.getEntityName === "function") ? api.getEntityName(data.crateOwnerId) : null; if (n) ownerDisplay = n; } catch(e) { reportErrorToOwner(e); }
+      try { const n = (data && data.crateOwnerId && typeof api.getEntityName === "function") ? api.getEntityName(data.crateOwnerId) : null; if (n) ownerDisplay = n; } catch(_) {}
       api.sendMessage(playerId, [cStr(`This crate belongs to ${ownerDisplay}`, MSG_COLORS.red)]);
       return "preventOpen";
     }
