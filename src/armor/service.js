@@ -42,6 +42,12 @@ function spawnZone(api,pos,key,radius=2,height=0.3){
     api.playParticleEffect({...preset,pos1:[pos[0]-r,pos[1],pos[2]-r],pos2:[pos[0]+r,pos[1]+h,pos[2]+r],dir1:[-0.6,0.2,-0.6],dir2:[0.6,0.6,0.6]});
   }catch(_){}
 }
+function isMobEntityIdArmor(api, id){
+  if(!id) return false;
+  try{ const sid=String(id); if(sid==="-127"||sid==="-1"||sid==="0") return false; if(/^-?\d+$/.test(sid)&&sid.length<=4&&Number(sid)<0) return false;
+    if(typeof api.getEntityType==="function"){ const t=api.getEntityType(id); if(!t||typeof t!=="string") return false; if(t==="Player"||t==="PLAYER"||t==="NPC"||t==="Item"||t==="Mesh") return false; const low=t.toLowerCase(); if(low==="player"||low==="npc"||low==="item"||low==="mesh"||low.includes("throw")||low.includes("proj")) return false; }
+  }catch(_){return false;} return true;
+}
 function nearbyMobs(api, center, radius){
   const out=[]; if(!api||!center) return out;
   try{
@@ -49,13 +55,13 @@ function nearbyMobs(api, center, radius){
       const min=[center[0]-radius,center[1]-radius,center[2]-radius],max=[center[0]+radius,center[1]+radius,center[2]+radius];
       const ids=api.getEntitiesInRect(min,max)||[];
       for(const id of ids){
-        try{ if(typeof api.getEntityType==="function"&&api.getEntityType(id)==="Player") continue;}catch(_){}
+        try{ if(!isMobEntityIdArmor(api,id)) continue;}catch(_){continue;}
         try{ const p=api.getPosition(id); if(!p) continue; const dx=p[0]-center[0],dy=p[1]-center[1],dz=p[2]-center[2]; if(dx*dx+dy*dy+dz*dz<=radius*radius+4) out.push({id,pos:p});}catch(_){}
       }
       return out;
     }
   }catch(_){}
-  try{ if(typeof api.getMobIds==="function"){ const ids=api.getMobIds()||[]; for(const id of ids){ try{ const p=api.getPosition(id); if(!p) continue; const dx=p[0]-center[0],dy=p[1]-center[1],dz=p[2]-center[2]; if(dx*dx+dy*dy+dz*dz<=radius*radius+4) out.push({id,pos:p});}catch(_){}} } }catch(_){}
+  try{ if(typeof api.getMobIds==="function"){ const ids=api.getMobIds()||[]; for(const id of ids){ try{ if(!isMobEntityIdArmor(api,id)) continue; const p=api.getPosition(id); if(!p) continue; const dx=p[0]-center[0],dy=p[1]-center[1],dz=p[2]-center[2]; if(dx*dx+dy*dy+dz*dz<=radius*radius+4) out.push({id,pos:p});}catch(_){}} } }catch(_){}
   return out;
 }
 function applyEffectSafe(api,eid,name,dur,level=1){

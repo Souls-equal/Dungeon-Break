@@ -1206,10 +1206,10 @@ test("a join offers the roll, and a fresh player has nothing to spend", () => {
 });
 
 test("a roll offers three blessings and reserves the point; the choice spends it", () => {
-  const world = joinAtLevel(createWorld(["p1"]), 4);
+  const world = joinAtLevel(createWorld(["p1"]), 7);
   const tiles = blessingTiles(world);
   assert.equal(tiles.get("Roll a Blessing").canBuy, true, "a player with 3 points could not roll");
-  assert.match(tiles.get("Roll a Blessing").description, /Aura level 4 · 3 points/);
+  assert.match(tiles.get("Roll a Blessing").description, /Aura level 7 · 3 points/);
 
   world.context.onPlayerBoughtShopItem("p1", "Blessings", "Roll a Blessing", {}, "");
   // **The roll replaces the category's tiles with three choices.** Nothing is deleted —
@@ -1298,7 +1298,7 @@ test("a roll offers three blessings and reserves the point; the choice spends it
 });
 
 test("a roll with no point left is refused, and the choice tile closes", () => {
-  const world = joinAtLevel(createWorld(["p1"]), 2);
+  const world = joinAtLevel(createWorld(["p1"]), 3);
   rollAndChoose(world);
   assert.equal(world.helperCards.length, 1);
   // One point, one blessing: the tile now says so and cannot be bought.
@@ -1310,7 +1310,7 @@ test("a roll with no point left is refused, and the choice tile closes", () => {
 });
 
 test("a second roll while an offer is open shows the same three, and reserves nothing", () => {
-  const world = joinAtLevel(createWorld(["p1"]), 3);
+  const world = joinAtLevel(createWorld(["p1"]), 5);
   world.context.onPlayerBoughtShopItem("p1", "Blessings", "Roll a Blessing", {}, "");
   const first = offerTiles(world).map((entry) => entry.name);
   world.context.onPlayerBoughtShopItem("p1", "Blessings", "Roll a Blessing", {}, "");
@@ -1386,13 +1386,12 @@ test("a choice is removed for real, and the roll tile never is", () => {
 });
 
 test("the points are a custom currency on the HUD, and it is not persistent", () => {
-  const world = joinAtLevel(createWorld(["p1"]), 4);
+  const world = joinAtLevel(createWorld(["p1"]), 7);
   const shown = world.currencies.get("p1|Blessing Point");
   assert.ok(shown, "the points were not shown as a currency");
   assert.equal(shown.amount, 3, "the currency does not carry the points");
   assert.equal(shown.persistent, false, "the points currency was made persistent");
   assert.ok(shown.icon);
-  // Spending a point moves the HUD, not only the tile.
   rollAndChoose(world);
   assert.equal(world.currencies.get("p1|Blessing Point").amount, 2);
 });
@@ -1409,15 +1408,11 @@ test("the aura scale and the ceiling are pushed to the game on a join", () => {
 });
 
 test("a player who gains a level while the shop is open is owed the point", () => {
-  // Points are derived from the level, never counted: a level gained outside a dungeon —
-  // or while the shop was open — is honoured the next time the tiles are drawn.
-  const world = joinAtLevel(createWorld(["p1"]), 3);
+  const world = joinAtLevel(createWorld(["p1"]), 5);
   assert.match(blessingTiles(world).get("Roll a Blessing").description, /2 points/);
-  world.setAuraLevel("p1", 6);
-  // **Opening the shop** is what redraws the tiles: the count is per player, so the shop
-  // is refreshed when it is looked at rather than on a tick spent watching everybody's XP.
+  world.setAuraLevel("p1", 11);
   world.context.onPlayerToggledShopMenu("p1", true);
-  assert.match(blessingTiles(world).get("Roll a Blessing").description, /Aura level 6 · 5 points/);
+  assert.match(blessingTiles(world).get("Roll a Blessing").description, /Aura level 11 · 5 points/);
   rollAndChoose(world);
   assert.equal(world.helperCards.length, 1);
   assert.match(blessingTiles(world).get("Roll a Blessing").description, /4 points/);
@@ -1443,8 +1438,7 @@ test("buying a tile that is not in the offer, or another category, does nothing"
 });
 
 test("the bundle names only blessings that exist, and no rarity twice", () => {
-  const world = joinAtLevel(createWorld(["p1"]), 20);
-  // Spend every point of a level-20 player, which reaches deep into the table.
+  const world = joinAtLevel(createWorld(["p1"]), 40);
   const rolls = 19;
   for (let index = 0; index < rolls; index += 1) rollAndChoose(world, "p1", index % 3);
   assert.equal(world.helperCards.length, rolls);
