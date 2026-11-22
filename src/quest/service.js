@@ -33,6 +33,8 @@ import {
   findTemplate,
   todayDateUTC,
 } from "./config.js";
+import { PASS_XP_PER_QUEST } from "../pass/config.js";
+import { addPassXp } from "../pass/service.js";
 
 let npcId = null;
 let npcSpawnTries = 0;
@@ -230,6 +232,8 @@ function giveReward(api, playerId, state) {
       api.applyAuraChange(playerId, reward.aura);
     }
   } catch (_) {}
+  // Pass XP — every claimed quest progresses the Pass
+  try { addPassXp(api, playerId, PASS_XP_PER_QUEST); } catch (_) {}
   // Chat line with multiple colors for readability
   try {
     if (typeof api.sendMessage === "function") {
@@ -493,9 +497,9 @@ export function onQuestInteract(api, playerId, targetId) {
   if (!targetId || !npcId) return false;
   if (String(targetId) !== String(npcId)) return false;
   if (isNpcDebounced(playerId, targetId)) return true;
-
   const crouching = isPlayerCrouching(api, playerId);
   const state = loadQuestState(api, playerId);
+
 
   // No quest -> single click gives one immediately (multi-color for readability)
   if (!state) {
