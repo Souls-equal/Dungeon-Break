@@ -349,20 +349,27 @@ export function createLoader({ api, log }) {
    * block that has been replaced all read `null`.
    */
   function isRoomClear(level, chunkX, chunkZ) {
-    const [localX, localY, localZ] = DUNGEON_CONFIG.mobClearCell;
-    const data = api.getBlockData(chunkX * SIZE + localX, floorOfLayer(level.origin.y) + localY, chunkZ * SIZE + localZ);
-    return Boolean(data && data.clear);
+    try {
+      const [localX, localY, localZ] = DUNGEON_CONFIG.mobClearCell;
+      const data = api.getBlockData(chunkX * SIZE + localX, floorOfLayer(level.origin.y) + localY, chunkZ * SIZE + localZ);
+      return Boolean(data && data.clear);
+    } catch (_) {
+      // chunk pas encore chargé (getBlockData throw "unloaded chunk") -> pas clear, et pas d'erreur tick
+      return false;
+    }
   }
 
   /** Writes the record of a cleared room. Idempotent, and cheap enough to repeat. */
   function markRoomClear(level, chunkX, chunkZ) {
-    const [localX, localY, localZ] = DUNGEON_CONFIG.mobClearCell;
-    api.setBlockData(
-      chunkX * SIZE + localX,
-      floorOfLayer(level.origin.y) + localY,
-      chunkZ * SIZE + localZ,
-      { clear: true },
-    );
+    try {
+      const [localX, localY, localZ] = DUNGEON_CONFIG.mobClearCell;
+      api.setBlockData(
+        chunkX * SIZE + localX,
+        floorOfLayer(level.origin.y) + localY,
+        chunkZ * SIZE + localZ,
+        { clear: true },
+      );
+    } catch (_) {}
   }
 
   /**
@@ -829,9 +836,10 @@ export function createLoader({ api, log }) {
       const z = chunkZ + dz;
       const roomKey = chunkKey(x, z);
       wanted.add(roomKey);
-      // A room already holding mobs, or already cleared, is left alone: the record is in
-      // the room, so this is the world's answer and not a session's memory.
-      if (level.mobs.has(roomKey) || isRoomClear(level, x, z)) continue;
+      if (level.mobs.has(roomKey)) continue;
+      // **A room, not just a chunk.** `placed` d'abord: isRoomClear getBlockData throw "unloaded chunk" si pas copié.
+      if (level.planned.get(roomKey) !== "placed") continue;
+      if (isRoomClear(level, x, z)) continue;
       // The room is not copied yet: `enterRoom` runs again while the player stays put
       // (`mobRetryTicks`), and this is how a room copied two ticks after the entrance
       // still gets its mobs.
