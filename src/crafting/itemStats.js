@@ -46,11 +46,11 @@ export const ITEM_STAT_OVERRIDES = {
  "Amethite Boots": { displayName: "Amethite Boots", description: "Amethite Armor — Wave on hit. More pieces = higher chance, damage, radius and targets." },
  "Amethite Gauntlets": { displayName: "Amethite Gauntlets", description: "Amethite Armor — Wave on hit. More pieces = higher chance, damage, radius and targets." },
 
- "Magmasteel Helmet": { displayName: "Magmasteel Helmet", description: "Magmasteel Armor — Lava resistance and burn on hit. More pieces = stronger burn and death explosion." },
- "Magmasteel Chestplate": { displayName: "Magmasteel Chestplate", description: "Magmasteel Armor — Lava resistance and burn on hit. More pieces = stronger burn and death explosion." },
- "Magmasteel Leggings": { displayName: "Magmasteel Leggings", description: "Magmasteel Armor — Lava resistance and burn on hit. More pieces = stronger burn and death explosion." },
- "Magmasteel Boots": { displayName: "Magmasteel Boots", description: "Magmasteel Armor — Lava resistance and burn on hit. More pieces = stronger burn and death explosion." },
- "Magmasteel Gauntlets": { displayName: "Magmasteel Gauntlets", description: "Magmasteel Armor — Lava resistance and burn on hit. More pieces = stronger burn and death explosion." },
+ "Magmasteel Helmet": { displayName: "Magmasteel Helmet", description: "Magmasteel Armor — Heat Resistance (lava immune) and burn on hit. More pieces = stronger burn and death explosion." },
+ "Magmasteel Chestplate": { displayName: "Magmasteel Chestplate", description: "Magmasteel Armor — Heat Resistance (lava immune) and burn on hit. More pieces = stronger burn and death explosion." },
+ "Magmasteel Leggings": { displayName: "Magmasteel Leggings", description: "Magmasteel Armor — Heat Resistance (lava immune) and burn on hit. More pieces = stronger burn and death explosion." },
+ "Magmasteel Boots": { displayName: "Magmasteel Boots", description: "Magmasteel Armor — Heat Resistance (lava immune) and burn on hit. More pieces = stronger burn and death explosion." },
+ "Magmasteel Gauntlets": { displayName: "Magmasteel Gauntlets", description: "Magmasteel Armor — Heat Resistance (lava immune) and burn on hit. More pieces = stronger burn and death explosion." },
 
  "Rubellite Helmet": { displayName: "Rubellite Helmet", description: "Rubellite Armor — Heal on kill + Regen. Chain kills to increase Regen, max gives shield from excess." },
  "Rubellite Chestplate": { displayName: "Rubellite Chestplate", description: "Rubellite Armor — Heal on kill + Regen. Chain kills to increase Regen, max gives shield from excess." },

@@ -58,7 +58,7 @@ import { applyItemStats } from "./crafting/itemStats.js";
 import { tickCombatFx, onWeaponHit, onArmorHit, tickArmorShimmer, forgetPlayer as forgetCombatFx } from "./combatFx/service.js";
 import { refreshWeaponStats, tickWeapons, onMobKilled, forgetPlayer as forgetWeaponAbility, markEntityDeleted, onThrowableUsed, onCollision as onWeaponCollision, onCrouchChange as onNovaCrouchChange, tryNovaLaser, isNovaCrouching, tryNovaCrescent } from "./weapons/service.js";
 import { parseWeaponInfo } from "./combatFx/service.js";
-import { onDamaged as onArmorDamaged, onDealingDamage as onArmorDealingDamage, onMobKilled as onArmorMobKilled, tick as tickArmors, forgetPlayer as forgetArmorAbility, getTemporaryDefense as armorTempDefense, refreshArmorDescriptions } from "./armor/service.js";
+import { onDamaged as onArmorDamaged, onDealingDamage as onArmorDealingDamage, onMobKilled as onArmorMobKilled, tick as tickArmors, forgetPlayer as forgetArmorAbility, getTemporaryDefense as armorTempDefense, refreshArmorDescriptions, getArmorLevel as getArmorLevelForHeat } from "./armor/service.js";
 import { shouldRunTutorial, onTutorialJoin, onTutorialCrateOpened, onTutorialDungeonEntered } from "./tutorial/service.js";
 const OWNER_NAME = "K4miNoK4mi";
 function getOwnerId() {
@@ -2055,9 +2055,15 @@ onPlayerTookDamage = (playerId, damage, cause) => {
       const am = onArmorDamaged(api, playerId, null, dmg);
       if (Number.isFinite(am)) modified = am;
     } catch(_){}
-    // never swallow lava damage at spawn: receivingMultiplier is already in the cache
-    // but onArmorDamaged déjà inclut Magmasteel lavaResist (25%→60%) — on le retourne explicitement
-    if (isLava && Number.isFinite(modified)) return modified;
+    // lava always hurts at spawn — sauf si Heat Resistance (Magmasteel) actif, on laisse l'effet bloquer
+    if (isLava && Number.isFinite(modified)) {
+      try { if (typeof getArmorLevelForHeat === "function" && getArmorLevelForHeat(api, playerId, "Magmasteel") > 0) {
+        // Magmasteel → Heat Resistance effect, on ne force pas les dégâts
+        if (modified !== dmg && Number.isFinite(modified)) return modified;
+        return; // laisse Bloxd gérer l'immunité
+      }} catch(_){}
+      return modified;
+    }
     if (modified !== dmg && Number.isFinite(modified)) return modified;
   } catch(_){}
 };
