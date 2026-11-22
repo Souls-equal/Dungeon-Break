@@ -1951,6 +1951,7 @@ onPlayerDamagingOtherPlayer = (attackingPlayer, damagedPlayer, damageDealt, with
 // For custom weapons, effective damage is already in `damage` stat (refreshWeaponStats),
 // so we don't apply 2x multiplier. Only add elemental procs.
 onPlayerDamagingMob = (playerId, mobId, damageDealt, ...rest) => {
+  try { if (api.getEntityName && api.getEntityName(mobId) === "Quest") return "preventDamage"; } catch(_) {}
   let baseDmg = Number(damageDealt);
   const hasBase = Number.isFinite(baseDmg);
   // Custom weapon detection: if player holds one of our sets, damage stat is already effective
@@ -2269,5 +2270,5 @@ scheduleInterval(() => {
 // The shop is registered once at load; `onPlayerJoin` repeats it for the first player.
 registerShopItems();
 
-// Quêtes quotidiennes — NPC [5.5,21,4.5] direct spawn, never despawn, look 5s, sidebar
+// Daily Quests — NPC [5.5,21,4.5] direct spawn, never despawn, look 5s, sidebar
 try { initQuestSystem(api); } catch(e) { reportErrorToOwner(e); }
