@@ -991,7 +991,8 @@ test("moving to a room kills the mobs of the rooms left behind", () => {
 
   loader.enterRoom(level, 0, 0, STAND_Y);
   const firstRound = Array.from(level.mobs.values()).flat();
-  assert.equal(firstRound.length, 8);
+  // 4 cardinal + 1 distance2 (2,0) = 5 rooms *2 =10 (was 4*2=8 before 2-step)
+  assert.equal(firstRound.length, 10);
 
   // The player walks into the room at x+1: its neighbours are populated, the rest die.
   const before = server.calls.despawnMob.length;

@@ -657,7 +657,9 @@ export function createLoader({ api, log }) {
         const key = refusalKey(level, mob.type);
         const refusals = level.mobRefusals.get(key) || 0;
         const before = level.mobRefusalsAtRoomStart.get(key) || 0;
-        if (refusals > before) {
+        // Only ban after repeated nulls, not a single cap hiccup — otherwise a busy
+        // hell room (8 mobs) that hits the global mob cap would ban half the bestiary.
+        if (refusals > before + 2) {
           level.refusedMobs.set(key, "attemptSpawnMob answered null in a room that worked");
         }
       }

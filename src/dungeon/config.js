@@ -42,7 +42,7 @@ export const DUNGEON_CONFIG = {
 
   // Candidate chunks planned per scan. Bounded so one scan can never become a
   // long tick when a player arrives in an empty level.
-  maxPlannedPerScan: 8,
+  maxPlannedPerScan: 12,
 
   // Queue ceiling per level. A player who teleports far away re-queues their new
   // surroundings; the old entries are dropped rather than kept for a return trip
@@ -171,7 +171,8 @@ export const DUNGEON_CONFIG = {
   // **No block is written**: `setBlockData` stores data about an existing block, it
   // does not change it. That is the one exception to "nothing is written", and it is
   // the owner's own design: the record lives in the room, not in our memory.
-  mobRoomsAround: [[1, 0], [-1, 0], [0, 1], [0, -1]],
+  // Fast players can outrun single-step spawn: include 2-step cardinal so a skipped room is still pre-filled.
+  mobRoomsAround: [[1, 0], [-1, 0], [0, 1], [0, -1], [2, 0], [-2, 0], [0, 2], [0, -2]],
 
   // The corner of the chunk that holds the record, in chunk-local coordinates, on the
   // room's own floor layer: `[0, 0, 0]` is the block just **above** the corner floor cell
@@ -192,11 +193,11 @@ export const DUNGEON_CONFIG = {
   // Cells of a room that are never used for a mob: the walls, as for the player.
   mobSpawnMargin: 2,
   // Cells tried per room before giving up on the rest of the count.
-  mobSpawnTries: 40,
+  mobSpawnTries: 50,
   // A room copied two ticks after the entrance still has to be populated, and a player
   // who stands still never "enters" a new room. So the room is re-read now and then:
   // once a room is done it is remembered, which makes the repeat nearly free.
-  mobRetryTicks: 40,
+  mobRetryTicks: 15,
 
   // ------------------------------------------------------------------ chests ---
   // A chest in a dungeon room drops a **Key**. The rarity is drawn per difficulty, so a
@@ -366,13 +367,13 @@ export function chestKeysFor(difficulty) {
  */
 export const MOB_TUNING = {
   veryEasy: { count: 2, health: 1, damage: 1, speed: 1 },
-  easy: { count: 2, health: 1.2, damage: 1.1, speed: 1.05 },
-  medium: { count: 3, health: 1.5, damage: 1.25, speed: 1.1 },
-  normal: { count: 3, health: 2, damage: 1.5, speed: 1.15 },
-  hard: { count: 4, health: 2.5, damage: 1.75, speed: 1.2 },
-  insane: { count: 4, health: 3, damage: 2, speed: 1.3 },
-  nightmare: { count: 5, health: 4, damage: 2.5, speed: 1.4 },
-  hell: { count: 5, health: 5, damage: 3, speed: 1.5 },
+  easy: { count: 2, health: 1.3, damage: 1.2, speed: 1.08 },
+  medium: { count: 3, health: 1.8, damage: 1.5, speed: 1.15 },
+  normal: { count: 4, health: 2.6, damage: 2.0, speed: 1.25 },
+  hard: { count: 5, health: 3.5, damage: 2.6, speed: 1.35 },
+  insane: { count: 6, health: 4.5, damage: 3.3, speed: 1.45 },
+  nightmare: { count: 7, health: 6.0, damage: 4.2, speed: 1.6 },
+  hell: { count: 8, health: 8.0, damage: 5.5, speed: 1.75 },
 };
 
 /** The mob settings of a difficulty: always defined, so nothing reads `undefined`. */
