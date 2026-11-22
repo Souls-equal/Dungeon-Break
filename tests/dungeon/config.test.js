@@ -47,7 +47,7 @@ test("a pad block leads to exactly one difficulty", () => {
 
 test("the lobby offers only the three first difficulties", () => {
   const labels = lobbyDifficulties().map((entry) => entry.label);
-  assert.deepEqual(labels, ["Very Easy", "Easy", "Medium"]);
+  assert.deepEqual(labels, ["Very Easy", "Easy", "Normal"]);
 });
 
 test("Hell is the last level, and the pad after it leads nowhere", () => {
@@ -60,7 +60,7 @@ test("Hell is the last level, and the pad after it leads nowhere", () => {
 test("a difficulty is found by id, label or object, and never invented", () => {
   assert.equal(findDifficulty("veryEasy").label, "Very Easy");
   assert.equal(findDifficulty("VERY EASY").label, "Very Easy");
-  assert.equal(findDifficulty(DIFFICULTIES[2]).id, "medium");
+  assert.equal(findDifficulty(DIFFICULTIES[2]).id, "normal");
   assert.equal(findDifficulty("nope"), null);
   assert.equal(findDifficulty(null), null);
   assert.equal(findDifficulty({ label: "Very Easy" }), null, "an object without an id was trusted");
@@ -191,9 +191,9 @@ test("a block belongs to the chunk that contains it, negatives included", () => 
 
 test("the shipped rooms are fifteen distinct chunks, two apart", () => {
   const list = templatesFor({ id: "veryEasy" }, () => {});
-  assert.equal(list.length, 15, "the table no longer holds the fifteen built rooms");
+  assert.equal(list.length, 18, "the table no longer holds the eighteen built rooms");
   const chunks = new Set(list.map((room) => room.chunk.join("|")));
-  assert.equal(chunks.size, 15, "two rooms point at the same chunk: copying one would copy the other");
+  assert.equal(chunks.size, 18, "two rooms point at the same chunk: copying one would copy the other");
   for (let index = 1; index < list.length; index += 1) {
     assert.equal(list[index].chunk[0] - list[index - 1].chunk[0], -2,
       `rooms #${index - 1} and #${index} are not two chunks apart`);

@@ -48,15 +48,11 @@ const WOOD_ING = ["Stick"];
 const STONE_ING = ["Coal"];
 
 export const VANILLA_CRAFTS = [
-  // ────────────────────────── VANILLA UTILITIES (enchant vanilla préservé) ──────────────────────────
-  // Bloxd a 5 tables d'enchant (Wood → Diamond), toutes avec UI + Aura XP.
-  // On les garde craftables après le hide-all, sinon le joueur ne peut plus en obtenir.
-  craft("Wood Enchanting Table", undefined, [{ items: ["Maple Wood Planks"], amt: 8 }]),
-  craft("Stone Enchanting Table", "Workbench", [{ items: ["Maple Wood Planks"], amt: 4 }, { items: ["Coal"], amt: 4 }]),
-  craft("Iron Enchanting Table", "Workbench", [{ items: ["Maple Wood Planks"], amt: 4 }, { items: ["Iron Bar"], amt: 4 }]),
-  craft("Gold Enchanting Table", "Workbench", [{ items: ["Maple Wood Planks"], amt: 4 }, { items: ["Gold Bar"], amt: 4 }]),
-  craft("Diamond Enchanting Table", "Workbench", [{ items: ["Maple Wood Planks"], amt: 4 }, { items: ["Diamond"], amt: 4 }]),
-  // Workbench/Artisan restent aussi craftables (utiles si le spawn n'en a pas)
+  // ────────────────────────── VANILLA UTILITIES ──────────────────────────
+  // Hide-all puis re-add sélectif: on garde fonctionnelles mais NON craftables
+  // - Tables d'enchant (Wood/Stone/Iron/Gold/Diamond): fonctionnelles in-game, pas craftables
+  // - Protectors: idem — fonctionnels mais pas craftables (pas de re-add)
+  // Seules stations de base restent craftables
   craft("Workbench", undefined, [{ items: ["Maple Wood Planks"], amt: 4 }]),
   craft("Artisan Bench", "Workbench", [{ items: ["Maple Wood Planks"], amt: 2 }, { items: ["Coal"], amt: 2 }]),
 

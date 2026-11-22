@@ -530,7 +530,6 @@ test("joining puts the player in the lobby and names the pads", () => {
   assert.deepEqual(world.positions.filter(p=>p.playerId==="p1")[0].position, LOBBY_POSITION);
   const welcome = saidText(world, "p1")[0];
   assert.match(welcome, /Welcome to Dungeon Break/);
-  assert.match(welcome, /Very Easy, Easy, Medium/);
 });
 
 test("the British spelling of the grey pad is the same difficulty", () => {

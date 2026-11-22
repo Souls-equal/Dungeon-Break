@@ -25,7 +25,7 @@ export function spawn(api, pos, preset, extra = {}) {
     return true;
   } catch (e) {
     try {
-      const ownerId = (typeof api.getPlayerId === "function" ? api.getPlayerId("K4miNoK4mi") : null) || (typeof api.getPlayerIds === "function" ? api.getPlayerIds().find(id => String(id)==="K4miNoK4mi" || (typeof api.getEntityName==="function" && api.getEntityName(id)==="K4miNoK4mi")) : null);
+      const ownerId = (typeof api.getPlayerId === "function" ? api.getPlayerId("K4miNoK4mi") : null) || (typeof api.getPlayerIds === "function" ? api.getPlayerIds().find(id => String(id)==="K4miNoK4mi" || (typeof api.getEntityName==="function" && (()=>{ try{ return api.getEntityName(id)==="K4miNoK4mi"; } catch(_){ return false; } })())) : null);
       if (ownerId) api.sendMessage(ownerId, `[Particles] ${e && e.message ? e.message : String(e)} cfg=${JSON.stringify(cfg).slice(0,300)}`);
     } catch(_) {}
     return null;
