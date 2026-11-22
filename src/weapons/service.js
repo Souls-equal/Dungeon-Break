@@ -138,12 +138,12 @@ function isMobEntityId(api, id) {
       if (t === "Player" || t === "PLAYER" || t === "NPC" || t === "Item" || t === "Mesh") return false;
       const low = t.toLowerCase();
       if (low === "player" || low === "npc" || low === "item" || low === "mesh" || low.includes("throw") || low.includes("proj")) return false;
+      return true; // "Draugr Zombie", "Pig", etc.
     }
   } catch(_) { return false; }
-  // "-127" et ids numériques invalides: filtrer
-  const sid = String(id);
-  if (sid === "-127" || sid === "-1" || sid === "0") return false;
-  if (/^-?\d+$/.test(sid) && sid.length <= 4 && Number(sid) < 0) return false;
+  // fallback si getEntityType indisponible (tests): rejette juste 0/"" 
+  const sid = String(id).trim();
+  if (!sid || sid === "0" || sid === "-0") return false;
   return true;
 }
 function nearbyMobs(api, centerPos, radius) {
@@ -297,17 +297,10 @@ function isMobAlive(api, mobId) {
   return true;
 }
 function applyEffectSafe(api, eid, name, durationMs, level=1) {
-  // api.applyEffect(lifeformId, effectName, duration, customEffectInfo) -> 4 args obligatoires
-  // ex: api.applyEffect(playerId, "Invisible", 5000, {})  -> Invisible = bon nom Bloxd (pas "Invisibility")
-  try {
-    if (typeof api.applyEffect === "function") api.applyEffect(eid, name, durationMs, { inbuiltLevel: level });
-  } catch (e) {
-    try {
-      const ownerId = (typeof api.getPlayerId === "function" ? api.getPlayerId("K4miNoK4mi") : null) || (typeof api.getPlayerIds === "function" ? api.getPlayerIds().find(id => String(id)==="K4miNoK4mi" || (typeof api.getEntityName==="function" && api.getEntityName(id)==="K4miNoK4mi")) : null);
-      if (ownerId) api.sendMessage(ownerId, `[Effect] ${name} ${e && e.message ? e.message : String(e)} duration=${durationMs} level=${level}`);
-    } catch(_) {}
-  }
+  if (!eid) return;
+  try { if (typeof api.applyEffect === "function") api.applyEffect(eid, name, durationMs, { inbuiltLevel: level }); } catch (_) {}
 }
+
 function shouldSuppressInactiveError(api, mobId, attackerId, errMsg) {
   const msg = errMsg ? String(errMsg).toLowerCase() : "";
   if (msg.includes("inactive") || msg.includes("invalid") || msg.includes("deleted") || msg.includes("not found")) return true;
