@@ -112,6 +112,16 @@ function validate(code) {
             const name = m[1];
             if (!itemNames.has(name)) throw new Error(`Crate loot item not in game's item list: ${name}`);
           }
+          // Validate mob loot items
+          const mobPath = path.join(ROOT, "src", "dungeon", "mobLoot.js");
+          if (fs.existsSync(mobPath)) {
+            const mobSrc = fs.readFileSync(mobPath, "utf8");
+            const mobItemRe = /name:\s*\"([^\"]+)\"/g;
+            while ((m = mobItemRe.exec(mobSrc)) !== null) {
+              const name = m[1];
+              if (!itemNames.has(name)) throw new Error(`Mob loot item not in game's item list: ${name}`);
+            }
+          }
         }
       }
     } catch (e) {

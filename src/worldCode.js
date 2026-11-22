@@ -52,6 +52,7 @@ import { createRanksService, NONE_ID } from "./ranks/service.js";
 import { DIFFICULTY_COLOR, CRATE_COLOR, PRESETS } from "./particles/config.js";
 import { spawn as spawnParticles } from "./particles/service.js";
 import { CRAFTS, ARMOR_SETS, WEAPON_SETS, SHARD_TO_MATERIAL } from "./crafting/config.js";
+import { rollMobLoot } from "./dungeon/mobLoot.js";
 import { registerCraftingRecipes } from "./crafting/service.js";
 import { applyItemStats } from "./crafting/itemStats.js";
 import { tickCombatFx, onWeaponHit, onArmorHit, tickArmorShimmer, forgetPlayer as forgetCombatFx } from "./combatFx/service.js";
@@ -1795,6 +1796,28 @@ onPlayerKilledMob = (playerId, mobId) => {
   // Weapon abilities on kill (PvE) — Rubellite stack, Spectral vacuum, Geo mines, Astral glowing
   try { onMobKilled(api, playerId, mobId); } catch(e) { reportErrorToOwner(e); }
   try { onArmorMobKilled(api, playerId, mobId); } catch(e) { reportErrorToOwner(e); }
+  // Loot léger des mobs — max 2 items différents (comme crates mais léger)
+  try {
+    const d = service().dungeonOf(playerId);
+    if (d && d.difficulty) {
+      const loot = rollMobLoot(d.difficulty, Math.random);
+      if (loot && loot.length) {
+        let pos = null;
+        try { pos = api.getPosition(mobId); } catch(_) {}
+        if (!pos || !Array.isArray(pos)) try { pos = api.getPosition(playerId); } catch(_) {}
+        if (pos && Array.isArray(pos)) {
+          const cx = pos[0], cy = pos[1], cz = pos[2];
+          for (const it of loot) {
+            try {
+              if (typeof api.createItemDrop === "function") api.createItemDrop(cx, cy, cz, it.name, it.amount, false);
+              else if (typeof api.giveItem === "function") api.giveItem(playerId, it.name, it.amount);
+              else if (typeof api.giveItemStack === "function") api.giveItemStack(playerId, it.name, it.amount);
+            } catch(_) {}
+          }
+        }
+      }
+    }
+  } catch(e) { reportErrorToOwner(e); }
   try {
     const newly = ranks().recordKill(playerId);
     if (newly && newly.length) handleRankUnlocks(playerId, newly);
