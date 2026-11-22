@@ -2,18 +2,21 @@
  * Daily Quests — service
  *
  * - NPC spawns directly at [5.5,21,4.5], never despawns, looks at nearest player every 5s
+ * - No default quest: player must double-click NPC to get one (inspired by block-pirate NPCs)
+ * - Crouch + double-click to draw another quest (reroll)
  * - Sidebar RightInfoText with extensible text format + rewards
  * - Quest scaled to player strength (gold/stats/optional equipment)
  * - Daily storage via PlayerDbValue + gold/aura rewards
  *
  * Integration in worldCode.js:
- *   initQuestSystem(api)            // on load
- *   onQuestPlayerJoin(api, pid)     // onPlayerJoin
- *   onQuestMobKilled(api, pid)      // onPlayerKilledMob
- *   onQuestCrateOpened(api, pid)    // generateChest success
- *   onQuestTick(api)                // tick (sidebar refresh + NPC respawn guard)
- *   onQuestMobDespawned(mobId)      // onMobDespawned / onEntityDeleted
- *   onQuestPlayerLeave(pid)         // onPlayerLeave (cleanup sidebar)
+ *   initQuestSystem(api)              // on load
+ *   onQuestPlayerJoin(api, pid)       // onPlayerJoin
+ *   onQuestMobKilled(api, pid)        // onPlayerKilledMob
+ *   onQuestCrateOpened(api, pid)      // generateChest success
+ *   onQuestTick(api)                  // tick (sidebar refresh + NPC respawn guard)
+ *   onQuestMobDespawned(mobId)        // onMobDespawned / onEntityDeleted
+ *   onQuestPlayerLeave(pid)           // onPlayerLeave (cleanup sidebar)
+ *   onQuestInteract(api, pid, targetId) // onPlayerClick / onPlayerDamagingMob with double-click
  */
 
 import { setTimeout as scheduleTimeout } from "../utils/scheduler.js";
@@ -37,10 +40,55 @@ let npcLookCounter = 0;
 let sidebarCounter = 0;
 let initialized = false;
 
-// In-memory progress (mirrors DB) for fast access
-const questCache = new Map(); // playerIdStr -> { date, questId, target, progress, completed, claimed }
+const questCache = new Map();
+
+// Double-click handling (inspired by block-pirate confirmAction)
+// playerId -> { key, ts }
+const pendingConfirm = new Map();
+const NPC_ATTACK_DEBOUNCE_MS = 100;
+const confirmMap = new Map(); // for debounce of NPC clicks
+const CONFIRM_MS = 3000;
 
 /** Helpers */
+function nowMs() {
+  try {
+    if (typeof api !== "undefined" && typeof api.now === "function") return api.now();
+  } catch (_) {}
+  try { return Date.now(); } catch (_) { return 0; }
+}
+
+function isDoubleClickConfirmed(playerId, key) {
+  const pid = String(playerId);
+  const now = nowMs();
+  // clean expired
+  const pending = pendingConfirm.get(pid);
+  if (pending && pending.ts + CONFIRM_MS < now) pendingConfirm.delete(pid);
+  const current = pendingConfirm.get(pid);
+  if (current && current.key === key) {
+    pendingConfirm.delete(pid);
+    return true;
+  }
+  pendingConfirm.set(pid, { key, ts: now });
+  return false;
+}
+
+function isNpcDebounced(playerId, mobId) {
+  const key = String(playerId) + ":" + String(mobId);
+  const now = nowMs();
+  const last = confirmMap.get(key);
+  if (last && now - last < NPC_ATTACK_DEBOUNCE_MS) return true;
+  confirmMap.set(key, now);
+  return false;
+}
+
+function isPlayerCrouching(api, playerId) {
+  try { if (typeof api.isPlayerCrouching === "function" && api.isPlayerCrouching(playerId)) return true; } catch(_) {}
+  try { if (typeof api.getIsCrouching === "function" && api.getIsCrouching(playerId)) return true; } catch(_) {}
+  try { if (typeof api.isCrouching === "function" && api.isCrouching(playerId)) return true; } catch(_) {}
+  try { if (typeof api.getPlayerIsCrouching === "function" && api.getPlayerIsCrouching(playerId)) return true; } catch(_) {}
+  return false;
+}
+
 function loadQuestState(api, playerId) {
   const pidStr = String(playerId);
   if (questCache.has(pidStr)) return questCache.get(pidStr);
@@ -61,6 +109,11 @@ function loadQuestState(api, playerId) {
 
 function saveQuestState(api, playerId, state) {
   const pidStr = String(playerId);
+  if (!state) {
+    questCache.delete(pidStr);
+    try { if (typeof api.setPlayerDbValue === "function") api.setPlayerDbValue(playerId, QUEST_DB_KEY, ""); } catch(_) {}
+    return;
+  }
   questCache.set(pidStr, state);
   try {
     if (typeof api.setPlayerDbValue === "function") {
@@ -89,18 +142,29 @@ function getAuraLevel(api, playerId) {
   return 1;
 }
 
-function getOrCreateDailyQuest(api, playerId) {
+function templateForState(state) {
+  if (!state) return null;
+  return findTemplate(state.questId) || null;
+}
+
+function createNewQuest(api, playerId, excludeId) {
   const today = todayDateUTC();
   const pidStr = String(playerId);
-  let state = loadQuestState(api, playerId);
-  if (state && state.date === today) {
-    if (!findTemplate(state.questId)) {
-      state = null;
+  let template;
+  if (excludeId) {
+    const pool = QUEST_TEMPLATES.filter(t => t.id !== excludeId);
+    if (pool.length === 0) {
+      template = findTemplate(excludeId);
     } else {
-      return state;
+      // random pick from remaining (excluding current) — inspired by block-pirate reroll
+      const idx = Math.floor(Math.random() * pool.length);
+      template = pool[idx];
     }
+  } else {
+    // For initial take, use deterministic daily pick (like before) — keeps daily feel
+    template = pickTemplateForToday(pidStr, today);
   }
-  const template = pickTemplateForToday(pidStr, today);
+  if (!template) template = QUEST_TEMPLATES[0];
   const power = powerScore(api, playerId, getAuraLevel.bind(null, api), getGoldAmount.bind(null, api));
   const target = scaledTarget(template.baseTarget, power);
   const fresh = {
@@ -116,13 +180,17 @@ function getOrCreateDailyQuest(api, playerId) {
   return fresh;
 }
 
-function templateForState(state) {
-  if (!state) return null;
-  return findTemplate(state.questId) || null;
-}
-
-/** Sidebar — RightInfoText with extensible text format */
+/** Sidebar */
 function buildSidebarLines(api, playerId, state) {
+  if (!state) {
+    return [
+      { str: "══ Daily Quest ══\n", style: { color: "#FFD700", fontWeight: "bold" } },
+      { str: "No quest yet\n", style: { color: "#AAAAAA" } },
+      { str: "Double-click the NPC to get one\n", style: { color: "#FFFFFF" } },
+      { str: "Crouch + double-click to reroll\n", style: { color: "#55FFFF" } },
+      { str: "NPC: [5.5,21,4.5]\n", style: { color: "#777777", fontSize: "12px" } },
+    ];
+  }
   const tpl = templateForState(state);
   if (!tpl) {
     return [{ str: "Daily Quest — none\n", style: { color: "#AAAAAA" } }];
@@ -131,8 +199,7 @@ function buildSidebarLines(api, playerId, state) {
   const lines = [];
   lines.push({ str: "══ Daily Quest ══\n", style: { color: "#FFD700", fontWeight: "bold" } });
   lines.push({ str: `${tpl.icon || "★"} ${tpl.title}\n`, style: { color: tpl.color || "#FFFFFF", fontWeight: "bold" } });
-  const desc = tpl.description(state.target);
-  lines.push({ str: desc + "\n", style: { color: "#FFFFFF" } });
+  lines.push({ str: tpl.description(state.target) + "\n", style: { color: "#FFFFFF" } });
   if (state.completed) {
     lines.push({ str: "✔ Completed!\n", style: { color: "#55FF55", fontWeight: "bold" } });
   } else {
@@ -145,9 +212,11 @@ function buildSidebarLines(api, playerId, state) {
   }
   lines.push({ str: `Reward: ${reward.label}\n`, style: { color: "#FFD700" } });
   if (state.completed && !state.claimed) {
-    lines.push({ str: "→ Talk to the NPC to claim!\n", style: { color: "#55FFFF" } });
+    lines.push({ str: "→ Double-click NPC to claim!\n", style: { color: "#55FFFF" } });
   } else if (state.claimed) {
     lines.push({ str: "Reward claimed\n", style: { color: "#55FF55" } });
+  } else {
+    lines.push({ str: "Crouch+double-click to reroll\n", style: { color: "#777777", fontSize: "12px" } });
   }
   lines.push({ str: "NPC: [5.5,21,4.5]\n", style: { color: "#777777", fontSize: "12px" } });
   return lines;
@@ -155,7 +224,7 @@ function buildSidebarLines(api, playerId, state) {
 
 function refreshSidebar(api, playerId) {
   try {
-    const state = getOrCreateDailyQuest(api, playerId);
+    const state = loadQuestState(api, playerId);
     const lines = buildSidebarLines(api, playerId, state);
     if (typeof api.setClientOption === "function") {
       api.setClientOption(playerId, "RightInfoText", lines);
@@ -173,7 +242,7 @@ function clearSidebar(api, playerId) {
   } catch (_) {}
 }
 
-/** Reward — gold + aura */
+/** Reward */
 function giveReward(api, playerId, state) {
   const tpl = templateForState(state);
   if (!tpl) return;
@@ -205,10 +274,10 @@ function giveReward(api, playerId, state) {
   } catch (_) {}
 }
 
-/** Progression */
+/** Progression — only if player has a quest */
 function addProgress(api, playerId, type, amount = 1) {
   try {
-    const state = getOrCreateDailyQuest(api, playerId);
+    const state = loadQuestState(api, playerId);
     if (!state || state.completed) return;
     const tpl = templateForState(state);
     if (!tpl || tpl.type !== type) return;
@@ -263,7 +332,6 @@ function spawnQuestNPC(api) {
 
 function applyNpcTuning(api, id) {
   if (typeof api.setMobSetting !== "function") return;
-  // Keep NPC stationary and non-hostile; do NOT change health (PvE immunity handles protection)
   const settings = [
     ["baseWalkingSpeed", 0],
     ["baseRunningSpeed", 0],
@@ -343,7 +411,6 @@ export function initQuestSystem(api) {
 export function onQuestPlayerJoin(api, playerId) {
   try {
     if (!npcId) spawnQuestNPC(api);
-    getOrCreateDailyQuest(api, playerId);
     refreshSidebar(api, playerId);
   } catch (_) {}
 }
@@ -355,12 +422,6 @@ export function onQuestPlayerLeave(api, playerId) {
   } catch (_) {}
 }
 
-/**
- * Tick — called from worldCode.js tick()
- * - NPC look update every 5s (100 ticks)
- * - Sidebar refresh every 2s
- * - NPC respawn guard if despawned
- */
 export function onQuestTick(api) {
   npcLookCounter++;
   if (npcLookCounter >= QUEST_NPC_LOOK_INTERVAL_TICKS) {
@@ -428,32 +489,113 @@ export function onQuestEntityDeleted(api, entityId) {
   onQuestMobDespawned(api, entityId);
 }
 
+// Double-click inspired by block-pirate confirmAction + crouch reroll
 export function onQuestInteract(api, playerId, targetId) {
   if (!targetId || !npcId) return false;
   if (String(targetId) !== String(npcId)) return false;
-  try {
-    const state = getOrCreateDailyQuest(api, playerId);
-    if (state.completed && !state.claimed) {
-      giveReward(api, playerId, state);
-      state.claimed = true;
-      saveQuestState(api, playerId, state);
-      refreshSidebar(api, playerId);
+  if (isNpcDebounced(playerId, targetId)) return true;
+
+  const crouching = isPlayerCrouching(api, playerId);
+  const state = loadQuestState(api, playerId);
+
+  // No quest yet -> double-click to take one
+  if (!state) {
+    if (!isDoubleClickConfirmed(playerId, "quest_take")) {
+      try {
+        // Preview what quest would be offered (daily deterministic)
+        const preview = pickTemplateForToday(String(playerId), todayDateUTC());
+        const power = powerScore(api, playerId, getAuraLevel.bind(null, api), getGoldAmount.bind(null, api));
+        const target = scaledTarget(preview.baseTarget, power);
+        const reward = preview.reward(target);
+        api.sendMessage(playerId, [
+          { str: `${preview.icon} ${preview.title}: `, style: { color: preview.color, fontWeight: "bold" } },
+          { str: preview.description(target), style: { color: "#FFFFFF" } },
+          { str: ` — Reward: ${reward.label}`, style: { color: "#FFD700" } },
+          { str: "\nDouble-click again within 3s to accept.", style: { color: "#55FF55", fontWeight: "bold" } },
+        ]);
+      } catch(_) {}
       return true;
     }
+    const fresh = createNewQuest(api, playerId);
+    const tpl = templateForState(fresh);
+    try {
+      api.sendMessage(playerId, [
+        { str: "✔ Quest started: ", style: { color: "#55FF55", fontWeight: "bold" } },
+        { str: `${tpl.icon} ${tpl.title} — `, style: { color: tpl.color } },
+        { str: tpl.description(fresh.target), style: { color: "#FFFFFF" } },
+      ]);
+    } catch(_) {}
     refreshSidebar(api, playerId);
-    if (typeof api.sendMessage === "function") {
-      const tpl = templateForState(state);
-      if (tpl) {
-        api.sendMessage(playerId, [
-          { str: `${tpl.icon} ${tpl.title}: `, style: { color: tpl.color || "#FFFFFF", fontWeight: "bold" } },
-          { str: tpl.description(state.target), style: { color: "#FFFFFF" } },
-          { str: ` — ${state.progress}/${state.target}`, style: { color: state.completed ? "#55FF55" : "#AAAAAA" } },
-        ]);
-      }
-    }
     return true;
-  } catch (_) {}
-  return false;
+  }
+
+  // Has quest — crouch + double-click to reroll
+  if (crouching) {
+    if (!isDoubleClickConfirmed(playerId, "quest_reroll")) {
+      try {
+        api.sendMessage(playerId, [
+          { str: "↻ Reroll quest? ", style: { color: "#FF6B00", fontWeight: "bold" } },
+          { str: "Your current progress will be lost. Double-click again (crouching) within 3s to confirm.", style: { color: "#FFFFFF" } },
+        ]);
+      } catch(_) {}
+      return true;
+    }
+    const fresh = createNewQuest(api, playerId, state.questId);
+    const tpl = templateForState(fresh);
+    try {
+      api.sendMessage(playerId, [
+        { str: "↻ New quest: ", style: { color: "#55FFFF", fontWeight: "bold" } },
+        { str: `${tpl.icon} ${tpl.title} — `, style: { color: tpl.color } },
+        { str: tpl.description(fresh.target), style: { color: "#FFFFFF" } },
+      ]);
+    } catch(_) {}
+    refreshSidebar(api, playerId);
+    return true;
+  }
+
+  // Has quest, completed but not claimed -> double-click to claim
+  if (state.completed && !state.claimed) {
+    if (!isDoubleClickConfirmed(playerId, "quest_claim")) {
+      try {
+        const tpl = templateForState(state);
+        const reward = tpl.reward(state.target);
+        api.sendMessage(playerId, [
+          { str: "✔ Quest ready to claim: ", style: { color: "#55FF55", fontWeight: "bold" } },
+          { str: `${reward.label}`, style: { color: "#FFD700" } },
+          { str: " — Double-click again within 3s to claim.", style: { color: "#FFFFFF" } },
+        ]);
+      } catch(_) {}
+      return true;
+    }
+    giveReward(api, playerId, state);
+    state.claimed = true;
+    saveQuestState(api, playerId, state);
+    refreshSidebar(api, playerId);
+    return true;
+  }
+
+  // Has quest in progress, not crouching -> just show progress (single click)
+  refreshSidebar(api, playerId);
+  try {
+    const tpl = templateForState(state);
+    if (tpl) {
+      api.sendMessage(playerId, [
+        { str: `${tpl.icon} ${tpl.title}: `, style: { color: tpl.color || "#FFFFFF", fontWeight: "bold" } },
+        { str: tpl.description(state.target), style: { color: "#FFFFFF" } },
+        { str: ` — ${state.progress}/${state.target}`, style: { color: state.completed ? "#55FF55" : "#AAAAAA" } },
+      ]);
+    }
+  } catch(_) {}
+  return true;
+}
+
+export function onQuestClickNear(api, playerId, x, y, z) {
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return false;
+  if (!npcId) return false;
+  const dx = x - QUEST_NPC_POS[0], dy = y - QUEST_NPC_POS[1], dz = z - QUEST_NPC_POS[2];
+  if (dx*dx+dy*dy+dz*dz > 9) return false;
+  // Treat as NPC click (mobile fallback inspired by block-pirate npcNearPoint)
+  return onQuestInteract(api, playerId, npcId);
 }
 
 export function _resetForTests() {
@@ -463,6 +605,8 @@ export function _resetForTests() {
   sidebarCounter = 0;
   initialized = false;
   questCache.clear();
+  pendingConfirm.clear();
+  confirmMap.clear();
 }
 
 export function _getNpcId() { return npcId; }

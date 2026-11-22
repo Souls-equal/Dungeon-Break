@@ -58,7 +58,8 @@ import { applyItemStats } from "./crafting/itemStats.js";
 import { tickCombatFx, onWeaponHit, onArmorHit, tickArmorShimmer, forgetPlayer as forgetCombatFx } from "./combatFx/service.js";
 import { refreshWeaponStats, tickWeapons, onMobKilled, forgetPlayer as forgetWeaponAbility, markEntityDeleted, onThrowableUsed, onCollision as onWeaponCollision, onCrouchChange as onNovaCrouchChange, tryNovaLaser, isNovaCrouching, tryNovaCrescent } from "./weapons/service.js";
 import { parseWeaponInfo } from "./combatFx/service.js";
-import { initQuestSystem, onQuestPlayerJoin, onQuestTick, onQuestMobKilled, onQuestCrateOpened, onQuestMobDespawned, onQuestEntityDeleted, onQuestPlayerLeave, onQuestInteract } from "./quest/service.js";
+import { initQuestSystem, onQuestPlayerJoin, onQuestTick, onQuestMobKilled, onQuestCrateOpened, onQuestMobDespawned, onQuestEntityDeleted, onQuestPlayerLeave, onQuestInteract, onQuestClickNear } from "./quest/service.js";
+import { QUEST_NPC_POS } from "./quest/config.js";
 import { onDamaged as onArmorDamaged, onDealingDamage as onArmorDealingDamage, onMobKilled as onArmorMobKilled, tick as tickArmors, forgetPlayer as forgetArmorAbility, getTemporaryDefense as armorTempDefense, refreshArmorDescriptions, getArmorLevel as getArmorLevelForHeat } from "./armor/service.js";
 import { shouldRunTutorial, onTutorialJoin, onTutorialCrateOpened, onTutorialDungeonEntered, tickTutorialHighlight } from "./tutorial/service.js";
 const OWNER_NAME = "K4miNoK4mi";
@@ -1809,8 +1810,10 @@ onPlayerChat = (playerId, chatMessage, channelName) => {
  * be in front of one must not pay twice.
  */
 onPlayerClick = (playerId, wasAltClick, x, y, z, block, targetEId) => {
-  // Quest NPC interaction — click on NPC entity
+  // Quest NPC interaction — double-click (block-pirate style), crouch+double reroll
   try { if (targetEId && onQuestInteract(api, playerId, targetEId)) return; } catch(_) {}
+  // Mobile fallback: tap near NPC without entity aim (block-pirate npcNearPoint, radius 3)
+  try { if (!targetEId && onQuestClickNear(api, playerId, x, y, z)) return; } catch(_) {}
   // Nova Blade: every click = crescent projectile, crouch+click = laser
   try {
     let heldName = null;
@@ -1951,7 +1954,12 @@ onPlayerDamagingOtherPlayer = (attackingPlayer, damagedPlayer, damageDealt, with
 // For custom weapons, effective damage is already in `damage` stat (refreshWeaponStats),
 // so we don't apply 2x multiplier. Only add elemental procs.
 onPlayerDamagingMob = (playerId, mobId, damageDealt, ...rest) => {
-  try { if (api.getEntityName && api.getEntityName(mobId) === "Quest") return "preventDamage"; } catch(_) {}
+  try {
+    if (api.getEntityName && api.getEntityName(mobId) === "Quest") {
+      try { onQuestInteract(api, playerId, mobId); } catch(_) {}
+      return "preventDamage";
+    }
+  } catch(_) {}
   let baseDmg = Number(damageDealt);
   const hasBase = Number.isFinite(baseDmg);
   // Custom weapon detection: if player holds one of our sets, damage stat is already effective
