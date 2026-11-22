@@ -1953,18 +1953,11 @@ onPlayerDamagingOtherPlayer = (attackingPlayer, damagedPlayer, damageDealt, with
 // so we don't apply 2x multiplier. Only add elemental procs.
 onPlayerDamagingMob = (playerId, mobId, damageDealt, ...rest) => {
   try {
-    // Guard: mobId must be a plausible entity ID, not a numeric damage value like "-290"
-    const mid = mobId != null ? String(mobId) : "";
-    const isPlausibleId = mid && isNaN(Number(mid)) || (mid.length > 8 && mid.includes("-"));
-    if (isPlausibleId && api.getEntityName) {
-      let entName = null;
-      try { entName = api.getEntityName(mid); } catch(_) { entName = null; }
-      if (entName === "Quest") {
-        try { onQuestInteract(api, playerId, mid); } catch(_) {}
-        return "preventDamage";
-      }
+    if (api.getEntityName && api.getEntityName(mobId) === "Quest") {
+      try { onQuestInteract(api, playerId, mobId); } catch(_){}
+      return "preventDamage";
     }
-  } catch(_) {}
+  } catch(_){}
   let baseDmg = Number(damageDealt);
   const hasBase = Number.isFinite(baseDmg);
   // Custom weapon detection: if player holds one of our sets, damage stat is already effective
