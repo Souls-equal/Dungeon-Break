@@ -62,6 +62,7 @@ import { initQuestSystem, onQuestPlayerJoin, onQuestTick, onQuestMobKilled, onQu
 import { QUEST_NPC_POS } from "./quest/config.js";
 import { onDamaged as onArmorDamaged, onDealingDamage as onArmorDealingDamage, onMobKilled as onArmorMobKilled, tick as tickArmors, forgetPlayer as forgetArmorAbility, getTemporaryDefense as armorTempDefense, refreshArmorDescriptions, getArmorLevel as getArmorLevelForHeat } from "./armor/service.js";
 import { shouldRunTutorial, onTutorialJoin, onTutorialCrateOpened, onTutorialDungeonEntered, tickTutorialHighlight } from "./tutorial/service.js";
+import { refreshPassShop, initPassForPlayer, onPassBought, forgetPass } from "./pass/service.js";
 const OWNER_NAME = "K4miNoK4mi";
 function getOwnerId() {
   if (typeof api.getPlayerId === "function") {
@@ -1601,6 +1602,10 @@ onPlayerBoughtShopItem = (playerId, categoryKey, itemKey, itemOrInput, userInput
     }
     return;
   }
+  if (categoryKey === "Pass") {
+    try { onPassBought(api, playerId, itemKey); } catch (e) { try { api.log(`[Pass] bought failed ${e && e.message}`); } catch(_){} }
+    return;
+  }
   if (categoryKey !== SHOP_CATEGORY || itemKey !== SPAWN_ITEM) return;
   // Teleport and forget are one call, so the tick can never see a player at spawn
   // with a dungeon: `teleportToSpawn` moves first, then drops the record.
@@ -1685,6 +1690,7 @@ onPlayerJoin = (playerId) => {
   try { applyMusic(playerId); } catch(e) { reportErrorToOwner(e); }
   try { applyRankVisuals(playerId); } catch(e) { reportErrorToOwner(e); }
   try { refreshRanksShop(playerId); } catch(e) { reportErrorToOwner(e); }
+  try { initPassForPlayer(api, playerId); } catch(e) { reportErrorToOwner(e); }
   try { onQuestPlayerJoin(api, playerId); } catch(e) { reportErrorToOwner(e); }
   // Tutoriel: premier join → clé + flèche rouge crate, remplace welcome
   try {
@@ -1739,6 +1745,7 @@ onPlayerToggledShopMenu = (playerId, isOpen) => {
     }
   }
   try { refreshRanksShop(playerId); } catch(e) { reportErrorToOwner(e); }
+  try { refreshPassShop(api, playerId); } catch(e) { reportErrorToOwner(e); }
 };
 
 onPlayerLeave = (playerId) => {
@@ -1766,6 +1773,7 @@ onPlayerLeave = (playerId) => {
   try { forgetCombatFx(playerId); } catch(e) { reportErrorToOwner(e); }
   try { forgetWeaponAbility(playerId); } catch(e) { reportErrorToOwner(e); }
   try { forgetArmorAbility(playerId); } catch(e) { reportErrorToOwner(e); }
+  try { forgetPass(playerId); } catch(e) { reportErrorToOwner(e); }
   // Clear per-player shop overrides so no tiles linger for a disconnected player.
   for (const key of CHOICE_KEYS) {
     try {
@@ -2168,6 +2176,7 @@ onRespawnRequest = (playerId) => {
   try { forgetCombatFx(playerId); } catch(e) { reportErrorToOwner(e); }
   try { forgetWeaponAbility(playerId); } catch(e) { reportErrorToOwner(e); }
   try { forgetArmorAbility(playerId); } catch(e) { reportErrorToOwner(e); }
+  try { forgetPass(playerId); } catch(e) { reportErrorToOwner(e); }
   try {
     const lvl = auraLevelOf(playerId);
     const pts = blessings().pointsFor(accountKeyOf(playerId), lvl);
