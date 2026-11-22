@@ -239,13 +239,7 @@ function applyCurse(api,pid,mobId,levelDef){
   try{ const mp=posOf(api,mobId,null); if(mp) spawnAt(api,mp,"curseApply",{radius:0.5,height:1.0}); }catch(_){}
 }
 
-// Lava check
-function isInLava(api,pid){
-  try{ const p=playerPos(api,pid); if(!p) return false; const b=api.getBlock(Math.floor(p[0]),Math.floor(p[1]),Math.floor(p[2])); if(b && String(b).toLowerCase().includes("lava")) return true;
-    const b2=api.getBlock(Math.floor(p[0]),Math.floor(p[1]-0.5),Math.floor(p[2])); if(b2 && String(b2).toLowerCase().includes("lava")) return true;
-  }catch(_){}
-  return false;
-}
+
 
 // Public API: onDamaged (player receives hit)
 export function onDamaged(api, playerId, attackerMobId, incomingDamage){
@@ -263,12 +257,8 @@ export function onDamaged(api, playerId, attackerMobId, incomingDamage){
     if(setId==="Amethite"){
       try{ tryAmethite(api,pid,def,pos); }catch(_){}
     }
-    // Magmasteel: lava protection independent + burn chance
+    // Magmasteel: Heat Resistance via effect (plus burn chance)
     if(setId==="Magmasteel"){
-      if(isInLava(api,pid) && def.lavaResist>0){
-        modifiedDamage = Math.max(0, Math.round(modifiedDamage * (1 - def.lavaResist)));
-        if(def.lavaResist>0) try{ spawnAt(api,pos,"magmaLavaProtect",{radius:0.4,height:0.6}); }catch(_){}
-      }
       if(attackerMobId && def.burnChance>0 && Math.random() < def.burnChance){
         const mp=posOf(api,attackerMobId,pos);
         applyMagBurn(api,pid,attackerMobId,def,mp);
@@ -765,6 +755,15 @@ export function tick(api){
         try{ spawnZone(api,m.pos,"geoMineExplosion",1.6,0.6); }catch(_){}
         geoMines.splice(i,1);
       }
+    }
+  }
+  // Magmasteel Heat Resistance (toutes les sec, effet natif Bloxd)
+  if(now%20===0 && api){
+    let pids=[]; try{ pids=typeof api.getPlayerIds==="function"?api.getPlayerIds():[]; }catch(_){}
+    for(const pid of pids){
+      const lvl=getArmorLevel(api,pid,"Magmasteel");
+      if(lvl<=0) continue;
+      applyEffectSafe(api,pid,"Heat Resistance",1500,1);
     }
   }
   // Astral aura passive (every 20 ticks)

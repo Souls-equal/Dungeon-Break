@@ -30,11 +30,11 @@ export const ARMOR_SETS = {
     type: "Fire / Lava resistance",
     particles: { lava: "magmaLavaProtect", burn: "magmaBurn", explosion: "magmaExplosion" },
     levels: {
-      1: { desc: "Lava damage reduced by 25%.", lavaResist: 0.25, burnChance: 0, burnDmg: 0, burnDur: 0 },
-      2: { desc: "Lava damage reduced by 45%.", lavaResist: 0.45, burnChance: 0, burnDmg: 0, burnDur: 0 },
-      3: { desc: "Lava damage -45%. When hit: 14% chance to burn attacker for 2 damage/sec over 3s.", lavaResist: 0.45, burnChance: 0.14, burnDmg: 2, burnDur: 60, burnInterval: 20 },
-      4: { desc: "Lava damage -50%. When hit: 16% chance to burn for 3 damage/sec over 5s.", lavaResist: 0.50, burnChance: 0.16, burnDmg: 3, burnDur: 100, burnInterval: 20 },
-      5: { desc: "Lava damage -60%. When hit: 18% chance to burn (3 dmg/sec, 5s). Burning enemies explode on death (8 dmg, 5 radius) and spread burn.", lavaResist: 0.60, burnChance: 0.18, burnDmg: 3, burnDur: 100, burnInterval: 20, explosion: { radius: 5, damage: 8, spreadBurn: true } },
+      1: { desc: "Grants Heat Resistance (immune to lava/fire).", burnChance: 0, burnDmg: 0, burnDur: 0 },
+      2: { desc: "Grants Heat Resistance.", burnChance: 0, burnDmg: 0, burnDur: 0 },
+      3: { desc: "Grants Heat Resistance. When hit: 14% chance to burn attacker for 2 damage/sec over 3s.", burnChance: 0.14, burnDmg: 2, burnDur: 60, burnInterval: 20 },
+      4: { desc: "Grants Heat Resistance. When hit: 16% chance to burn for 3 damage/sec over 5s.", burnChance: 0.16, burnDmg: 3, burnDur: 100, burnInterval: 20 },
+      5: { desc: "Grants Heat Resistance. When hit: 18% chance to burn (3 dmg/sec, 5s). Burning enemies explode on death (8 dmg, 5 radius) and spread burn.", burnChance: 0.18, burnDmg: 3, burnDur: 100, burnInterval: 20, explosion: { radius: 5, damage: 8, spreadBurn: true } },
     }
   },
   Rubellite: {

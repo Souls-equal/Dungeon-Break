@@ -58,7 +58,7 @@ import { applyItemStats } from "./crafting/itemStats.js";
 import { tickCombatFx, onWeaponHit, onArmorHit, tickArmorShimmer, forgetPlayer as forgetCombatFx } from "./combatFx/service.js";
 import { refreshWeaponStats, tickWeapons, onMobKilled, forgetPlayer as forgetWeaponAbility, markEntityDeleted, onThrowableUsed, onCollision as onWeaponCollision, onCrouchChange as onNovaCrouchChange, tryNovaLaser, isNovaCrouching, tryNovaCrescent } from "./weapons/service.js";
 import { parseWeaponInfo } from "./combatFx/service.js";
-import { onDamaged as onArmorDamaged, onDealingDamage as onArmorDealingDamage, onMobKilled as onArmorMobKilled, tick as tickArmors, forgetPlayer as forgetArmorAbility, getTemporaryDefense as armorTempDefense, refreshArmorDescriptions } from "./armor/service.js";
+import { onDamaged as onArmorDamaged, onDealingDamage as onArmorDealingDamage, onMobKilled as onArmorMobKilled, tick as tickArmors, forgetPlayer as forgetArmorAbility, getTemporaryDefense as armorTempDefense, refreshArmorDescriptions, getArmorLevel as getArmorLevelForHeat } from "./armor/service.js";
 import { shouldRunTutorial, onTutorialJoin, onTutorialCrateOpened, onTutorialDungeonEntered } from "./tutorial/service.js";
 const OWNER_NAME = "K4miNoK4mi";
 function getOwnerId() {
@@ -2028,16 +2028,42 @@ onPlayerTookDamage = (playerId, damage, cause) => {
   try {
     let dmg = Number(damage);
     if (!Number.isFinite(dmg) || dmg <= 0) return;
-    const causeStr = String(cause || "").toLowerCase();
-    const isLava = causeStr.includes("lava") || causeStr.includes("fire");
+    // cause peut être string "lava" ou objet {cause:"lava", damageType:"fire", ...}
+    // on dump tout pour détecter lave même si Bloxd change la forme
+    let causeStr = "";
+    try {
+      if (typeof cause === "string") causeStr = cause;
+      else if (cause && typeof cause === "object") causeStr = [cause.cause, cause.type, cause.damageType, cause.damageCause, cause.source, cause.reason, cause.name, JSON.stringify(cause)].filter(Boolean).join(" ");
+      else causeStr = String(cause || "");
+    } catch(_) { causeStr = String(cause || ""); }
+    causeStr = causeStr.toLowerCase();
+    let isLava = causeStr.includes("lava") || causeStr.includes("fire");
+    // fallback: si le joueur est littéralement dans un bloc de lave, c'est de la lave même si cause mal formée
+    if (!isLava) {
+      try {
+        const p = api.getPosition(playerId);
+        if (p) {
+          for (const dy of [0, -0.5]) {
+            const b = api.getBlock(Math.floor(p[0]), Math.floor(p[1] + dy), Math.floor(p[2]));
+            if (b && String(b).toLowerCase().includes("lava")) { isLava = true; break; }
+          }
+        }
+      } catch(_){}
+    }
     let modified = dmg;
     try {
       const am = onArmorDamaged(api, playerId, null, dmg);
       if (Number.isFinite(am)) modified = am;
     } catch(_){}
-    // never swallow lava damage at spawn: receivingMultiplier is already in the cache
-    // but onArmorDamaged already includes Magmasteel lavaResist — return it explicitly
-    if (isLava && Number.isFinite(modified)) return modified;
+    // lava always hurts at spawn — sauf si Heat Resistance (Magmasteel) actif, on laisse l'effet bloquer
+    if (isLava && Number.isFinite(modified)) {
+      try { if (typeof getArmorLevelForHeat === "function" && getArmorLevelForHeat(api, playerId, "Magmasteel") > 0) {
+        // Magmasteel → Heat Resistance effect, on ne force pas les dégâts
+        if (modified !== dmg && Number.isFinite(modified)) return modified;
+        return; // laisse Bloxd gérer l'immunité
+      }} catch(_){}
+      return modified;
+    }
     if (modified !== dmg && Number.isFinite(modified)) return modified;
   } catch(_){}
 };
