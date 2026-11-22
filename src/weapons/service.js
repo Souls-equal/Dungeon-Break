@@ -181,13 +181,22 @@ function segDistSq(p, a, b) {
   const dx = p[0]-cx, dy = p[1]-cy, dz = p[2]-cz;
   return dx*dx+dy*dy+dz*dz;
 }
+function segDistSq2D(p, a, b) {
+  const abx = b[0]-a[0], abz = b[2]-a[2];
+  const apx = p[0]-a[0], apz = p[2]-a[2];
+  const ab2 = abx*abx+abz*abz;
+  let t = 0;
+  if (ab2 > 1e-4) t = clamp((apx*abx+apz*abz)/ab2, 0, 1);
+  const cx = a[0]+abx*t, cz = a[2]+abz*t;
+  const dx = p[0]-cx, dz = p[2]-cz;
+  return dx*dx+dz*dz;
+}
 function mobsOnBeam(api, start, end, radius) {
   const out = [];
   if (!api || !start || !end) return out;
   const r2 = radius*radius;
   let ids = [];
   try { ids = (typeof api.getMobIds === "function" ? api.getMobIds() : []) || []; } catch(_) { ids = []; }
-  // Fallback: si getMobIds vide, tente getEntitiesInRect sur la grosse AABB du segment
   if (!ids.length) {
     try {
       if (typeof api.getEntitiesInRect === "function") {
@@ -208,9 +217,42 @@ function mobsOnBeam(api, start, end, radius) {
       }
       const p = api.getPosition(id);
       if (!p) continue;
-      const h0 = [p[0], p[1]+0.25, p[2]], h1 = [p[0], p[1]+1.0, p[2]], h2 = [p[0], p[1]+1.75, p[2]];
-      const d2 = Math.min(segDistSq(h0, start, end), segDistSq(h1, start, end), segDistSq(h2, start, end));
+      // Hauteur extrême: on ignore Y (colonne infinie) — demande utilisateur
+      const d2 = segDistSq2D(p, start, end);
       if (d2 <= r2+4) out.push({ id, pos: p });
+    } catch(_) {}
+  }
+  return out;
+}
+// Pour le croissant: même idée colonne infinie (cylindre vertical)
+function nearbyMobsTall(api, centerPos, radius, height = 100) {
+  const out = [];
+  if (!api || !centerPos) return out;
+  const r2 = radius*radius;
+  let ids = [];
+  try { ids = (typeof api.getMobIds === "function" ? api.getMobIds() : []) || []; } catch(_) { ids = []; }
+  if (!ids.length) {
+    try {
+      if (typeof api.getEntitiesInRect === "function") {
+        const pad = radius + 2;
+        const min = [centerPos[0]-pad, centerPos[1]-height, centerPos[2]-pad];
+        const max = [centerPos[0]+pad, centerPos[1]+height, centerPos[2]+pad];
+        ids = api.getEntitiesInRect(min, max) || [];
+      }
+    } catch(_) {}
+  }
+  for (let i = 0; i < ids.length; i++) {
+    const id = ids[i];
+    try {
+      if (deletedEntities.has(String(id))) continue;
+      if (typeof api.getEntityType === "function") {
+        const t = api.getEntityType(id);
+        if (t === "Player") continue;
+      }
+      const p = api.getPosition(id);
+      if (!p) continue;
+      const dx = p[0]-centerPos[0], dz = p[2]-centerPos[2];
+      if (dx*dx+dz*dz <= r2+4) out.push({ id, pos: p });
     } catch(_) {}
   }
   return out;
@@ -403,9 +445,8 @@ function novaCrescentSlash(api, c, fr, t) {
   }
 }
 function novaCrescentHitAt(api, casterId, c, fr, seen, dmg) {
-  // Zone élargie: sphère simple rayon 5 (au lieu de boîte orientée stricte)
-  // pour garantir que toute la zone visuelle touche (retour: zone trop petite)
-  const nears = nearbyMobs(api, c, 5);
+  // Colonne infinie: ignore Y, rayon 5 horizontal (hauteur extrême demandée)
+  const nears = nearbyMobsTall(api, c, 5, 100);
   for (const { id } of nears) {
     const sid = String(id);
     if (seen[sid]) continue;
