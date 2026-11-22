@@ -230,10 +230,15 @@ function giveReward(api, playerId, state) {
       api.applyAuraChange(playerId, reward.aura);
     }
   } catch (_) {}
-  // Single concise chat line + flying text
+  // Chat line with multiple colors for readability
   try {
     if (typeof api.sendMessage === "function") {
-      api.sendMessage(playerId, [{ str: `Quest done! +${reward.gold} gold +${reward.aura} Aura`, style: { color: "#55FF55" } }]);
+      api.sendMessage(playerId, [
+        { str: "Quest done! ", style: { color: "#55FF55", fontWeight: "bold" } },
+        { str: `+${reward.gold} gold`, style: { color: "#FFD700", fontWeight: "bold" } },
+        { str: " ", style: { color: "#FFFFFF" } },
+        { str: `+${reward.aura} Aura`, style: { color: "#AA00FF", fontWeight: "bold" } },
+      ]);
     }
     if (typeof api.sendFlyingMiddleMessage === "function") {
       api.sendFlyingMiddleMessage(playerId, [{ str: `+${reward.gold} Gold`, style: { color: "#FFD700" } }], 600, 900);
@@ -466,23 +471,32 @@ export function onQuestInteract(api, playerId, targetId) {
   const crouching = isPlayerCrouching(api, playerId);
   const state = loadQuestState(api, playerId);
 
-  // No quest -> single click gives one immediately
+  // No quest -> single click gives one immediately (multi-color for readability)
   if (!state) {
     const fresh = createNewQuest(api, playerId);
     const tpl = templateForState(fresh);
     try {
-      api.sendMessage(playerId, [{ str: `Quest: ${tpl.title} - ${tpl.description(fresh.target)}`, style: { color: "#55FF55" } }]);
+      api.sendMessage(playerId, [
+        { str: "Quest: ", style: { color: "#FFD700", fontWeight: "bold" } },
+        { str: `${tpl.icon} ${tpl.title}`, style: { color: tpl.color, fontWeight: "bold" } },
+        { str: ` - ${tpl.description(fresh.target)}`, style: { color: "#FFFFFF" } },
+      ]);
     } catch(_) {}
     refreshSidebar(api, playerId);
     return true;
   }
 
-  // Has quest — crouch+click to reroll (even if completed, reroll takes priority)
+  // Has quest — crouch+click to reroll (even if completed, reroll takes priority) — keep ↻ emoji
   if (crouching) {
     const fresh = createNewQuest(api, playerId, state.questId);
     const tpl = templateForState(fresh);
     try {
-      api.sendMessage(playerId, [{ str: `New quest: ${tpl.title} - ${tpl.description(fresh.target)}`, style: { color: "#55FFFF" } }]);
+      api.sendMessage(playerId, [
+        { str: "↻ ", style: { color: "#55FFFF", fontWeight: "bold" } },
+        { str: "New quest: ", style: { color: "#FFD700", fontWeight: "bold" } },
+        { str: `${tpl.icon} ${tpl.title}`, style: { color: tpl.color, fontWeight: "bold" } },
+        { str: ` - ${tpl.description(fresh.target)}`, style: { color: "#FFFFFF" } },
+      ]);
     } catch(_) {}
     refreshSidebar(api, playerId);
     return true;
@@ -509,7 +523,20 @@ export function onQuestInteract(api, playerId, targetId) {
     return true;
   }
 
-  // Has quest in progress, not crouching -> no chat flood, just keep sidebar (already visible)
+  // Has quest in progress — give feedback (multi-color) so NPC isn't silent
+  try {
+    const tpl = templateForState(state);
+    if (tpl) {
+      const reward = tpl.reward(state.target);
+      api.sendMessage(playerId, [
+        { str: `${tpl.icon} `, style: { color: tpl.color, fontWeight: "bold" } },
+        { str: `${tpl.title}: `, style: { color: tpl.color, fontWeight: "bold" } },
+        { str: `${tpl.description(state.target)} `, style: { color: "#FFFFFF" } },
+        { str: `${state.progress}/${state.target}`, style: { color: "#FFD700", fontWeight: "bold" } },
+        { str: ` — ${reward.label}`, style: { color: "#AAAAAA" } },
+      ]);
+    }
+  } catch(_) {}
   return true;
 }
 
