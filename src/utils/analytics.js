@@ -1,6 +1,6 @@
 /**
  * Analytics wrapper — Bloxd internal only (no external call).
- * Uses api.registerAnalyticsEvent when available (custom games), falls back to api.log.
+ * Uses api.registerAnalyticsEvent when available (custom games), silent otherwise.
  * Respects Bloxd limits: 20 events/min/player, 20 categories, 20 types/cat, 50 values/type.
  *
  * Usage:
@@ -51,15 +51,10 @@ export function track(playerId, eventType, eventValue = null, opts = {}) {
 
     if (typeof api !== "undefined" && typeof api.registerAnalyticsEvent === "function") {
       api.registerAnalyticsEvent(pid, type, value, cat, start, pos, num);
-    } else if (typeof api !== "undefined" && typeof api.log === "function") {
-      // Fallback visible in server log for dev / tests — not counted as real analytics but useful
-      const nStr = num != null ? ` n=${num}` : "";
-      const cStr = cat ? ` cat=${cat}` : "";
-      api.log(`[Analytics] ${type}/${value ?? ""}${nStr}${cStr} pid=${pid}`);
     }
-  } catch(e) {
-    // Never break game for analytics
-    try { if (typeof api !== "undefined" && typeof api.log === "function") api.log(`[Analytics-err] ${e && e.message ? e.message : e}`); } catch(_){}
+    // silently ignore if analytics not available (no api.log fallback)
+  } catch(_e) {
+    // Never break game for analytics — silent
   }
 }
 
