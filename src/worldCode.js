@@ -24,7 +24,7 @@ import {
 import { DIFFICULTIES, DUNGEON_CONFIG, difficultyForPadBlock, priceForDifficulty, formatGold, UNLOCK_CURRENCY, UNLOCK_DB_KEY, DUNGEON_PRICES, mobAuraFor } from "./dungeon/config.js";
 import { LOBBY_POSITION, createDungeonService } from "./dungeon/service.js";
 import { isChestBlock } from "./dungeon/loot.js";
-import { AURA_PER_LEVEL, MAX_AURA_LEVEL, categoryOf } from "./blessing/config.js";
+import { AURA_PER_LEVEL, MAX_AURA_LEVEL, categoryOf, rerollGoldCost, REROLL_BASE_GOLD, REROLL_GOLD_PER_BLESSING } from "./blessing/config.js";
 import { createBlessingService } from "./blessing/service.js";
 import * as effects from "./blessing/effects.js";
 import {
@@ -569,6 +569,7 @@ function runDebugCommand(playerId, verb) {
       + ` · timed: ${timed.length > 0 ? timed.map((entry) => `${entry.blessing.id} (${entry.endsAtTick - tickNow()} ticks)`).join(", ") : "none"}`);
     debugSay(playerId, `[dbg] session ${key} · last ${account.history.length} picked:`
       + (account.history.length > 0 ? ` ${account.history.map((entry) => `${entry.name} (${entry.rarity})`).join(", ")}` : " none"));
+    debugSay(playerId, `[dbg] reroll cost: ${formatGold(rerollGoldCost(account.spent))} (base ${formatGold(REROLL_BASE_GOLD)} + ${formatGold(REROLL_GOLD_PER_BLESSING)}/blessing, ${account.spent} taken)`);
     debugSay(playerId, `[dbg] odds ${oddsOfTable()}`);
     return;
   }
@@ -766,6 +767,7 @@ const STATS_ITEM = "Stats";
  * category is never empty: a shop with no tiles left would be the "buttons disappear" bug.
  */
 const CHOICE_KEYS = ["Choice 1", "Choice 2", "Choice 3"];
+const REROLL_ITEM = "Reroll";
 /**
  * The **custom currency** the points are shown in.
  *
@@ -1116,6 +1118,37 @@ function refreshBlessingTiles(playerId) {
     logShopFailure(STATS_ITEM, error);
   }
 
+  // Reroll tile — gold reroll, price scales with blessings already taken
+  try {
+    const spent = account.spent | 0;
+    const cost = rerollGoldCost(spent);
+    const gold = getGoldAmount(playerId);
+    const hasGold = gold === null ? true : (Number.isFinite(gold) && gold >= cost);
+    const canReroll = !atSpawn && offer.length > 0 && hasGold;
+    api.createShopItemForPlayer(playerId, BLESSING_CATEGORY, REROLL_ITEM, {
+      image: "Compass",
+      customTitle: "Reroll Blessings",
+      description: offer.length > 0
+        ? [
+            { str: `Reroll the 3 choices — ${cost} gold\n`, style: { color: hasGold ? "#FFD700" : "#FF5555", fontWeight: "bold" } },
+            { str: `Price ↑ with blessings taken (${spent} taken)\n`, style: { color: "#AAAAAA" } },
+            { str: hasGold ? "Click to reroll" : `Need ${cost} gold (have ${gold|0})`, style: { color: hasGold ? "#55FF55" : "#FF5555" } },
+          ]
+        : [
+            { str: `Reroll — ${cost} gold\n`, style: { color: "#AAAAAA" } },
+            { str: "Roll first, then reroll for new choices\n", style: { color: "#777777" } },
+            { str: `Price ↑ with blessings taken (${spent} taken)`, style: { color: "#555555" } },
+          ],
+      buyButtonText: offer.length > 0 ? `Reroll (${cost} gold)` : "No offer",
+      cost: 0,
+      canBuy: canReroll,
+      redDot: canReroll,
+      sortPriority: 20,
+    });
+  } catch (error) {
+    logShopFailure(REROLL_ITEM, error);
+  }
+
   try {
     if (atSpawn) {
       api.configureShopCategoryForPlayer(playerId, BLESSING_CATEGORY, {
@@ -1421,6 +1454,48 @@ function rollBlessing(playerId) {
 }
 
 /**
+ * Rerolls the current offer with gold — price scales with blessings already taken.
+ * Does not spend a point, only gold. Replaces the 3 choices.
+ */
+function rerollBlessing(playerId) {
+  if (isAtSpawn(playerId)) {
+    try { api.sendMessage(playerId, [cStr("Cannot reroll Blessings at spawn — enter a dungeon first", MSG_COLORS.red)]); } catch(_){}
+    try { refreshBlessingTiles(playerId); } catch(_){}
+    return false;
+  }
+  const key = accountKeyOf(playerId);
+  const account = blessings().accountOf(key);
+  if (account.offer.length === 0) {
+    try { api.sendMessage(playerId, [cStr("No Blessing offer to reroll — roll first", MSG_COLORS.gray)]); } catch(_){}
+    refreshBlessingTiles(playerId);
+    return false;
+  }
+  const spent = account.spent | 0;
+  const cost = rerollGoldCost(spent);
+  const gold = getGoldAmount(playerId);
+  if (gold !== null && (!Number.isFinite(gold) || gold < cost)) {
+    try { api.sendMessage(playerId, [cStr(`Need ${formatGold(cost)} to reroll (have ${formatGold(gold|0)})`, MSG_COLORS.red)]); } catch(_){}
+    refreshBlessingTiles(playerId);
+    return false;
+  }
+  if (gold !== null && Number.isFinite(gold)) {
+    if (!spendGold(playerId, cost)) {
+      try { api.sendMessage(playerId, [cStr("Not enough gold to reroll", MSG_COLORS.red)]); } catch(_){}
+      refreshBlessingTiles(playerId);
+      return false;
+    }
+  }
+  const newOffer = blessings().rerollOffer(key);
+  if (!newOffer) {
+    refreshBlessingTiles(playerId);
+    return false;
+  }
+  refreshBlessingTiles(playerId);
+  try { api.sendMessage(playerId, [cStr(`Rerolled blessings for ${formatGold(cost)}`, MSG_COLORS.gold)]); } catch(_){}
+  return true;
+}
+
+/**
  * Chooses one of the three: **this is the point being spent**, and the blessing is applied.
  *
  * The service refuses anything that is not one of the offered blessings — a stale tile, a
@@ -1590,6 +1665,7 @@ onPlayerBoughtShopItem = (playerId, categoryKey, itemKey, itemOrInput, userInput
   if (categoryKey === BLESSING_CATEGORY) {
     try {
       if (itemKey === ROLL_ITEM) rollBlessing(playerId);
+      else if (itemKey === REROLL_ITEM) rerollBlessing(playerId);
       // A choice tile is one of three, and its key names its position in the offer: the
       // offer itself is what decides what the pick was worth, not the key.
       else {

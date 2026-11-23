@@ -749,6 +749,14 @@ export const MAX_AURA_LEVEL = 999;
  */
 export const AURA_LEVEL_BASE = 1;
 
+/** Reroll cost — paid in gold, scales with blessings already taken. */
+export const REROLL_BASE_GOLD = 500;
+export const REROLL_GOLD_PER_BLESSING = 300;
+export function rerollGoldCost(spent) {
+  const n = Number.isFinite(spent) ? Math.max(0, Math.floor(spent)) : 0;
+  return REROLL_BASE_GOLD + n * REROLL_GOLD_PER_BLESSING;
+}
+
 /** Points earned per aura level — 1 blessing every 2 aura levels (owner request). */
 export const POINTS_PER_LEVEL = 0.5;
 export const BLESSING_LEVEL_STEP = 2;
