@@ -21,6 +21,7 @@ import {
   setTimeout as scheduleTimeout,
   step as stepScheduler,
 } from "./utils/scheduler.js";
+import { track, Analytics } from "./utils/analytics.js";
 import { DIFFICULTIES, DUNGEON_CONFIG, difficultyForPadBlock, priceForDifficulty, formatGold, UNLOCK_CURRENCY, UNLOCK_DB_KEY, DUNGEON_PRICES, mobAuraFor } from "./dungeon/config.js";
 import { LOBBY_POSITION, createDungeonService } from "./dungeon/service.js";
 import { isChestBlock } from "./dungeon/loot.js";
@@ -262,6 +263,7 @@ function service() {
       },
       onRoomDiscovered: (playerId, chunkX, chunkZ, difficulty) => {
         try { onQuestRoomDiscovered(api, playerId); } catch(e) { reportErrorToOwner(e); }
+        try { track(playerId, "dungeon", "room_discover", { gameCategoryId: difficulty ? difficulty.id : null }); } catch(_){}
         try {
           const newly = ranks().recordRoom(playerId);
           if (newly && newly.length) handleRankUnlocks(playerId, newly);
@@ -357,6 +359,7 @@ function completeLobbyCountdown(playerId, countdown) {
   });
   if (entered) {
     try { onQuestDungeonEntered(api, playerId); } catch(e) { reportErrorToOwner(e); }
+    try { track(playerId, "dungeon", "enter", { gameCategoryId: countdown.difficulty ? countdown.difficulty.id : null }); Analytics.padUse(playerId, countdown.difficulty ? countdown.difficulty.id : null); } catch(_){}
     spawnMode.set(String(playerId), false);
     ensureSurvivalGamemode(playerId);
     applyBlessingOptions(playerId, baseClientOptions());
@@ -450,6 +453,7 @@ function onPadStart(playerId, x, y, z, difficulty) {
     const progressed = service().usePad(playerId);
     if (progressed) {
       try { onQuestDungeonEntered(api, playerId); } catch(e) { reportErrorToOwner(e); }
+    try { track(playerId, "dungeon", "enter", { gameCategoryId: difficulty ? difficulty.id : null }); Analytics.padUse(playerId, difficulty ? difficulty.id : null); } catch(_){}
       spawnMode.set(String(playerId), false);
       ensureSurvivalGamemode(playerId);
       applyBlessingOptions(playerId, baseClientOptions());
@@ -1688,6 +1692,7 @@ onPlayerBoughtShopItem = (playerId, categoryKey, itemKey, itemOrInput, userInput
   if (categoryKey !== SHOP_CATEGORY || itemKey !== SPAWN_ITEM) return;
   // Teleport and forget are one call, so the tick can never see a player at spawn
   // with a dungeon: `teleportToSpawn` moves first, then drops the record.
+  try { track(playerId, "shop", "teleport", { gameCategoryId: "spawn" }); track(playerId, "dungeon", "leave", { gameCategoryId: "teleport" }); } catch(_){}
   service().teleportToSpawn(playerId);
   endRun(playerId, [cStr("Run over — permanent stay", MSG_COLORS.gray)]);
   stopLobbyCountdown(playerId);
@@ -1747,6 +1752,7 @@ tick = () => {
 };
 
 onPlayerJoin = (playerId) => {
+  try { track(playerId, "player", "join", { noPos: true }); } catch(_){}
   // Crafts custom: shards -> materials -> armors (12 sets, 72 recipes) + renames/descriptions
   try { registerCraftingRecipes(api, playerId); } catch(e) { reportErrorToOwner(e); }
   try { applyItemStats(api, playerId); } catch(e) { reportErrorToOwner(e); }
@@ -1827,6 +1833,7 @@ onPlayerToggledShopMenu = (playerId, isOpen) => {
 };
 
 onPlayerLeave = (playerId) => {
+  try { track(playerId, "player", "leave"); } catch(_){}
   stopLobbyCountdown(playerId);
   try {
     api.setClientOption(playerId, "middleTextUpper", "");
@@ -1922,6 +1929,7 @@ onPlayerClick = (playerId, wasAltClick, x, y, z, block, targetEId) => {
   // know what a chest gives to know what a chest is.
   if (targetEId) return;
   if (!isChestBlock(block)) return;
+  try { track(playerId, "crate", "click"); } catch(_){}
   try {
     service().clickPosition(playerId, [x, y, z]);
   } catch (error) {
@@ -1941,6 +1949,8 @@ onPlayerClick = (playerId, wasAltClick, x, y, z, block, targetEId) => {
  * dungeon — there are none, but a stale id could drift in — is ignored.
  */
 onPlayerKilledMob = (playerId, mobId) => {
+  try { track(playerId, "combat", "kill"); } catch(_){}
+  try { onQuestMobKilled(api, playerId); } catch(e) { reportErrorToOwner(e); }
   try {
     service().mobKilled(playerId, mobId);
   } catch (error) {
@@ -1986,7 +1996,6 @@ onPlayerKilledMob = (playerId, mobId) => {
     const newly = ranks().recordKill(playerId);
     if (newly && newly.length) handleRankUnlocks(playerId, newly);
   } catch(e) { reportErrorToOwner(e); }
-  try { onQuestMobKilled(api, playerId); } catch(e) { reportErrorToOwner(e); }
 };
 
 /**
@@ -2005,6 +2014,9 @@ onMobDespawned = (mobId) => {
   }
 };
 // Ne plus utiliser isAlive (pas fiable) — on track les deletes avec onEntityDeleted (ajout 28 Aug 2026)
+onPlayerCrafted = (playerId, recipeName, amount) => {
+  try { track(playerId, "craft", "success", { gameCategoryId: String(recipeName||"unknown"), numericValue: Number(amount)||1 }); } catch(_){}
+};
 onEntityDeleted = (entityId) => {
   try { markEntityDeleted(entityId); } catch(e) { reportErrorToOwner(e); }
   try { onQuestEntityDeleted(api, entityId); } catch(e) { reportErrorToOwner(e); }
@@ -2045,6 +2057,7 @@ onPlayerDamagingMob = (playerId, mobId, damageDealt, ...rest) => {
     }
   } catch(_){}
   try { if (Number.isFinite(Number(damageDealt)) && Number(damageDealt)>0) onQuestDamageDealt(api, playerId, Number(damageDealt)); } catch(e){ reportErrorToOwner(e); }
+  try { if (Number.isFinite(Number(damageDealt)) && Number(damageDealt)>0) track(playerId, "combat", "hit", { numericValue: Number(damageDealt) }); } catch(_){}
   let baseDmg = Number(damageDealt);
   const hasBase = Number.isFinite(baseDmg);
   // Custom weapon detection: if player holds one of our sets, damage stat is already effective
@@ -2102,6 +2115,7 @@ onPlayerDamagingMob = (playerId, mobId, damageDealt, ...rest) => {
 };
 
 onMobDamagingPlayer = (mobId, playerId, damageDealt, ...rest) => {
+  try { if (Number.isFinite(Number(damageDealt)) && Number(damageDealt)>0) track((Number.isFinite(Number(playerId)) ? playerId : mobId), "combat", "damage_taken", { numericValue: Number(damageDealt) }); } catch(_){}
   try { if (Number.isFinite(Number(damageDealt)) && Number(damageDealt)>0) { const _pid = (Number.isFinite(Number(playerId)) ? playerId : mobId); onQuestDamageTaken(api, _pid, Number(damageDealt)); } } catch(e){ reportErrorToOwner(e); }
   let scaled = undefined;
   let pid = playerId;

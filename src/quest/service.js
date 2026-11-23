@@ -37,6 +37,7 @@ import {
   findTemplate,
   todayDateUTC,
 } from "./config.js";
+import { track } from "../utils/analytics.js";
 import { rollQuestPassXp } from "../pass/config.js";
 import { addPassXp } from "../pass/service.js";
 
@@ -289,6 +290,7 @@ function addProgress(api, playerId, type, amount = 1, meta) {
     state.progress = Math.min(state.target, (state.progress || 0) + amount);
     if (state.progress >= state.target) {
       state.completed = true;
+      try { track(playerId, "quest", "complete", { gameCategoryId: state.questId }); } catch(_){}
       // Minimal completion hint (flying only, not chat flood)
       try {
         if (typeof api.sendFlyingMiddleMessage === "function") {
@@ -603,6 +605,7 @@ export function onQuestInteract(api, playerId, targetId) {
   // No quest -> single click gives one immediately (multi-color for readability)
   if (!state) {
     const fresh = createNewQuest(api, playerId);
+    try { track(playerId, "quest", "take", { gameCategoryId: fresh.questId }); } catch(_){}
     const tpl = templateForState(fresh);
     try {
       api.sendMessage(playerId, [
@@ -618,6 +621,7 @@ export function onQuestInteract(api, playerId, targetId) {
   // Has quest — crouch+click to reroll (even if completed, reroll takes priority) — keep ↻ emoji
   if (crouching) {
     const fresh = createNewQuest(api, playerId, state.questId);
+    try { track(playerId, "quest", "reroll", { gameCategoryId: fresh.questId }); } catch(_){}
     const tpl = templateForState(fresh);
     try {
       api.sendMessage(playerId, [
@@ -634,6 +638,7 @@ export function onQuestInteract(api, playerId, targetId) {
   // Has quest, completed -> click to claim, then remove from sidebar 1s after
   if (state.completed && !state.claimed) {
     giveReward(api, playerId, state);
+    try { track(playerId, "quest", "claimed", { gameCategoryId: state.questId }); } catch(_){}
     state.claimed = true;
     saveQuestState(api, playerId, state);
     refreshSidebar(api, playerId);

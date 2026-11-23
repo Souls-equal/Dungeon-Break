@@ -6,6 +6,7 @@
  * Flag hasDoneTutorial via api.get/setPlayerDbValue with t:0/t:1 (persisted).
  */
 import { setTimeout as scheduleTimeout } from "../utils/scheduler.js";
+import { track } from "../utils/analytics.js";
 export const TUTORIAL_DB_KEY = "t";
 const LEGACY_TUTORIAL_KEY = "dungeonBreak.tutorial.v1";
 const TUTORIAL_STEP_KEY = "dungeonBreak.tutorial.step";
@@ -149,6 +150,7 @@ export function onTutorialJoin(api, playerId) {
   setArrow(api, playerId, "red", TUTORIAL_CRATE_TARGET);
   try { highlightWoodenKey(api, playerId); } catch {}
   try { api.sendMessage(playerId, [{ str: TUTORIAL_MESSAGES.join, style: { color: "#ff5555" } }]); } catch {}
+  try { track(playerId, "tutorial", "start"); } catch(_){}
   return true;
 }
 
@@ -161,6 +163,7 @@ export function onTutorialCrateOpened(api, playerId) {
   try { api.sendMessage(playerId, [{ str: TUTORIAL_MESSAGES.crateOpened, style: { color: "#FFFF55" } }]); } catch {}
   setArrow(api, playerId, "#69EA5E", TUTORIAL_DUNGEON_TARGET);
   try { api.sendMessage(playerId, [{ str: TUTORIAL_MESSAGES.toDungeon, style: { color: "#69EA5E" } }]); } catch {}
+  try { track(playerId, "tutorial", "crate_opened"); } catch(_){}
   advanceStep(api, playerId, "dungeon");
 }
 
@@ -172,6 +175,7 @@ export function onTutorialDungeonEntered(api, playerId) {
   clearArrow(api, playerId);
   try { clearHighlight(api, playerId); } catch {}
   try { api.sendMessage(playerId, [{ str: TUTORIAL_MESSAGES.final, style: { color: "#FFD700" } }]); } catch {}
+  try { track(playerId, "tutorial", "complete"); } catch(_){}
 }
 
 export function buildTutorialConfig(portalPos, cratePos) {
