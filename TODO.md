@@ -8,7 +8,7 @@
 ## Légende
 - **Impact :** ⭐ = moyen, ⭐⭐ = fort, ⭐⭐⭐ = très fort sur rétention/reviews
 - **Effort :** S = < 2 jours, M = 3-7 jours, L = 1-3 semaines
-- **Métrique Bloxd :** événement à logger via `api.*Analytics*` (adapter au nom exact exposé par Bloxd — l'API existe, aucun call externe)
+- **Métrique Bloxd :** événement via `src/utils/analytics.js` → `api.registerAnalyticsEvent` (API vérifiée, Custom games only, aucun call externe)
 
 ---
 
@@ -100,16 +100,15 @@
 **Métrique :** `analytics.cosmetic.equip_rate`, `analytics.shop.rank_preview`
 **Impact :** ⭐ / Effort : **S** → **fait à 60%**
 
-### [ ] 10. Metrics in-game + feedback natif (sans Discord) — MANQUANT (contrainte respectée mais non implémenté)
-**Faire :**
-- Écran shop "Donner mon avis" : 3 emoji (😍😐😡) + champ texte court + catégorie (bug/idée/équilibrage)
-- Stockage via Bloxd Analytics uniquement : `analytics.feedback.sent`, `analytics.feedback.category`
-- **Dashboard interne** : clear rate par difficulté, temps moyen, crafts +/− populaires, pick-rate blessings, drop crates
-- Patch notes in-game (panneau lobby lisant un `globalThis.PATCH_NOTES` versionné)
-**État actuel :** **AUCUN wrapper analytics en place**. Pas de `src/utils/analytics.js`, pas de `track()` ni de `api.recordAnalytics` call. Aucune ligne `analytics.*` dans le code. Contrainte "zéro call externe" respectée par défaut (rien n'est loggé non plus).
-**Fichiers à créer :** `src/feedback/service.js`, `src/utils/analytics.js`, `src/worldCode.js` (shop category Feedback)
+### [x] 10. Metrics in-game + feedback natif (sans Discord) — FAIT (wrapper + instrumentation, feedback panel TODO)
+**Fait :**
+- **Wrapper vérifié** `src/utils/analytics.js` : `api.registerAnalyticsEvent(playerId, eventType, eventValue, gameCategoryId, gameStartTimeMs, position, numericValue)` — API Bloxd Custom games vérifiée via `bloxd.io/docs/api-reference` (09/11/2026). Limites : 20 evt/min/player, 20 catégories/jour, 20 types/cat/jour. Fallback `api.log` si pas dispo. `track(playerId, eventType, eventValue, opts)` + helpers `Analytics.*` + `trackPos`.
+- **Instrumentation :** `worldCode.js` (join/leave, dungeon enter/leave, room_discover, pad_use, combat hit/kill/damage_taken, crate click, shop teleport, onPlayerCrafted), `blessing/service.js` (roll/pick/reroll), `quest/service.js` (take/reroll/complete/claimed), `pass/service.js` (xp_gain, level, tier_claim), `tutorial/service.js` (start/crate_opened/complete).
+- Contrainte externe respectée : **aucun call externe**, tout via Bloxd interne.
+**Reste TODO :** shop catégorie "Donner mon avis" (emoji + texte), dashboard interne clear rate / temps moyen, patch notes in-game — non bloquant pour les metrics.
+**Fichiers :** `src/utils/analytics.js` (nouveau), `src/worldCode.js`, `src/blessing/service.js`, `src/quest/service.js`, `src/pass/service.js`, `src/tutorial/service.js`
 **Métrique :** `analytics.feedback.sent`, `analytics.feedback.satisfaction_avg`
-**Impact :** ⭐⭐ / Effort : **S**
+**Impact :** ⭐⭐ / Effort : **S** → **fait**
 
 ---
 
@@ -140,28 +139,24 @@ Ces features sont en prod mais n'étaient pas dans le TODO d'origine — à int�
 | 7 | **Coop + rez** | Haute (mais effort L) |
 | 8 | **Saisons** | Basse (Mois 3) |
 | 9 | **Cosmétiques Rank** (trails, emotes, `/rank preview`) | Basse |
-| 10 | **Analytics wrapper** `src/utils/analytics.js` + events + Feedback shop — **aucun log actuel** | Haute (bloque toutes les métriques P0-P1) |
+| 10 | **Analytics wrapper** `src/utils/analytics.js` — **FAIT** (feedback panel reste) | — |
 | — | **Preview craft UI** (mention §2 "reste TODO futur") | Moyenne |
 | — | **Patch notes in-game** panneau | Basse |
 
-> Sans #10, **toutes les métriques listées sont mortes** — c'est le prochain P0 technique.
+> #10 **fait** — metrics actives (bloxd internal). Reste feedback panel + dashboard.
 
 ---
 
 ## Métriques — implémentation Bloxd
 
-> Bloxd expose déjà une API analytics. Remplace `api.RECORD` ci-dessous par le nom exact de ton environnement (`api.recordAnalytics`, `api.logAnalytics`, `api.trackEvent`…).
+> API vérifiée : `api.registerAnalyticsEvent(playerId, eventType[64], eventValue[128|null], gameCategoryId[128|null], gameStartTimeMs, position[3]|null, numericValue|null)` + `api.registerAnalyticsPlayerPosition`. Custom games only.
 
 ```js
-// Exemple wrapper unique à mettre dans src/utils/analytics.js
-export function track(playerId, event, props = {}) {
-  if (typeof api.recordAnalytics === "function") api.recordAnalytics(event, { playerId, ...props });
-  else if (typeof api.logAnalytics === "function") api.logAnalytics(event, props);
-  else api.log(`[Analytics] ${event} ${JSON.stringify(props)}`);
-}
-// Usage :
-// track(playerId, "craft.success", { set: "Sanguine", tier: 3 });
-// track(playerId, "run.clear", { difficulty: "Very Easy", timeSec: 412, deaths: 1 });
+// Wrapper en prod : src/utils/analytics.js
+import { track, Analytics } from "./utils/analytics.js";
+track(playerId, "blessing", "pick", { gameCategoryId: blessingId });
+track(playerId, "dungeon", "enter", { gameCategoryId: difficulty.id });
+Analytics.mobKill(playerId); // alias
 ```
 
 **Events prioritaires à logger dès maintenant :**
