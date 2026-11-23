@@ -107,6 +107,8 @@ export function createLoader({ api, log }) {
       mobRefusals: new Map(),
       /** Mob type → refusals counted before the current room, to judge a room at a time. */
       mobRefusalsAtRoomStart: new Map(),
+      /** Types that have spawned at least once in this level: never banned as "unknown". */
+      successfulMobTypes: new Set(),
       /** Mobs whose stats are still to be applied: a spawn is async, the id is not ready. */
       pendingTuning: [],
       /** Was this difficulty's template set already requested? */
@@ -661,9 +663,14 @@ export function createLoader({ api, log }) {
     // room was never seen at all. A refusal is a refusal: it is filed for every type whose
     // count grew in this room, whatever the draw did, and the room cannot be filled again
     // afterwards anyway (`populated` remembers it).
-    if (mobIds.length > 0) {
+    // Only condemn a type when the room was *fully* filled: a partially filled room
+    // is proof of a transient cap, not of an unknown name.
+    if (mobIds.length === tuning.count) {
       for (const mob of roster) {
         if (refusedHere(level, mob.type)) continue;
+        // A type that has ever spawned is a type the game *does* know: a later
+        // cap-induced flood of nulls must not condemn it.
+        if (level.successfulMobTypes.has(mob.type)) continue;
         const key = refusalKey(level, mob.type);
         const refusals = level.mobRefusals.get(key) || 0;
         const before = level.mobRefusalsAtRoomStart.get(key) || 0;
@@ -680,7 +687,7 @@ export function createLoader({ api, log }) {
       level.mobRefusalsAtRoomStart.set(key, level.mobRefusals.get(key) || 0);
     }
 
-    trackRoomMobs(level, chunkX, chunkZ, mobIds);
+    if (mobIds.length > 0) trackRoomMobs(level, chunkX, chunkZ, mobIds);
     return mobIds;
   }
 
@@ -738,6 +745,9 @@ export function createLoader({ api, log }) {
         level.mobRefusals.set(key, (level.mobRefusals.get(key) || 0) + 1);
         continue;
       }
+      // Remember that this type *does* spawn: a type that has worked once is never
+      // condemned as "unknown" because a later room hit the global mob cap.
+      level.successfulMobTypes.add(mob.type);
       // The mob's own multipliers first, then the level's: a Skeleton's 0.7 health in Hell
       // is a Skeleton made hard, not a Skeleton made of the same stuff as a Zombie.
       level.pendingTuning.push({
@@ -852,8 +862,10 @@ export function createLoader({ api, log }) {
       // undeveloped dungeon — never gets mobs floating in the void. A read cannot say
       // this: an empty chunk answers "Air", exactly like a room's air.
       if (level.planned.get(roomKey) !== "placed") continue;
-      level.populated.add(roomKey);
-      spawnRoomMobs(level, x, z, spawnY);
+      const spawnedIds = spawnRoomMobs(level, x, z, spawnY);
+      // A room that got nothing (cap, no air) is not "done": it must be retried on
+      // the next `mobRetryTicks` instead of being remembered as populated forever.
+      if (spawnedIds.length > 0) level.populated.add(roomKey);
     }
 
     // Every other room of this dungeon loses its mobs: the ones the player walked away
