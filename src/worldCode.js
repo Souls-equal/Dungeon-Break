@@ -58,7 +58,7 @@ import { applyItemStats } from "./crafting/itemStats.js";
 import { tickCombatFx, onWeaponHit, onArmorHit, tickArmorShimmer, forgetPlayer as forgetCombatFx } from "./combatFx/service.js";
 import { refreshWeaponStats, tickWeapons, onMobKilled, forgetPlayer as forgetWeaponAbility, markEntityDeleted, onThrowableUsed, onCollision as onWeaponCollision, onCrouchChange as onNovaCrouchChange, tryNovaLaser, isNovaCrouching, tryNovaCrescent } from "./weapons/service.js";
 import { parseWeaponInfo } from "./combatFx/service.js";
-import { initQuestSystem, onQuestPlayerJoin, onQuestTick, onQuestMobKilled, onQuestCrateOpened, onQuestMobDespawned, onQuestEntityDeleted, onQuestPlayerLeave, onQuestInteract, onQuestClickNear } from "./quest/service.js";
+import { initQuestSystem, onQuestPlayerJoin, onQuestTick, onQuestMobKilled, onQuestCrateOpened, onQuestDamageDealt, onQuestDamageTaken, onQuestDungeonEntered, onQuestRoomDiscovered, onQuestMobDespawned, onQuestEntityDeleted, onQuestPlayerLeave, onQuestInteract, onQuestClickNear } from "./quest/service.js";
 import { QUEST_NPC_POS } from "./quest/config.js";
 import { onDamaged as onArmorDamaged, onDealingDamage as onArmorDealingDamage, onMobKilled as onArmorMobKilled, tick as tickArmors, forgetPlayer as forgetArmorAbility, getTemporaryDefense as armorTempDefense, refreshArmorDescriptions, getArmorLevel as getArmorLevelForHeat } from "./armor/service.js";
 import { shouldRunTutorial, onTutorialJoin, onTutorialCrateOpened, onTutorialDungeonEntered, tickTutorialHighlight } from "./tutorial/service.js";
@@ -261,6 +261,7 @@ function service() {
         }
       },
       onRoomDiscovered: (playerId, chunkX, chunkZ, difficulty) => {
+        try { onQuestRoomDiscovered(api, playerId); } catch(e) { reportErrorToOwner(e); }
         try {
           const newly = ranks().recordRoom(playerId);
           if (newly && newly.length) handleRankUnlocks(playerId, newly);
@@ -355,6 +356,7 @@ function completeLobbyCountdown(playerId, countdown) {
     } catch(e) { reportErrorToOwner(e); }
   });
   if (entered) {
+    try { onQuestDungeonEntered(api, playerId); } catch(e) { reportErrorToOwner(e); }
     spawnMode.set(String(playerId), false);
     ensureSurvivalGamemode(playerId);
     applyBlessingOptions(playerId, baseClientOptions());
@@ -447,6 +449,7 @@ function onPadStart(playerId, x, y, z, difficulty) {
   if (service().inDungeon(playerId)) {
     const progressed = service().usePad(playerId);
     if (progressed) {
+      try { onQuestDungeonEntered(api, playerId); } catch(e) { reportErrorToOwner(e); }
       spawnMode.set(String(playerId), false);
       ensureSurvivalGamemode(playerId);
       applyBlessingOptions(playerId, baseClientOptions());
@@ -844,7 +847,8 @@ function refreshRanksShop(playerId) {
   // keep NONE first, rest sorted; but ensure uniqueness
   const uniq = [...new Set(options)];
   try {
-    api.createShopItemForPlayer(playerId, "Ranks", "Rank", {
+    // Rank now lives in Utilities (unified category)
+    api.createShopItemForPlayer(playerId, SHOP_CATEGORY, "Rank", {
       image: "Crown",
       customTitle: "Ranks",
       description: `Current: ${currentLabel}`,
@@ -854,7 +858,6 @@ function refreshRanksShop(playerId) {
       sortPriority: 5,
       userInput: { type: "dropdown", dropdownOptions: uniq, shouldResetSelectionOnOptionsChange: false, initialValue: currentLabel },
     });
-    api.configureShopCategoryForPlayer(playerId, "Ranks", { customTitle: "Ranks", description: `Current: ${currentLabel}` });
   } catch(e){ try{ api.log(`[Ranks] shop failed ${e && e.message}`);} catch(e) { reportErrorToOwner(e); } }
 }
 function handleRankUnlocks(playerId, newly) {
@@ -1545,8 +1548,8 @@ function registerShopItems() {
 }
 
 onPlayerBoughtShopItem = (playerId, categoryKey, itemKey, itemOrInput, userInputMaybe) => {
-  // Ranks — single button with dropdown
-  if (categoryKey === "Ranks" && itemKey === "Rank") {
+  // Ranks — now in Utilities (legacy Ranks still handled)
+  if (itemKey === "Rank" && (categoryKey === SHOP_CATEGORY || categoryKey === "Ranks")) {
     try {
       // api may pass (playerId, cat, key, item, userInput) or (playerId, cat, key, userInput) — handle both
       let chosen = null;
@@ -1698,7 +1701,6 @@ onPlayerJoin = (playerId) => {
       // tuto a pris le relais — pas de welcome normal
     } else {
       api.sendMessage(playerId, [cStr("Welcome to Dungeon Break!", MSG_COLORS.gold)]);
-      api.sendMessage(playerId, [cStr("Simple craft: ", MSG_COLORS.aqua), cStr("Inventory=materials", MSG_COLORS.white), cStr(" | ", MSG_COLORS.gray), cStr("Workbench=weapons", MSG_COLORS.white), cStr(" | ", MSG_COLORS.gray), cStr("Artisan=armor", MSG_COLORS.white), cStr(" — /dbg crafts", MSG_COLORS.gray)])
     }
   } catch(e) { reportErrorToOwner(e); }
   // Give a Wood Sword if player has no item containing "Sword"
@@ -1966,6 +1968,7 @@ onPlayerDamagingMob = (playerId, mobId, damageDealt, ...rest) => {
       return "preventDamage";
     }
   } catch(_){}
+  try { if (Number.isFinite(Number(damageDealt)) && Number(damageDealt)>0) onQuestDamageDealt(api, playerId, Number(damageDealt)); } catch(e){ reportErrorToOwner(e); }
   let baseDmg = Number(damageDealt);
   const hasBase = Number.isFinite(baseDmg);
   // Custom weapon detection: if player holds one of our sets, damage stat is already effective
@@ -2023,6 +2026,7 @@ onPlayerDamagingMob = (playerId, mobId, damageDealt, ...rest) => {
 };
 
 onMobDamagingPlayer = (mobId, playerId, damageDealt, ...rest) => {
+  try { if (Number.isFinite(Number(damageDealt)) && Number(damageDealt)>0) { const _pid = (Number.isFinite(Number(playerId)) ? playerId : mobId); onQuestDamageTaken(api, _pid, Number(damageDealt)); } } catch(e){ reportErrorToOwner(e); }
   let scaled = undefined;
   let pid = playerId;
   let dmg = damageDealt;
@@ -2065,6 +2069,7 @@ onMobDamagingPlayer = (mobId, playerId, damageDealt, ...rest) => {
 // Fallback tick-based lava damage is also enforced (see tickLavaDamage) because
 // Bloxd's onPlayerTookDamage is not reliably fired for lava on this host.
 onPlayerTookDamage = (playerId, damage, cause) => {
+  try { if (Number.isFinite(Number(damage)) && Number(damage)>0) onQuestDamageTaken(api, playerId, Number(damage)); } catch(e){ reportErrorToOwner(e); }
   try {
     let dmg = Number(damage);
     if (!Number.isFinite(dmg) || dmg <= 0) return;
@@ -2238,7 +2243,7 @@ viderCoffre = emptyChest;
 generateChest = (playerId, chestPos, rarity) => {
   const result = crateGenerateChest(api, playerId, chestPos, rarity);
   if (result) {
-    try { onQuestCrateOpened(api, playerId); } catch(e) { reportErrorToOwner(e); }
+    try { onQuestCrateOpened(api, playerId, rarity); } catch(e) { reportErrorToOwner(e); }
     try { onTutorialCrateOpened(api, playerId); } catch(e) { reportErrorToOwner(e); }
     try {
       const newly = ranks().recordCrate(playerId, rarity);

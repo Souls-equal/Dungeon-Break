@@ -12,11 +12,15 @@
  *   initQuestSystem(api)              // on load
  *   onQuestPlayerJoin(api, pid)       // onPlayerJoin
  *   onQuestMobKilled(api, pid)        // onPlayerKilledMob
- *   onQuestCrateOpened(api, pid)      // generateChest success
- *   onQuestTick(api)                  // tick (sidebar refresh + NPC respawn guard)
+ *   onQuestCrateOpened(api, pid, rarity) // generateChest success (rarity optional)
+ *   onQuestTick(api)                  // tick (sidebar refresh + NPC respawn guard + walk/time)
  *   onQuestMobDespawned(mobId)        // onMobDespawned / onEntityDeleted
  *   onQuestPlayerLeave(pid)           // onPlayerLeave (cleanup sidebar)
  *   onQuestInteract(api, pid, targetId) // onPlayerClick / onPlayerDamagingMob
+ *   onQuestDamageDealt(api, pid, amount) // onPlayerDamagingMob
+ *   onQuestDamageTaken(api, pid, amount) // onMobDamagingPlayer / onPlayerTookDamage
+ *   onQuestDungeonEntered(api, pid)  // lobby pad -> dungeon
+ *   onQuestRoomDiscovered(api, pid)    // service onRoomDiscovered
  */
 
 import { setTimeout as scheduleTimeout } from "../utils/scheduler.js";
@@ -47,6 +51,9 @@ const questCache = new Map();
 // Debounce for rapid double events (click + damage same tick)
 const NPC_ATTACK_DEBOUNCE_MS = 100;
 const confirmMap = new Map();
+
+// Walk & time tracking
+const lastPosMap = new Map(); // pid -> [x,y,z]
 
 /** Helpers */
 function nowMs() {
@@ -268,12 +275,17 @@ function giveReward(api, playerId, state) {
 }
 
 /** Progression — only if player has a quest */
-function addProgress(api, playerId, type, amount = 1) {
+function addProgress(api, playerId, type, amount = 1, meta) {
   try {
     const state = loadQuestState(api, playerId);
     if (!state || state.completed) return;
     const tpl = templateForState(state);
     if (!tpl || tpl.type !== type) return;
+    // rarity filter for crate_rarity
+    if (type === "crate_rarity") {
+      if (!tpl.rarity || !meta || !meta.rarity) return;
+      if (String(tpl.rarity).toLowerCase() !== String(meta.rarity).toLowerCase()) return;
+    }
     state.progress = Math.min(state.target, (state.progress || 0) + amount);
     if (state.progress >= state.target) {
       state.completed = true;
@@ -282,7 +294,7 @@ function addProgress(api, playerId, type, amount = 1) {
         if (typeof api.sendFlyingMiddleMessage === "function") {
           api.sendFlyingMiddleMessage(playerId, [{ str: "Quest complete! Click NPC", style: { color: "#55FF55" } }], 400, 600);
         }
-      } catch(_) {}
+      } catch(_){}
     }
     saveQuestState(api, playerId, state);
     refreshSidebar(api, playerId);
@@ -416,6 +428,47 @@ function updateNpcLook(api) {
   } catch (_) {}
 }
 
+/** Walk tracking — called each tick for each player */
+function tickWalkAndTime(api) {
+  try {
+    const ids = typeof api.getPlayerIds === "function" ? api.getPlayerIds() : [];
+    for (const pid of ids) {
+      // WALK: compute distance since last tick
+      try {
+        const pos = api.getPosition(pid);
+        if (pos && Array.isArray(pos) && pos.length>=3) {
+          const last = lastPosMap.get(String(pid));
+          if (last && Array.isArray(last)) {
+            const dx = pos[0]-last[0], dy = pos[1]-last[1], dz = pos[2]-last[2];
+            const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+            // ignore teleports > 20 blocks (dungeon enter etc.) and tiny jitter <0.1
+            if (dist >= 0.2 && dist <= 20) {
+              // add floored blocks walked
+              const blocks = Math.floor(dist);
+              if (blocks>0) addProgress(api, pid, "walk", blocks);
+              else if (dist >= 0.5) addProgress(api, pid, "walk", 1);
+            }
+          }
+          lastPosMap.set(String(pid), [pos[0], pos[1], pos[2]]);
+        }
+      } catch(_){}
+      // TIME_PLAYED: if player has such quest, increment 1 per tick (only in dungeon ideally, but count everywhere for simplicity)
+      // To avoid farming at spawn, only count if player has a time_played quest active
+      try {
+        const state = loadQuestState(api, pid);
+        if (state && !state.completed) {
+          const tpl = templateForState(state);
+          if (tpl && tpl.type === "time_played") {
+            // Only count if in dungeon — check via spawn distance or service if available
+            // For now count always but throttle: 1 per tick = 20 per second
+            addProgress(api, pid, "time_played", 1);
+          }
+        }
+      } catch(_){}
+    }
+  } catch(_){}
+}
+
 /** Public API */
 
 let npcRetryCounter = 0;
@@ -432,6 +485,11 @@ export function onQuestPlayerJoin(api, playerId) {
     refreshSidebar(api, playerId);
     // Show explanatory label next to NPC for this player
     try { refreshNpcLabelForPlayer(api, playerId, npcId); } catch(_){}
+    // init walk pos
+    try {
+      const p = api.getPosition(playerId);
+      if (p && Array.isArray(p)) lastPosMap.set(String(playerId), [p[0],p[1],p[2]]);
+    } catch(_){}
   } catch (_) {}
 }
 
@@ -439,6 +497,7 @@ export function onQuestPlayerLeave(api, playerId) {
   try {
     clearSidebar(api, playerId);
     questCache.delete(String(playerId));
+    lastPosMap.delete(String(playerId));
   } catch (_) {}
 }
 
@@ -487,14 +546,37 @@ export function onQuestTick(api) {
       }
     } catch (_) {}
   }
+  // walk & time tracking
+  try { tickWalkAndTime(api); } catch(_){}
 }
 
 export function onQuestMobKilled(api, playerId) {
   addProgress(api, playerId, "kill", 1);
 }
 
-export function onQuestCrateOpened(api, playerId) {
+export function onQuestCrateOpened(api, playerId, rarity) {
+  // generic crate quests (any rarity)
   addProgress(api, playerId, "crate", 1);
+  // rarity-specific
+  if (rarity) addProgress(api, playerId, "crate_rarity", 1, { rarity });
+}
+
+export function onQuestDamageDealt(api, playerId, amount) {
+  if (!Number.isFinite(amount) || amount<=0) return;
+  addProgress(api, playerId, "damage_dealt", Math.max(1, Math.round(amount)));
+}
+
+export function onQuestDamageTaken(api, playerId, amount) {
+  if (!Number.isFinite(amount) || amount<=0) return;
+  addProgress(api, playerId, "damage_taken", Math.max(1, Math.round(amount)));
+}
+
+export function onQuestDungeonEntered(api, playerId) {
+  addProgress(api, playerId, "dungeon_enter", 1);
+}
+
+export function onQuestRoomDiscovered(api, playerId) {
+  addProgress(api, playerId, "room_discover", 1);
 }
 
 export function onQuestMobDespawned(api, mobId) {
@@ -598,7 +680,9 @@ export function _resetForTests() {
   initialized = false;
   questCache.clear();
   confirmMap.clear();
+  lastPosMap.clear();
 }
 
 export function _getNpcId() { return npcId; }
 export function _getCache() { return questCache; }
+export function _getLastPos() { return lastPosMap; }
