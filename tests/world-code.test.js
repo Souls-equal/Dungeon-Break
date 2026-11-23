@@ -1478,14 +1478,15 @@ test("/dbg blessings reports the level, the points and the odds, outside a dunge
   const before = world.messages.length;
   assert.equal(world.context.playerCommand("p1", "blessings"), true);
   const lines = world.messages.slice(before).map((entry) => entry.message);
-  assert.equal(lines.length, 5, `the report was cut short: ${JSON.stringify(lines)}`);
+  assert.equal(lines.length, 6, `the report was cut short: ${JSON.stringify(lines)}`);
   assert.match(lines[0], /^\[dbg\] aura level 7\/\d+ · \d+ point\(s\) · 1 spent$/);
   // The three lifetimes the owner asked for: what is saved, what this run holds, what is
   // counting down.
   assert.match(lines[1], /^\[dbg\] permanent \(saved\): .+ · /);
   assert.match(lines[2], /^\[dbg\] this run: .+ · timed: /);
   assert.match(lines[3], /session p1 · last 1 picked: .+ \([a-z]+\)$/);
-  assert.match(lines[4], /^\[dbg\] odds Common \d+%/);
+  assert.match(lines[4], /reroll cost:/);
+  assert.match(lines[5], /^\[dbg\] odds Common \d+%/);
   // A player who never rolled gets a line too, and it says "none" rather than nothing.
   const fresh = createWorld(["p1"]);
   fresh.context.onPlayerJoin("p1");
