@@ -238,6 +238,7 @@ export function refreshPassShop(api, playerId) {
       else descLines.push({ str: `Locked — need ${req - xp} more XP`, style: { color: "#FF5555" } });
 
       const item = {
+        image: "Paper",
         customTitle: `Tier ${t} Info`,
         description: descLines,
         canBuy: false,

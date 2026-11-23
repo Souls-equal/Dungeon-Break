@@ -330,7 +330,11 @@ function showCountdown(playerId, difficulty, secondsLeft) {
 
 function showLobbyParty(difficulty) {
   const members = lobbyGroups[difficulty.id];
-  if (!members || members.size === 0) return;
+  if (!members || members.size < 2) {
+    // Solo = pas de lower (demande utilisateur)
+    if (members) for (const pid of [...members]) clearLobbyPartyFor(pid);
+    return;
+  }
   const names = [...members].map(pid => getPlayerName(pid));
   const col = DIFFICULTY_COLOR[difficulty.id] || "#FFD700";
   const lower = [
