@@ -12,7 +12,7 @@
 
 ---
 
-## P0 — Critique (faire en premier)
+## 🔴 P0 — Critique (faire en premier)
 
 ### [x] 1. Feedback de combat immédiat — fait (complément Bloxd natif)
 **Fait :** damage numbers couleur set, flying text `+burn/poison/shield` via `onPlayerDamagingMob` + `api.sendFlyingMiddleMessage`, son optionnel par set `api.playSound` si dispo. Bloxd natif garde hit sound/crit particles/flash rouge — on ne duplique pas.
@@ -26,55 +26,59 @@
 **Métrique :** `analytics.craft.preview_open`, `analytics.craft.success_rate`, `analytics.craft.time_to_first_craft`
 **Impact :** ⭐⭐⭐ / Effort : **M**
 
-### [ ] 3. Tutoriel jouable 90s (premier join)
-**Problème :** Onboarding = 2 messages. Perte massive de nouveaux joueurs Bloxd.
-**Faire :**
-- Couloir template : pad → coffre (clé) → caisse Rare à rouler → craft Amethite → mob à tuer → récompense Wood Sword + 1 blessing
-- Flag `hasDoneTutorial` via `api.getPlayerDbValue`/`setPlayerDbValue`
-- Remplace messages `onPlayerJoin` si flag absent
-**Fichiers :** `src/worldCode.js:onPlayerJoin`, `src/dungeon/templates.js` (nouveau chunk)
+### [x] 3. Tutoriel jouable 90s (premier join) — FAIT (à cocher, était [ ] dans l'ancien TODO)
+**Fait depuis février :** implémenté dans `src/tutorial/service.js` — 3 étapes natives :
+- Join → `Wooden Key` donnée + flèche rouge `groundArrowPath` vers caisse `[31.5,20,-0.5]` + highlight hotbar du slot clé
+- `generateChest()` → "collect the loot" + remove highlight
+- Flèche verte vers donjon `[2.5,20,-7.5]`
+- Flag persistant `hasDoneTutorial` via `api.get/setPlayerDbValue` (`t:1`, compat legacy `dungeonBreak.tutorial.v1` + `tutorial.step` → `done`). Remplace les 2 messages `onPlayerJoin` si flag absent.
+**Ce qui diffère du spec initial :** pas de couloir template dédié ni `Wood Sword + 1 blessing` en récompense — tutoriel par flèches/overlays existant suffit, mais la spec "tuer un mob" n'est pas dedans.
+**Fichiers :** `src/tutorial/service.js`, `src/worldCode.js:onPlayerJoin` / `onTutorial*` / `tickTutorialHighlight`
 **Métrique :** `analytics.tutorial.started`, `analytics.tutorial.completed`, `analytics.tutorial.time`
-**Impact :** ⭐⭐⭐ / Effort : **M**
+**Impact :** ⭐⭐⭐ / Effort : **M** → **fait**
 
 ---
 
-## P1 — Rejouabilité
+## 🟠 P1 — Rejouabilité
 
-### [ ] 4. Quêtes quotidiennes / hebdo + Pass léger (sans P2W)
-**Faire :**
-- 3 quotidiennes (ex: "Tue 50 mobs Very Easy", "Ouvre 3 caisses Rare", "Craft Voltplate")
-- 5 hebdo + pass gratuit 20 paliers (or, shards, cosmétiques)
-- Réutilise `ranks().recordKill/recordCrate` + DB `DailyQuestService` (même pattern que `UNLOCK_DB_KEY`)
-**Fichiers :** nouveau `src/quests/service.js` + `src/quests/config.js`, `src/worldCode.js`
+### [x] 4. Quêtes quotidiennes / hebdo + Pass léger (sans P2W) — QUOTIDIENNES + PASS FAITS, HEBDO MANQUANT
+**Fait :**
+- **Quêtes quotidiennes :** NPC `Quest` en `[5.5,21,4.5]`, rotation quotidienne UTC via `pickTemplateForToday()` + `scaledTarget()` (power 0..8 basé sur gold/aura/equip). **19 templates** sur **8 types** : `kill`, `crate`, `crate_rarity` (Common 8 → Legendary 1, moins demandé si rare), `walk` (500/2000 blocks), `damage_dealt` (1000/5000), `damage_taken` (500/2000), `dungeon_enter`, `room_discover`, `time_played`. Sidebar `RightInfoText` + récompenses gold/aura + **Pass XP aléatoire** `x±100` où `x=passXpBase+power*20`.
+- **Pass :** 20 paliers, 500 XP/palier = 10 000 total, `dungeonBreak.pass.v1`, XP via quêtes (`addPassXp`), shop catégorie `Pass` (tuile Reward + Info sans image), récompenses gold/items/aura. Reste gratuit, pas de P2W.
+- **Réutilise :** `ranks().recordKill/recordCrate` + DB pattern `UNLOCK_DB_KEY` → `QUEST_DB_KEY` / `PASS_DB_KEY`
+**Manque signalé :** spec demandait **5 hebdo** — non implémenté. Seul le quotidien est en place (1/jour). Hebdo reste à faire.
+**Fichiers :** `src/quest/config.js` (19 templates, `QUEST_TEMPLATES`, `powerScore`), `src/quest/service.js` (NPC + sidebar + `onQuest*`), `src/pass/config.js` (`PASS_TIERS`, `rollQuestPassXp`), `src/pass/service.js`, `src/worldCode.js` (hooks `onQuest*` + `crateGenerateChest` + damage/walk)
 **Métrique :** `analytics.quest.daily_complete`, `analytics.quest.retention_d1/d7`, `analytics.pass.level_reached`
-**Impact :** ⭐⭐⭐ / Effort : **M**
+**Impact :** ⭐⭐⭐ / Effort : **M** → **fait à 80%**
 
 ### [ ] 5. Endless + Boss Rush + Seed partageable
 **Faire :**
 - Après Hell : Endless (+2% dégâts/mobs par salle), Boss Rush (5 salles boss)
 - Affiche seed (`/dbg seed` existe) + bouton "Copier seed" + leaderboard temps/morts
+**État actuel :** `/dbg seed` existe, `DIFFICULTIES` = 8 (Very Easy→Hell) sans Endless/Boss Rush. Aucune logique Endless.
 **Fichiers :** `src/dungeon/config.js` (`DIFFICULTIES`), `src/dungeon/service.js`, `src/worldCode.js`
 **Métrique :** `analytics.run.endless_depth_avg`, `analytics.run.bossrush_clear_rate`, `analytics.seed.shared`
 **Impact :** ⭐⭐ / Effort : **M**
 
-### [ ] 6. Draft Blessings avec reroll + synergies
-**Faire :**
-- Roll affiche synergies (ex: "Sanguine + Geo = +15% shield")
-- 1 reroll = 5 or (`cstm_smp_gold`)
-- Limite RNG frustrante, plus de choix
-**Fichiers :** `src/blessing/config.js`, `src/blessing/presentation.js`, `src/worldCode.js:rollBlessing`
+### [~] 6. Draft Blessings avec reroll + synergies — REROLL FAIT, SYNERGIES MANQUANTES
+**Fait :**
+- `rollBlessing()` → 3 choix distincts, tirage pondéré par rareté, réserve 1 point, `resetShopItemForPlayer` pour retirer
+- **Reroll payant ajouté (PR #159-160) :** nouveau tile `Reroll Blessings` (Blessings, icône Compass, prio 20), `REROLL_BASE_GOLD=50` + `15/blessing pris` → **très abordable** (0 pris=50g, 5 pris=125g, 10 pris=200g, 20 pris=350g). `rerollOffer()` en `src/blessing/service.js` remplace les 3 choix sans dépenser de point, coût gold via `cstm_smp_gold`. Spawn guard + `/dbg blessings` affiche `reroll cost`. Croissance volontairement faible sur demande joueur.
+**Manque signalé :** spec demandait **synergies affichées** ("Sanguine + Geo = +15% shield") — non implémenté. Catalogue a bien grossi (60+ blessings avec tradeoffs Hades/Dead Cells) mais pas de détection de synergies.
+**Fichiers :** `src/blessing/config.js` (`REROLL_BASE_GOLD`, `rerollGoldCost`, `CHOICE_COUNT`, `RARITIES`), `src/blessing/presentation.js` (`choiceTile`), `src/blessing/service.js` (`roll`, `choose`, `rerollOffer`), `src/worldCode.js:rollBlessing/rerollBlessing/refreshBlessingTiles`
 **Métrique :** `analytics.blessing.pick_rate` par blessing/rarity, `analytics.blessing.reroll_rate`
-**Impact :** ⭐⭐ / Effort : **S**
+**Impact :** ⭐⭐ / Effort : **S** → **fait à 70%**
 
 ---
 
-## P2 — Qualité & Vie communautaire
+## 🟡 P2 — Qualité & Vie communautaire
 
 ### [ ] 7. Coop 2-3 joueurs + rez
 **Faire :**
 - Pads à 2 = départ groupé, même instance, vie alliée visible, rez 5s (-50% or)
 - Réutilise `service()` déjà global ("one service for the whole world")
 - Garde `crateIsOwnedByOther` pour anti-vol
+**État actuel :** `service()` est global mais chaque entrée tire une place aléatoire `±100 000` blocs → pas de même instance. Pas de rez. Anti-vol `crateIsOwnedByOther` existe par contre.
 **Fichiers :** `src/worldCode.js:onPadStart`, `src/dungeon/service.js`, `src/crate/service.js`
 **Métrique :** `analytics.coop.run_started`, `analytics.coop.rez_count`, `analytics.coop.retention_vs_solo`
 **Impact :** ⭐⭐⭐ / Effort : **L**
@@ -84,30 +88,63 @@
 - Garde permanent (blessings permanentes, ranks), reset run/timed + or
 - 1 biome reskinné par saison (tu copies déjà des chunks — change palette + mobs)
 - 2 nouveaux sets / saison
+**État actuel :** aucun système de saison. Permanent est bien séparé (DB `dungeonBreak.blessings.v1`) et `resetPlayerProgress`/`endRun` reset run/timed — base technique posée.
 **Fichiers :** `src/ranks/config.js`, `src/dungeon/templates.js`, `src/blessing/service.js:resetPlayerProgress`
 **Métrique :** `analytics.season.active_players`, `analytics.season.returning_rate`
 **Impact :** ⭐⭐ / Effort : **L**
 
-### [ ] 9. Cosmétiques liés aux Ranks (éthique)
-**Faire :**
-- Trail particules, couleur nametag (`applyRankVisuals` déjà), titre chat, emote débloqués par rank Epic/Legendary
-- Vendus en or aussi, pas de P2W
-- `/rank preview`
-**Fichiers :** `src/ranks/config.js`, `src/ranks/service.js`, `src/particles/config.js`
+### [ ] 9. Cosmétiques liés aux Ranks (éthique) — PARTIELLEMENT FAIT
+**Fait :** système Ranks complet : 12 ranks (OWNER/TESTER/MEMBER/HUNTER/SLAYER/EXPLORER/VETERAN/CHAMPION/LEGEND...), unlocks par crates/kills/rooms/temps, chat prefix + `colorInLobbyLeaderboard` + `nameColour` + `nameTagInfo` via `applyRankVisuals()`, catégorie shop `Utilities` unifiée (ex-Ranks déplacé), dropdown sélection.
+**Manque signalé :** spec voulait **trail particules, titre chat custom, emote, `/rank preview`**, vendus en or. Actuellement seul couleur/nametag/prefix existe. Pas de trail/emote/preview.
+**Fichiers :** `src/ranks/config.js` (`RANKS`, `NONE_RANK_ID`), `src/ranks/service.js`, `src/particles/config.js`, `src/worldCode.js:refreshRanksShop/applyRankVisuals`
 **Métrique :** `analytics.cosmetic.equip_rate`, `analytics.shop.rank_preview`
-**Impact :** ⭐ / Effort : **S**
+**Impact :** ⭐ / Effort : **S** → **fait à 60%**
 
-### [ ] 10. Metrics in-game + feedback natif (sans Discord)
+### [ ] 10. Metrics in-game + feedback natif (sans Discord) — MANQUANT (contrainte respectée mais non implémenté)
 **Faire :**
 - Écran shop "Donner mon avis" : 3 emoji (😍😐😡) + champ texte court + catégorie (bug/idée/équilibrage)
 - Stockage via Bloxd Analytics uniquement : `analytics.feedback.sent`, `analytics.feedback.category`
-- **Dashboard interne** (pas externe) : utiliser les events Bloxd déjà dispo — *aucun webhook externe*
-  - Clear rate par difficulté, temps moyen, crafts +/- populaires, pick-rate blessings, drop crates
+- **Dashboard interne** : clear rate par difficulté, temps moyen, crafts +/− populaires, pick-rate blessings, drop crates
 - Patch notes in-game (panneau lobby lisant un `globalThis.PATCH_NOTES` versionné)
-**Fichiers :** nouveau `src/feedback/service.js`, `src/worldCode.js` (shop category Feedback), `worldCode.js` (log analytics)
-**Contrainte respectée :** **zéro call externe** — tout via API analytics Bloxd interne.
+**État actuel :** **AUCUN wrapper analytics en place**. Pas de `src/utils/analytics.js`, pas de `track()` ni de `api.recordAnalytics` call. Aucune ligne `analytics.*` dans le code. Contrainte "zéro call externe" respectée par défaut (rien n'est loggé non plus).
+**Fichiers à créer :** `src/feedback/service.js`, `src/utils/analytics.js`, `src/worldCode.js` (shop category Feedback)
 **Métrique :** `analytics.feedback.sent`, `analytics.feedback.satisfaction_avg`
 **Impact :** ⭐⭐ / Effort : **S**
+
+---
+
+## 📦 Faits depuis 2026-02-15 — hors TODO initial (non listés au-dessus)
+
+Ces features sont en prod mais n'étaient pas dans le TODO d'origine — à intégrer ou non dans la prochaine roadmap :
+
+- **Quêtes étendues (PR #158) :** 19 templates, 8 types, scaling `powerScore` 0..8, Pass XP dynamique `x±100` (voir §4)
+- **Pass 20 tiers complet** avec 20 récompenses (gold/keys/fragments/Diamond/Nova Alloy), barres de progression, DB `dungeonBreak.pass.v1`
+- **Reroll Blessings gold** (PR #159-160) — très abordable 50 +15/blessing (voir §6)
+- **Unification shop Ranks → Utilities** (PR #158) : plus propre, 1 catégorie
+- **Blessings catalogue x3 :** ~62 blessings (vs 20 initiales) avec tradeoffs bonus/malus type Hades/Dead Cells, 6 raretés, 3 scopes (PERM/RUN/TIMED)
+- **Caisse/Crate :** système clés 5 raretés, protection anti-vol 16s, file chunked 6 slots/tick, particules `crateFountain`
+- **Armures/Armes/CombatFx :** 12 Armor Sets + 72 Weapons (8 types × 9 sets), stats auto-scalées, capacités élémentaires, shimmer tick
+- **Dungeon tech :** chunks 32³ via `copyChunk`, Bedrock probe, séparation 20 000 blocs, `spawnSeparation`, `chunkLoadTicks:2`, découverte de salles +aura `roomAuraFor`/`mobAuraFor`, loot `mobLoot`
+- **Particules :** `entryVortex`, `padRing/Tick`, `roomClear`, etc.
+- **Tutoriel natif** (voir §3)
+
+---
+
+## 🚨 Manques signalés — à prioriser (résumé)
+
+| # | Manque | Criticité |
+|---|--------|-----------|
+| 4 | **Quêtes hebdo** (5 hebdo) — seul quotidien existe | Moyenne |
+| 6 | **Synergies Blessings** affichées | Moyenne |
+| 5 | **Endless / Boss Rush** + bouton Copier seed | Moyenne |
+| 7 | **Coop + rez** | Haute (mais effort L) |
+| 8 | **Saisons** | Basse (Mois 3) |
+| 9 | **Cosmétiques Rank** (trails, emotes, `/rank preview`) | Basse |
+| 10 | **Analytics wrapper** `src/utils/analytics.js` + events + Feedback shop — **aucun log actuel** | Haute (bloque toutes les métriques P0-P1) |
+| — | **Preview craft UI** (mention §2 "reste TODO futur") | Moyenne |
+| — | **Patch notes in-game** panneau | Basse |
+
+> Sans #10, **toutes les métriques listées sont mortes** — c'est le prochain P0 technique.
 
 ---
 
@@ -128,16 +165,18 @@ export function track(playerId, event, props = {}) {
 ```
 
 **Events prioritaires à logger dès maintenant :**
-- `tutorial.completed`, `craft.success`, `run.clear`, `run.death`, `blessing.pick`, `quest.complete`, `crate.open`, `coop.run_started`
+- `tutorial.completed`, `craft.success`, `run.clear`, `run.death`, `blessing.pick`, `blessing.reroll`, `quest.complete`, `crate.open`, `coop.run_started`
 
 ---
 
-## Roadmap suggérée
+## Roadmap suggérée — mise à jour 2026-11-23
 
-- **Semaine 1 :** #1 + #3 + #10 (feedback loop)
-- **Semaine 2-3 :** #2 + #6
-- **Mois 2 :** #4 + #5
-- **Mois 3 :** #7 (si rétention coop validée) + #8 début saison 1
+- **Semaine 1 :** #10 (analytics wrapper — débloque tout) + #4 hebdo + #6 synergies
+- **Semaine 2-3 :** #9 cosmétiques rank (trails) + preview craft + feedback shop
+- **Mois 2 :** #5 (Endless/Boss Rush) + #2 finition preview
+- **Mois 3 :** #7 (coop si rétention validée) + #8 début saison 1
+
+> Ancienne roadmap (Semaine 1 : #1+#3+#10, Semaine 2-3 : #2+#6, Mois 2 : #4+#5, Mois 3 : #7+#8) obsolète — #1/#2/#3 sont faits.
 
 ---
 
@@ -147,4 +186,4 @@ export function track(playerId, event, props = {}) {
 2. Coche `[x]` ici + ajoute test dans `tests/` si logique
 3. `npm run build` → `npm test` (167 tests) → PR → merge auto autorisé (cf `AGENT_RULES.md`)
 
-*Dernière mise à jour : 2026-02-15 — mainteneur : @Souls-equal*
+*Dernière mise à jour : 2026-11-23 — mainteneur : @Souls-equal — maj auto via inventaire code vs TODO (PR #158-160 intégrées)*
