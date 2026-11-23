@@ -306,11 +306,20 @@ function tickMusic() {
 }
 
 // -------------------------------------------------------------- the lobby --
+// Multi-joueurs : groupe par difficulté — tous ceux sur la même plaque partent ensemble
 
-const lobbyCountdowns = {};
+const lobbyCountdowns = {}; // kept for backwards compat: playerId -> group countdown ref (tests read clientOptions, not this)
+const lobbyGroups = {}; // difficultyId -> Set(playerId string)
+const lobbyGroupTimers = {}; // difficultyId -> group countdown
+const playerPadState = {}; // playerId string -> { difficulty, pads: Set(padKey), count }
 
 function padKey(x, y, z) {
   return `${x},${y},${z}`;
+}
+
+function getPlayerName(pid) {
+  try { const n = api.getEntityName ? api.getEntityName(pid) : null; if (n) return String(n); } catch(_){ }
+  return String(pid);
 }
 
 function showCountdown(playerId, difficulty, secondsLeft) {
@@ -319,54 +328,138 @@ function showCountdown(playerId, difficulty, secondsLeft) {
   ]);
 }
 
-function stopLobbyCountdown(playerId) {
-  const countdown = lobbyCountdowns[playerId];
-  if (!countdown) return false;
-  countdown.timer.stop();
-  if (countdown.cancelTimer) countdown.cancelTimer.stop();
-  delete lobbyCountdowns[playerId];
-  api.setClientOption(playerId, "middleTextUpper", "");
-  return true;
-}
-
-function cancelLobbyCountdown(playerId) {
-  const countdown = lobbyCountdowns[playerId];
-  if (countdown && countdown.completed) return;
-  if (stopLobbyCountdown(playerId)) {
-    api.sendMessage(playerId, [cStr("Countdown cancelled", MSG_COLORS.gray)])
+function showLobbyParty(difficulty) {
+  const members = lobbyGroups[difficulty.id];
+  if (!members || members.size === 0) return;
+  const names = [...members].map(pid => getPlayerName(pid));
+  const col = DIFFICULTY_COLOR[difficulty.id] || "#FFD700";
+  const lower = [
+    { str: "Party: ", style: { color: col, fontWeight: "bold" } },
+    { str: names.join(", "), style: { color: "#ffffff" } },
+    { str: `  (${names.length})`, style: { color: "#aaaaaa" } },
+  ];
+  for (const pid of members) {
+    try { api.setClientOption(pid, "middleTextLower", lower); } catch(_){}
   }
 }
 
-function completeLobbyCountdown(playerId, countdown) {
-  if (lobbyCountdowns[playerId] !== countdown) return;
-  countdown.completed = true;
-  stopLobbyCountdown(playerId);
+function clearLobbyPartyFor(playerId) {
+  try { api.setClientOption(playerId, "middleTextLower", ""); } catch(_){}
+}
+
+function clearLobbyPartyGroup(difficulty) {
+  const members = lobbyGroups[difficulty.id];
+  if (members) {
+    for (const pid of [...members]) clearLobbyPartyFor(pid);
+  } else {
+    // clear for any player that had this difficulty pad state
+    for (const pid of Object.keys(playerPadState)) {
+      if (playerPadState[pid] && playerPadState[pid].difficulty.id === difficulty.id) clearLobbyPartyFor(pid);
+    }
+  }
+}
+
+function refreshLobbyParty(difficulty) {
+  const members = lobbyGroups[difficulty.id];
+  if (!members || members.size === 0) return;
+  showLobbyParty(difficulty);
+}
+
+function stopLobbyCountdown(playerId) {
+  // compat: called from old code paths, now means remove player from its group and clear his HUD
+  const pidStr = String(playerId);
+  const state = playerPadState[pidStr];
+  const members = state ? lobbyGroups[state.difficulty.id] : null;
+  // clear his upper/lower
+  try { api.setClientOption(playerId, "middleTextUpper", ""); } catch(_){}
+  clearLobbyPartyFor(playerId);
+  delete lobbyCountdowns[playerId];
+  return !!state;
+}
+
+function cancelLobbyCountdown(playerId) {
+  const pidStr = String(playerId);
+  const state = playerPadState[pidStr];
+  if (!state) return;
+  const diff = state.difficulty;
+  // Only cancel if group will become empty after removing this player AND no other members
+  // For group mode, cancellation is per-group: we check group emptiness in leave logic
+  // Here we just send message if this was the last removal that triggered group cancel
+  // To keep simple, send cancelled to the leaving player
+  try { api.sendMessage(playerId, [cStr("Countdown cancelled", MSG_COLORS.gray)]); } catch(_){}
+}
+
+function completeLobbyCountdown(playerIdOrGroup, countdownMaybe) {
+  // Supports old call: completeLobbyCountdown(playerId, countdown) and new group complete
+  let difficulty = null;
+  let membersSnapshot = [];
+  let primaryPadKey = null;
+  // Detect group countdown
+  if (countdownMaybe && countdownMaybe.difficulty) {
+    // old per-player path but we treat as group: countdownMaybe is per-player old object
+    // fallback to single-player behavior (should not happen in new code)
+    difficulty = countdownMaybe.difficulty;
+    membersSnapshot = [String(playerIdOrGroup)];
+    primaryPadKey = countdownMaybe.activePads ? Object.keys(countdownMaybe.activePads)[0] : null;
+  } else if (playerIdOrGroup && playerIdOrGroup.difficulty) {
+    // group countdown directly
+    difficulty = playerIdOrGroup.difficulty;
+    const grp = lobbyGroups[difficulty.id];
+    membersSnapshot = grp ? [...grp] : [];
+    primaryPadKey = playerIdOrGroup.padKey || (playerIdOrGroup.pads && [...playerIdOrGroup.pads][0]) || null;
+    // prevent re-entry
+    if (lobbyGroupTimers[difficulty.id] !== playerIdOrGroup) return;
+    playerIdOrGroup.completed = true;
+    if (playerIdOrGroup.timer) try { playerIdOrGroup.timer.stop(); } catch(_){}
+    if (playerIdOrGroup.cancelTimer) try { playerIdOrGroup.cancelTimer.stop(); } catch(_){}
+    delete lobbyGroupTimers[difficulty.id];
+    // keep lobbyCountdowns compat clean
+    for (const pid of membersSnapshot) delete lobbyCountdowns[pid];
+  } else {
+    return;
+  }
+
   // vortex at pad before teleport
   try {
-    const col = DIFFICULTY_COLOR[countdown.difficulty.id] || "#FFD700";
-    const pad = Object.keys(countdown.activePads)[0];
-    if (pad) {
-      const [px,py,pz] = pad.split(",").map(Number);
+    const col = DIFFICULTY_COLOR[difficulty.id] || "#FFD700";
+    if (primaryPadKey) {
+      const [px,py,pz] = primaryPadKey.split(",").map(Number);
       spawnParticles(api, [px+0.5, py+1, pz+0.5], PRESETS.entryVortex(col), { radius: 0.6, height: 3.5 });
     }
   } catch(e) { reportErrorToOwner(e); }
-  const entered = service().enterDifficulty(playerId, countdown.difficulty, (diff, landing)=>{
-    // vortex at landing
+
+  // teleport everyone together
+  for (const pid of membersSnapshot) {
+    try { api.setClientOption(pid, "middleTextUpper", ""); } catch(_){}
+    try { api.setClientOption(pid, "middleTextLower", ""); } catch(_){}
+    // clear player pad state (they are leaving lobby)
+    delete playerPadState[String(pid)];
+  }
+  // clear group set
+  if (difficulty && lobbyGroups[difficulty.id]) {
+    lobbyGroups[difficulty.id].clear();
+  }
+
+  for (const pid of membersSnapshot) {
     try {
-      const col = DIFFICULTY_COLOR[diff.id] || "#FFD700";
-      spawnParticles(api, landing, PRESETS.entryVortex(col), { radius: 0.6, height: 3.5 });
+      const entered = service().enterDifficulty(pid, difficulty, (diff, landing)=>{
+        try {
+          const col = DIFFICULTY_COLOR[diff.id] || "#FFD700";
+          spawnParticles(api, landing, PRESETS.entryVortex(col), { radius: 0.6, height: 3.5 });
+        } catch(e) { reportErrorToOwner(e); }
+      });
+      if (entered) {
+        try { onQuestDungeonEntered(api, pid); } catch(e) { reportErrorToOwner(e); }
+        try { track(pid, "dungeon", "enter", { gameCategoryId: difficulty ? difficulty.id : null }); Analytics.padUse(pid, difficulty ? difficulty.id : null); } catch(_){}
+        spawnMode.set(String(pid), false);
+        ensureSurvivalGamemode(pid);
+        applyBlessingOptions(pid, baseClientOptions());
+        const k = accountKeyOf(pid);
+        for (const ef of effects.runEffects(blessings().runOf(k))) applyRunEffect(pid, ef);
+        try { onTutorialDungeonEntered(api, pid); } catch(e) { reportErrorToOwner(e); }
+        try { applyMusic(pid); } catch(e) { reportErrorToOwner(e); }
+      }
     } catch(e) { reportErrorToOwner(e); }
-  });
-  if (entered) {
-    try { onQuestDungeonEntered(api, playerId); } catch(e) { reportErrorToOwner(e); }
-    try { track(playerId, "dungeon", "enter", { gameCategoryId: countdown.difficulty ? countdown.difficulty.id : null }); Analytics.padUse(playerId, countdown.difficulty ? countdown.difficulty.id : null); } catch(_){}
-    spawnMode.set(String(playerId), false);
-    ensureSurvivalGamemode(playerId);
-    applyBlessingOptions(playerId, baseClientOptions());
-    const k = accountKeyOf(playerId);
-    for (const ef of effects.runEffects(blessings().runOf(k))) applyRunEffect(playerId, ef);
-    try { onTutorialDungeonEntered(api, playerId); } catch(e) { reportErrorToOwner(e); }
-    try { applyMusic(playerId); } catch(e) { reportErrorToOwner(e); }
   }
 }
 
@@ -374,71 +467,175 @@ function deferLobbyCountdownCancellation(playerId, countdown) {
   if (countdown.cancelTimer) return;
   countdown.cancelTimer = scheduleTimeout(() => {
     countdown.cancelTimer = null;
-    if (lobbyCountdowns[playerId] !== countdown || countdown.activePadCount !== 0) return;
-    // A stale stop callback in the final tick must not cancel a selection the
-    // countdown is about to complete.
+    // group: check if group still empty
+    const diffId = countdown.difficulty.id;
+    const members = lobbyGroups[diffId];
+    const hasMembers = members && members.size > 0;
+    if (hasMembers) return;
+    if (lobbyGroupTimers[diffId] !== countdown) return;
     if (countdown.secondsLeft <= 1) {
-      completeLobbyCountdown(playerId, countdown);
+      completeLobbyCountdown(countdown);
       return;
     }
-    cancelLobbyCountdown(playerId);
+    // really cancel
+    try { countdown.timer.stop(); } catch(_){}
+    delete lobbyGroupTimers[diffId];
+    clearLobbyPartyGroup(countdown.difficulty);
+    // send cancelled to last leavers — we already sent in leave handler, avoid double
   }, LOBBY_CONFIG.padSwitchGraceTicks);
 }
 
 function startLobbyCountdown(playerId, x, y, z, difficulty) {
+  if (!difficulty) return;
+  const pidStr = String(playerId);
+  // ensure unlock before joining group
   if (!ensureUnlockedOrPay(playerId, difficulty)) return;
+
   // particles: anneau au pad
   try {
     const col = DIFFICULTY_COLOR[difficulty.id] || "#FFD700";
     spawnParticles(api, [x+0.5, y+0.5, z+0.5], PRESETS.padRing(col), { radius: 0.9, height: 0.1 });
   } catch(e) { reportErrorToOwner(e); }
-  const key = padKey(x, y, z);
-  const current = lobbyCountdowns[playerId];
 
-  if (current && current.difficulty.id === difficulty.id) {
-    if (current.cancelTimer) {
-      current.cancelTimer.stop();
-      current.cancelTimer = null;
-    }
-    if (!current.activePads[key]) {
-      current.activePads[key] = true;
-      current.activePadCount += 1;
+  const key = padKey(x, y, z);
+  let state = playerPadState[pidStr];
+
+  // switching difficulty -> leave old group
+  if (state && state.difficulty.id !== difficulty.id) {
+    // remove pad from old difficulty group
+    handlePadLeave(playerId, state.difficulty, key);
+    state = null;
+  }
+
+  if (!state) {
+    state = { difficulty, pads: new Set() };
+    playerPadState[pidStr] = state;
+  }
+
+  const alreadyHadPad = state.pads.has(key);
+  if (alreadyHadPad) {
+    // already on this exact pad, just maybe cancel pending cancel
+    const grpTimer = lobbyGroupTimers[difficulty.id];
+    if (grpTimer && grpTimer.cancelTimer) {
+      try { grpTimer.cancelTimer.stop(); } catch(_){}
+      grpTimer.cancelTimer = null;
     }
     return;
   }
-  if (current) stopLobbyCountdown(playerId);
+  state.pads.add(key);
 
-  const countdown = {
-    difficulty,
-    activePads: { [key]: true },
-    activePadCount: 1,
-    secondsLeft: LOBBY_CONFIG.countdownSeconds,
-    completed: false,
-    timer: null,
-    cancelTimer: null,
-  };
-  lobbyCountdowns[playerId] = countdown;
+  // join group
+  let members = lobbyGroups[difficulty.id];
+  if (!members) {
+    members = new Set();
+    lobbyGroups[difficulty.id] = members;
+  }
+  const wasAlreadyMember = members.has(pidStr);
+  members.add(pidStr);
 
-  api.sendMessage(playerId, [cStr(difficulty.label, DIFFICULTY_COLOR[difficulty.id]||MSG_COLORS.gold), cStr(` · ${LOBBY_CONFIG.countdownSeconds}s`, MSG_COLORS.white)]);
-  showCountdown(playerId, difficulty, countdown.secondsLeft);
+  let group = lobbyGroupTimers[difficulty.id];
+  if (!group) {
+    // create new group countdown
+    group = {
+      difficulty,
+      secondsLeft: LOBBY_CONFIG.countdownSeconds,
+      completed: false,
+      timer: null,
+      cancelTimer: null,
+      padKey: key,
+      pads: new Set([key]),
+    };
+    lobbyGroupTimers[difficulty.id] = group;
+    members = lobbyGroups[difficulty.id];
 
-  countdown.timer = scheduleInterval(() => {
-    if (lobbyCountdowns[playerId] !== countdown) {
-      countdown.timer.stop();
-      return;
+    // announce to each current member (first one)
+    for (const pid of members) {
+      try { api.sendMessage(pid, [cStr(difficulty.label, DIFFICULTY_COLOR[difficulty.id]||MSG_COLORS.gold), cStr(` · ${LOBBY_CONFIG.countdownSeconds}s`, MSG_COLORS.white)]); } catch(_){}
+      showCountdown(pid, difficulty, group.secondsLeft);
+      lobbyCountdowns[pid] = group;
     }
-    // tick particules
-    try {
-      const col = DIFFICULTY_COLOR[difficulty.id] || "#FFD700";
-      spawnParticles(api, [x+0.5, y+0.5, z+0.5], PRESETS.padTick(col), { radius: 0.5, height: 0.8 });
-    } catch(e) { reportErrorToOwner(e); }
-    countdown.secondsLeft -= 1;
-    if (countdown.secondsLeft <= 0) {
-      completeLobbyCountdown(playerId, countdown);
-      return;
+    showLobbyParty(difficulty);
+
+    group.timer = scheduleInterval(() => {
+      if (lobbyGroupTimers[difficulty.id] !== group) {
+        try { group.timer.stop(); } catch(_){}
+        return;
+      }
+      // tick particules at origin pad
+      try {
+        const col = DIFFICULTY_COLOR[difficulty.id] || "#FFD700";
+        // use stored padKey for particles
+        const pk = group.padKey;
+        if (pk) {
+          const [px,py,pz] = pk.split(",").map(Number);
+          spawnParticles(api, [px+0.5, py+0.5, pz+0.5], PRESETS.padTick(col), { radius: 0.5, height: 0.8 });
+        }
+      } catch(e) { reportErrorToOwner(e); }
+      group.secondsLeft -= 1;
+      if (group.secondsLeft <= 0) {
+        completeLobbyCountdown(group);
+        return;
+      }
+      const curMembers = lobbyGroups[difficulty.id];
+      if (curMembers) {
+        for (const pid of curMembers) showCountdown(pid, difficulty, group.secondsLeft);
+      }
+    }, LOBBY_CONFIG.ticksPerSecond);
+  } else {
+    // existing group — new joiner syncs to current time
+    if (group.cancelTimer) {
+      try { group.cancelTimer.stop(); } catch(_){}
+      group.cancelTimer = null;
     }
-    showCountdown(playerId, difficulty, countdown.secondsLeft);
-  }, LOBBY_CONFIG.ticksPerSecond);
+    if (!wasAlreadyMember) {
+      try { api.sendMessage(playerId, [cStr(difficulty.label, DIFFICULTY_COLOR[difficulty.id]||MSG_COLORS.gold), cStr(` · ${group.secondsLeft}s`, MSG_COLORS.white)]); } catch(_){}
+    }
+    showCountdown(playerId, difficulty, group.secondsLeft);
+    lobbyCountdowns[pidStr] = group;
+    showLobbyParty(difficulty);
+  }
+}
+
+function handlePadLeave(playerId, difficulty, padKeyStr) {
+  const pidStr = String(playerId);
+  const state = playerPadState[pidStr];
+  if (!state || state.difficulty.id !== difficulty.id) return;
+  if (!state.pads.has(padKeyStr)) return;
+  state.pads.delete(padKeyStr);
+  if (state.pads.size > 0) return; // still on another pad of same colour
+
+  // fully left this difficulty
+  delete playerPadState[pidStr];
+  const members = lobbyGroups[difficulty.id];
+  if (!members || !members.has(pidStr)) {
+    clearLobbyPartyFor(playerId);
+    try { api.setClientOption(playerId, "middleTextUpper", ""); } catch(_){}
+    delete lobbyCountdowns[pidStr];
+    return;
+  }
+  // special final-tick case: if this was the last member and countdown is at 1s, keep them for launch
+  const groupPre = lobbyGroupTimers[difficulty.id];
+  const isLastAndFinal = members.size === 1 && members.has(pidStr) && groupPre && groupPre.secondsLeft <= 1;
+  if (isLastAndFinal) {
+    // do not remove — complete with this member included
+    // keep party display, will be cleared on complete
+    completeLobbyCountdown(groupPre);
+    return;
+  }
+
+  members.delete(pidStr);
+  clearLobbyPartyFor(playerId);
+  try { api.setClientOption(playerId, "middleTextUpper", ""); } catch(_){}
+  delete lobbyCountdowns[pidStr];
+  try { api.sendMessage(playerId, [cStr("Countdown cancelled", MSG_COLORS.gray)]); } catch(_){}
+
+  if (members.size === 0) {
+    const group = lobbyGroupTimers[difficulty.id];
+    if (group) deferLobbyCountdownCancellation(playerId, group);
+  } else {
+    // update remaining members' party display
+    refreshLobbyParty(difficulty);
+  }
 }
 
 // ------------------------------------------------------------------ pads --
@@ -467,13 +664,7 @@ function onPadStart(playerId, x, y, z, difficulty) {
 function onPadStop(playerId, x, y, z, difficulty) {
   if (!difficulty) return;
   if (service().inDungeon(playerId)) return;
-  const countdown = lobbyCountdowns[playerId];
-  if (!countdown || countdown.difficulty.id !== difficulty.id) return;
-  const key = padKey(x, y, z);
-  if (!countdown.activePads[key]) return;
-  delete countdown.activePads[key];
-  countdown.activePadCount -= 1;
-  if (countdown.activePadCount === 0) deferLobbyCountdownCancellation(playerId, countdown);
+  handlePadLeave(playerId, difficulty, padKey(x, y, z));
 }
 
 onBlockStandStart = (playerId, x, y, z, blockName) => {
@@ -1833,6 +2024,22 @@ onPlayerToggledShopMenu = (playerId, isOpen) => {
 };
 
 onPlayerLeave = (playerId) => {
+  try {
+    const st = playerPadState[String(playerId)];
+    if (st) handlePadLeave(playerId, st.difficulty, [...(st.pads||[])][0] || "");
+    // brute force remove from any group if still present
+    for (const diffId of Object.keys(lobbyGroups)) {
+      const set = lobbyGroups[diffId];
+      if (set && set.has(String(playerId))) {
+        set.delete(String(playerId));
+        const grp = lobbyGroupTimers[diffId];
+        if (grp) {
+          if (set.size === 0) deferLobbyCountdownCancellation(playerId, grp);
+          else refreshLobbyParty(grp.difficulty);
+        }
+      }
+    }
+  } catch(_){}
   try { track(playerId, "player", "leave"); } catch(_){}
   stopLobbyCountdown(playerId);
   try {
