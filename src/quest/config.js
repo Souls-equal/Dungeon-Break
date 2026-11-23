@@ -26,12 +26,21 @@ export const QUEST_SIDEBAR_REFRESH_TICKS = 40; // 2s
  * Extensible templates — each entry is an example of a possible quest.
  *
  * `type` determines which event advances the quest:
- *   kill  -> onPlayerKilledMob
- *   crate -> generateChest / crate opened
+ *   kill            -> onPlayerKilledMob
+ *   crate           -> generateChest / crate opened (any rarity)
+ *   crate_rarity    -> crate of specific rarity (open Crate de rareté x)
+ *   walk            -> distance walked in blocks (marcher x centaines de blocks)
+ *   damage_dealt    -> faire x dégâts aux mobs
+ *   damage_taken    -> subir x dégâts
+ *   dungeon_enter   -> entrer dans x donjons
+ *   room_discover   -> découvrir x salles
+ *   time_played     -> passer x ticks en donjon
  *
- * Add a new type = add a hook calling questService.onProgress(playerId, type, amount)
+ * passXpBase is the base XP for Pass (random x-100 to x+100, x = base + power*20)
  */
+
 export const QUEST_TEMPLATES = [
+  // ── KILL ──
   {
     id: "slayer",
     title: "Slayer",
@@ -47,22 +56,6 @@ export const QUEST_TEMPLATES = [
     icon: "⚔️",
     color: "#FF5555",
     passXpBase: 250,
-  },
-  {
-    id: "treasure_hunter",
-    title: "Treasure Hunter",
-    description: (target) => `Open ${target} treasure chests`,
-    detail: (progress, target) => `${progress}/${target} chests`,
-    type: "crate",
-    baseTarget: 3,
-    reward: (target) => ({
-      gold: target * 80,
-      aura: target * 3,
-      label: `${target * 80} gold · +${target * 3} Aura`,
-    }),
-    icon: "🗝️",
-    color: "#FFD700",
-    passXpBase: 300,
   },
   {
     id: "exterminator",
@@ -81,6 +74,40 @@ export const QUEST_TEMPLATES = [
     passXpBase: 350,
   },
   {
+    id: "berserker",
+    title: "Berserker",
+    description: (target) => `Slay ${target} monsters`,
+    detail: (progress, target) => `${progress}/${target} slain`,
+    type: "kill",
+    baseTarget: 25,
+    reward: (target) => ({
+      gold: target * 25,
+      aura: Math.round(target * 1.2),
+      label: `${target * 25} gold · +${Math.round(target * 1.2)} Aura`,
+    }),
+    icon: "🔥",
+    color: "#FF6B00",
+    passXpBase: 500,
+  },
+
+  // ── CRATE (any rarity) ──
+  {
+    id: "treasure_hunter",
+    title: "Treasure Hunter",
+    description: (target) => `Open ${target} treasure chests`,
+    detail: (progress, target) => `${progress}/${target} chests`,
+    type: "crate",
+    baseTarget: 3,
+    reward: (target) => ({
+      gold: target * 80,
+      aura: target * 3,
+      label: `${target * 80} gold · +${target * 3} Aura`,
+    }),
+    icon: "🗝️",
+    color: "#FFD700",
+    passXpBase: 300,
+  },
+  {
     id: "collector",
     title: "Collector",
     description: (target) => `Loot ${target} ancient chests`,
@@ -96,21 +123,242 @@ export const QUEST_TEMPLATES = [
     color: "#55FFFF",
     passXpBase: 400,
   },
+
+  // ── CRATE BY RARITY (plus rare = moins demandé) ──
   {
-    id: "berserker",
-    title: "Berserker",
-    description: (target) => `Slay ${target} monsters`,
-    detail: (progress, target) => `${progress}/${target} slain`,
-    type: "kill",
-    baseTarget: 25,
+    id: "crate_common",
+    title: "Common Opener",
+    description: (target) => `Open ${target} Common crates`,
+    detail: (progress, target) => `${progress}/${target} Common`,
+    type: "crate_rarity",
+    rarity: "Common",
+    baseTarget: 8,
     reward: (target) => ({
-      gold: target * 25,
-      aura: Math.round(target * 1.2),
-      label: `${target * 25} gold · +${Math.round(target * 1.2)} Aura`,
+      gold: target * 45,
+      aura: target * 2,
+      label: `${target * 45} gold · +${target * 2} Aura`,
     }),
-    icon: "🔥",
-    color: "#FF6B00",
+    icon: "📦",
+    color: "#AAAAAA",
+    passXpBase: 280,
+  },
+  {
+    id: "crate_uncommon",
+    title: "Uncommon Seeker",
+    description: (target) => `Open ${target} Uncommon crates`,
+    detail: (progress, target) => `${progress}/${target} Uncommon`,
+    type: "crate_rarity",
+    rarity: "Uncommon",
+    baseTarget: 6,
+    reward: (target) => ({
+      gold: target * 70,
+      aura: target * 3,
+      label: `${target * 70} gold · +${target * 3} Aura`,
+    }),
+    icon: "🎁",
+    color: "#55FF55",
+    passXpBase: 320,
+  },
+  {
+    id: "crate_rare",
+    title: "Rare Hunter",
+    description: (target) => `Open ${target} Rare crates`,
+    detail: (progress, target) => `${progress}/${target} Rare`,
+    type: "crate_rarity",
+    rarity: "Rare",
+    baseTarget: 3,
+    reward: (target) => ({
+      gold: target * 120,
+      aura: target * 5,
+      label: `${target * 120} gold · +${target * 5} Aura`,
+    }),
+    icon: "💎",
+    color: "#5555FF",
+    passXpBase: 400,
+  },
+  {
+    id: "crate_epic",
+    title: "Epic Fortune",
+    description: (target) => `Open ${target} Epic crates`,
+    detail: (progress, target) => `${progress}/${target} Epic`,
+    type: "crate_rarity",
+    rarity: "Epic",
+    baseTarget: 2,
+    reward: (target) => ({
+      gold: target * 250,
+      aura: target * 8,
+      label: `${target * 250} gold · +${target * 8} Aura`,
+    }),
+    icon: "👑",
+    color: "#AA00FF",
+    passXpBase: 480,
+  },
+  {
+    id: "crate_legendary",
+    title: "Legendary!",
+    description: (target) => `Open ${target} Legendary crate${target>1?'s':''}`,
+    detail: (progress, target) => `${progress}/${target} Legendary`,
+    type: "crate_rarity",
+    rarity: "Legendary",
+    baseTarget: 1,
+    reward: (target) => ({
+      gold: target * 600,
+      aura: target * 15,
+      label: `${target * 600} gold · +${target * 15} Aura`,
+    }),
+    icon: "🌟",
+    color: "#FFD700",
+    passXpBase: 600,
+  },
+
+  // ── WALK (marcher x centaines de blocks) ──
+  {
+    id: "walker",
+    title: "Walker",
+    description: (target) => `Walk ${target} blocks`,
+    detail: (progress, target) => `${progress}/${target} blocks`,
+    type: "walk",
+    baseTarget: 500,
+    reward: (target) => ({
+      gold: Math.round(target * 0.8),
+      aura: Math.max(4, Math.round(target / 100)),
+      label: `${Math.round(target * 0.8)} gold · +${Math.max(4, Math.round(target/100))} Aura`,
+    }),
+    icon: "👟",
+    color: "#55FF55",
+    passXpBase: 320,
+  },
+  {
+    id: "marathon",
+    title: "Marathon",
+    description: (target) => `Walk ${target} blocks`,
+    detail: (progress, target) => `${progress}/${target} blocks`,
+    type: "walk",
+    baseTarget: 2000,
+    reward: (target) => ({
+      gold: Math.round(target * 0.6),
+      aura: Math.round(target / 80),
+      label: `${Math.round(target * 0.6)} gold · +${Math.round(target/80)} Aura`,
+    }),
+    icon: "🏃",
+    color: "#00AA00",
+    passXpBase: 520,
+  },
+
+  // ── DAMAGE (faire x dégâts / subir x dégâts) ──
+  {
+    id: "brawler",
+    title: "Brawler",
+    description: (target) => `Deal ${target} damage to monsters`,
+    detail: (progress, target) => `${progress}/${target} dmg dealt`,
+    type: "damage_dealt",
+    baseTarget: 1000,
+    reward: (target) => ({
+      gold: Math.round(target * 0.5),
+      aura: Math.max(6, Math.round(target / 200)),
+      label: `${Math.round(target*0.5)} gold · +${Math.max(6, Math.round(target/200))} Aura`,
+    }),
+    icon: "⚔️",
+    color: "#FF5555",
+    passXpBase: 340,
+  },
+  {
+    id: "destroyer",
+    title: "Destroyer",
+    description: (target) => `Deal ${target} damage`,
+    detail: (progress, target) => `${progress}/${target} dmg`,
+    type: "damage_dealt",
+    baseTarget: 5000,
+    reward: (target) => ({
+      gold: Math.round(target * 0.4),
+      aura: Math.round(target / 150),
+      label: `${Math.round(target*0.4)} gold · +${Math.round(target/150)} Aura`,
+    }),
+    icon: "💥",
+    color: "#FF0000",
+    passXpBase: 540,
+  },
+  {
+    id: "survivor",
+    title: "Survivor",
+    description: (target) => `Take ${target} damage and survive`,
+    detail: (progress, target) => `${progress}/${target} dmg taken`,
+    type: "damage_taken",
+    baseTarget: 500,
+    reward: (target) => ({
+      gold: Math.round(target * 0.7),
+      aura: Math.max(5, Math.round(target / 100)),
+      label: `${Math.round(target*0.7)} gold · +${Math.max(5, Math.round(target/100))} Aura`,
+    }),
+    icon: "🛡️",
+    color: "#5555FF",
+    passXpBase: 320,
+  },
+  {
+    id: "tank",
+    title: "Tank",
+    description: (target) => `Absorb ${target} damage`,
+    detail: (progress, target) => `${progress}/${target} absorbed`,
+    type: "damage_taken",
+    baseTarget: 2000,
+    reward: (target) => ({
+      gold: Math.round(target * 0.5),
+      aura: Math.round(target / 120),
+      label: `${Math.round(target*0.5)} gold · +${Math.round(target/120)} Aura`,
+    }),
+    icon: "🗿",
+    color: "#5555AA",
     passXpBase: 500,
+  },
+
+  // ── EXPLORATION ──
+  {
+    id: "delver",
+    title: "Delver",
+    description: (target) => `Enter ${target} dungeons`,
+    detail: (progress, target) => `${progress}/${target} dungeons`,
+    type: "dungeon_enter",
+    baseTarget: 5,
+    reward: (target) => ({
+      gold: target * 100,
+      aura: target * 4,
+      label: `${target * 100} gold · +${target * 4} Aura`,
+    }),
+    icon: "🚪",
+    color: "#AA5500",
+    passXpBase: 300,
+  },
+  {
+    id: "explorer",
+    title: "Explorer",
+    description: (target) => `Discover ${target} rooms`,
+    detail: (progress, target) => `${progress}/${target} rooms`,
+    type: "room_discover",
+    baseTarget: 15,
+    reward: (target) => ({
+      gold: target * 50,
+      aura: target * 2,
+      label: `${target * 50} gold · +${target * 2} Aura`,
+    }),
+    icon: "🗺️",
+    color: "#00AAAA",
+    passXpBase: 380,
+  },
+  {
+    id: "adventurer",
+    title: "Adventurer",
+    description: (target) => `Spend ${Math.round(target/20/60)} min in dungeons`,
+    detail: (progress, target) => `${Math.floor(progress/20)}/${Math.floor(target/20)}s`,
+    type: "time_played",
+    baseTarget: 12000, // 10 min = 600s = 12000 ticks
+    reward: (target) => ({
+      gold: Math.round(target / 10),
+      aura: Math.max(8, Math.round(target / 1000)),
+      label: `${Math.round(target/10)} gold · +${Math.max(8, Math.round(target/1000))} Aura`,
+    }),
+    icon: "⏳",
+    color: "#FFAA00",
+    passXpBase: 420,
   },
 ];
 
