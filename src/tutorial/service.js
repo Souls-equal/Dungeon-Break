@@ -138,6 +138,22 @@ export const TUTORIAL_MESSAGES = {
 
 export function onTutorialJoin(api, playerId) {
   if (hasDoneTutorial(api, playerId)) return false;
+  // Anti-dupe: si le joueur a déjà une Wooden Key (déco/reco avant fin tuto), on ne redonne pas
+  try {
+    if (findWoodenKeyAnySlot(api, playerId) !== null) {
+      try {
+        api.setPlayerDbValue(playerId, TUTORIAL_DB_KEY, 0);
+        api.setPlayerDbValue(playerId, LEGACY_TUTORIAL_KEY, 0);
+        const cur = getStep(api, playerId);
+        if (!cur || cur === "crate") api.setPlayerDbValue(playerId, TUTORIAL_STEP_KEY, "crate");
+      } catch {}
+      setArrow(api, playerId, "red", TUTORIAL_CRATE_TARGET);
+      try { highlightWoodenKey(api, playerId); } catch {}
+      try { api.sendMessage(playerId, [{ str: TUTORIAL_MESSAGES.join, style: { color: "#ff5555" } }]); } catch {}
+      try { track(playerId, "tutorial", "start"); } catch {}
+      return true;
+    }
+  } catch {}
   try {
     // t:0 = tutorial in progress, t:1 = done
     api.setPlayerDbValue(playerId, TUTORIAL_DB_KEY, 0);

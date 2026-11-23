@@ -1980,16 +1980,18 @@ onPlayerJoin = (playerId) => {
       api.sendMessage(playerId, [cStr("Welcome to Dungeon Break!", MSG_COLORS.gold)]);
     }
   } catch(e) { reportErrorToOwner(e); }
-  // Give a Wood Sword if player has no item containing "Sword"
+  // Give Wood Sword only if player has no weapon at all (Sword/Dagger/Spear/Club/Mace/Whip/Bow/Crossbow/Boomerang/Staff/Blade)
+  const _weaponKeywords = ["Sword","Dagger","Spear","Club","Mace","Whip","Bow","Crossbow","Boomerang","Staff","Blade"];
+  const _isWeaponName = (n) => { const s = String(n||""); return _weaponKeywords.some(k => s.includes(k)); };
   try {
     let hasSword = false;
     if (typeof api.getItemSlot === "function") {
       for (let i = 0; i < 60; i++) {
-        try { const it = api.getItemSlot(playerId, i); if (it && it.name && String(it.name).includes("Sword")) { hasSword = true; break; } } catch(_){}
+        try { const it = api.getItemSlot(playerId, i); if (it && it.name && _isWeaponName(it.name)) { hasSword = true; break; } } catch(_){}
       }
     }
     if (!hasSword && typeof api.getHeldItem === "function") {
-      try { const h = api.getHeldItem(playerId); if (h && h.name && String(h.name).includes("Sword")) hasSword = true; } catch(_){}
+      try { const h = api.getHeldItem(playerId); if (h && h.name && _isWeaponName(h.name)) hasSword = true; } catch(_){}
     }
     if (!hasSword) {
       if (typeof api.giveItem === "function") api.giveItem(playerId, "Wood Sword", 1);

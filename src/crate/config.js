@@ -22,11 +22,11 @@ export const CRATE_KEYS = {
 };
 
 export const AIR_CHANCE = {
-  Common: 45,
-  Uncommon: 40,
-  Rare: 35,
-  Epic: 30,
-  Legendary: 30,
+  Common: 60,
+  Uncommon: 55,
+  Rare: 50,
+  Epic: 45,
+  Legendary: 40,
 };
 
 export const CRATE_LOCK_MS = 16000;
