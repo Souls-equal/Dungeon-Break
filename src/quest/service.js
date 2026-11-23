@@ -170,18 +170,14 @@ function createNewQuest(api, playerId, excludeId) {
   return fresh;
 }
 
-/** Sidebar — no NPC coords, minimal */
+/** Sidebar — empty when no quest or finished */
 function buildSidebarLines(api, playerId, state) {
-  if (!state) {
-    return [
-      { str: "══ Daily Quest ══\n", style: { color: "#FFD700", fontWeight: "bold" } },
-      { str: "No quest yet\n", style: { color: "#AAAAAA" } },
-      { str: "Click the Quest NPC\n", style: { color: "#FFFFFF" } },
-    ];
+  if (!state || state.completed) {
+    return [];
   }
   const tpl = templateForState(state);
   if (!tpl) {
-    return [{ str: "Daily Quest — none\n", style: { color: "#AAAAAA" } }];
+    return [];
   }
   const reward = tpl.reward(state.target);
   const lines = [];
