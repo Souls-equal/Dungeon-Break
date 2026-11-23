@@ -47,6 +47,11 @@ export function track(playerId, eventType, eventValue = null, opts = {}) {
         }
       } catch(_) {}
     }
+    // Bloxd analytics: y must be -32768..32767, else Invalid argument #6
+    if (pos && Array.isArray(pos) && pos.length >= 3) {
+      const y = Number(pos[1]);
+      if (!Number.isFinite(y) || y < -32768 || y > 32767) pos = null;
+    }
     const num = opts.numericValue != null && Number.isFinite(Number(opts.numericValue)) ? Number(opts.numericValue) : null;
 
     if (typeof api !== "undefined" && typeof api.registerAnalyticsEvent === "function") {
@@ -65,6 +70,8 @@ export function trackPos(playerId, gameCategoryId = null) {
     let pos = null;
     try { if (typeof api.getPosition === "function") pos = api.getPosition(playerId); } catch(_) {}
     if (!pos || !Array.isArray(pos)) return;
+    const y = Number(pos[1]);
+    if (!Number.isFinite(y) || y < -32768 || y > 32767) return;
     const cat = gameCategoryId ? String(gameCategoryId).slice(0,128) : null;
     api.registerAnalyticsPlayerPosition(String(playerId), cat, getGameStartMs(), pos);
   } catch(_) {}
