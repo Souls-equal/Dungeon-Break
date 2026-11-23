@@ -961,7 +961,7 @@ test("going back to spawn despawns the mobs of the dungeon", () => {
   world.context.onPlayerBoughtShopItem("p1", "Utilities", "Teleport to spawn");
   // NPC quest giver at [5.5,21,4.5] never despawns — filter it out
   assert.equal(Array.from(world.mobs.values()).filter(m=>m.type!=="NPC").length, 0, "a mob of the dungeon survived the way back to spawn");
-  assert.equal(world.context.DUNGEON_LEVELS.length, 8);
+  assert.equal(world.context.DUNGEON_LEVELS.length, 9);
 });
 
 // --------------------------------------------------------- death and respawn --

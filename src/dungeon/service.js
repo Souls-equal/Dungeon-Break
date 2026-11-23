@@ -451,7 +451,8 @@ export function createDungeonService(options) {
   function discoverRoom(playerId, dungeon, chunkX, chunkZ) {
     const level = loader.levelState(dungeon.difficulty, playerId);
     if (!loader.discoverRoom(level, chunkX, chunkZ)) return 0;
-    const aura = roomAuraFor(dungeon.difficulty);
+    const endlessDepth = level.endlessDepth !== undefined ? level.endlessDepth : Math.max(0, (level.discovered ? level.discovered.size - 1 : 0));
+    const aura = roomAuraFor(dungeon.difficulty, endlessDepth);
     api.applyAuraChange(playerId, aura);
     try {
       api.sendFlyingMiddleMessage(playerId, [{ str: "+" + aura }, { icon: "Aura XP Orb" }, { str: " XP" }], 50, 500);

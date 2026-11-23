@@ -250,6 +250,7 @@ export const DIFFICULTIES = [
   { id: "insane", label: "Insane", padBlock: "Purple Concrete", fromLobby: false },
   { id: "nightmare", label: "Nightmare", padBlock: "Gray Concrete", fromLobby: false },
   { id: "hell", label: "Hell", padBlock: "Black Concrete", fromLobby: false },
+  { id: "endless", label: "Endless", padBlock: "White Concrete", fromLobby: false },
 ];
 
 /*
@@ -319,22 +320,46 @@ export const CHEST_KEYS = [
   { key: "Diamond Key", label: "Diamond", rarity: "legendary", veryEasy: 1, hell: 28 },
 ];
 
+// Endless scaling: +2% per room (linear)
+export const ENDLESS_SCALING = 0.02;
+export function endlessFactor(depth) {
+  const d = Math.max(0, Number(depth) || 0);
+  return 1 + ENDLESS_SCALING * d;
+}
+// steps without endless, so Hell stays at x2 even after adding Endless
+function baseSteps() {
+  const withoutEndless = DIFFICULTIES.filter((e) => e.id !== "endless").length;
+  return Math.max(1, withoutEndless - 1);
+}
+
 /**
  * The aura a level pays for discovering a room.
  *
  * From `roomAura` at Very Easy up to double it at Hell: a deeper dungeon is harder and its
  * rooms are worth more, which is the same shape as the mobs and the keys.
+ * Endless scales +2% per room discovered (linear).
  */
-export function roomAuraFor(difficulty) {
+export function roomAuraFor(difficulty, endlessDepth = 0) {
+  if (!difficulty || !difficulty.id) return DUNGEON_CONFIG.roomAura;
+  if (difficulty.id === "endless") {
+    // base = Hell value (20), then +2% per room
+    const hellAura = Math.round(DUNGEON_CONFIG.roomAura * 2); // 10*2=20
+    return Math.round(hellAura * endlessFactor(endlessDepth));
+  }
   const rank = DIFFICULTIES.findIndex((entry) => entry.id === difficulty.id);
   const level = rank < 0 ? 0 : rank;
-  const steps = Math.max(1, DIFFICULTIES.length - 1);
+  const steps = baseSteps();
   return Math.round(DUNGEON_CONFIG.roomAura * (1 + level / steps));
 }
-export function mobAuraFor(difficulty) {
+export function mobAuraFor(difficulty, endlessDepth = 0) {
+  if (!difficulty || !difficulty.id) return 3;
+  if (difficulty.id === "endless") {
+    const hellMob = Math.round(3 * 4); // 12 at Hell
+    return Math.round(hellMob * endlessFactor(endlessDepth));
+  }
   const rank = DIFFICULTIES.findIndex((entry) => entry.id === difficulty.id);
   const level = rank < 0 ? 0 : rank;
-  const steps = Math.max(1, DIFFICULTIES.length - 1);
+  const steps = baseSteps();
   // base 3 aura per mob, x4 at Hell -> 3..12, hell mobs worth 4x veryEasy
   return Math.round(3 * (1 + 3 * level / steps));
 }
@@ -344,11 +369,22 @@ export function mobAuraFor(difficulty) {
  *
  * Weights are relative: the draw normalises them, so a level's row always sums below 100
  * and no rounding can ever make the last key impossible.
+ * Endless uses Hell distribution (max rarity).
  */
 export function chestKeysFor(difficulty) {
+  if (!difficulty || !difficulty.id) return CHEST_KEYS.map((e) => ({ key: e.key, label: e.label, rarity: e.rarity, weight: e.veryEasy }));
+  if (difficulty.id === "endless") {
+    // Hell distribution (rarity 1)
+    return CHEST_KEYS.map((entry) => ({
+      key: entry.key,
+      label: entry.label,
+      rarity: entry.rarity,
+      weight: entry.hell,
+    }));
+  }
   const rank = DIFFICULTIES.findIndex((entry) => entry.id === difficulty.id);
-  const steps = Math.max(1, DIFFICULTIES.length - 1);
-  const rarity = (rank < 0 ? 0 : rank) / steps;
+  const steps = baseSteps();
+  const rarity = (rank < 0 ? 0 : Math.min(1, rank / steps));
   return CHEST_KEYS.map((entry) => ({
     key: entry.key,
     label: entry.label,
@@ -374,11 +410,23 @@ export const MOB_TUNING = {
   insane: { count: 6, health: 4.5, damage: 3.3, speed: 1.45 },
   nightmare: { count: 7, health: 6.0, damage: 4.2, speed: 1.6 },
   hell: { count: 8, health: 8.0, damage: 5.5, speed: 1.75 },
+  endless: { count: 8, health: 8.0, damage: 5.5, speed: 1.75 },
 };
 
-/** The mob settings of a difficulty: always defined, so nothing reads `undefined`. */
-export function mobTuningFor(difficulty) {
-  return MOB_TUNING[difficulty.id] || MOB_TUNING.veryEasy;
+/** The mob settings of a difficulty: always defined, so nothing reads `undefined`. Endless scales with depth. */
+export function mobTuningFor(difficulty, endlessDepth = 0) {
+  if (!difficulty || !difficulty.id) return MOB_TUNING.veryEasy;
+  const base = MOB_TUNING[difficulty.id] || MOB_TUNING.veryEasy;
+  if (difficulty.id === "endless" && endlessDepth > 0) {
+    const f = endlessFactor(endlessDepth);
+    return {
+      count: Math.min(20, Math.max(1, Math.round(base.count * f))),
+      health: base.health * f,
+      damage: base.damage * f,
+      speed: base.speed,
+    };
+  }
+  return base;
 }
 
 /** Gold cost to unlock each difficulty (Very Easy is free). Uses SMP gold currency cstm_smp_gold. */
@@ -393,6 +441,7 @@ export const DUNGEON_PRICES = {
   insane: 100000,
   nightmare: 500000,
   hell: 1000000,
+  endless: 0,
 };
 export function priceForDifficulty(difficulty) {
   const d = findDifficulty(difficulty);

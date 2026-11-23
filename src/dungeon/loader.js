@@ -27,7 +27,7 @@
  * the whole thing small enough to trust.
  */
 
-import { DUNGEON_CONFIG, floorOfLayer, mobRosterFor, mobTuningFor } from "./config.js";
+import { DUNGEON_CONFIG, floorOfLayer, mobRosterFor, mobTuningFor, ENDLESS_SCALING, endlessFactor } from "./config.js";
 import { templateFor, templatesFor } from "./templates.js";
 
 const SIZE = DUNGEON_CONFIG.chunkSize;
@@ -113,6 +113,8 @@ export function createLoader({ api, log }) {
       pendingTuning: [],
       /** Was this difficulty's template set already requested? */
       warmed: false,
+      /** Endless progress: number of rooms discovered beyond entrance */
+      endlessDepth: 0,
     };
   }
 
@@ -614,7 +616,9 @@ export function createLoader({ api, log }) {
    */
   function spawnRoomMobs(level, chunkX, chunkZ, spawnY) {
     const difficulty = level.difficulty;
-    const tuning = mobTuningFor(difficulty);
+    // Endless scaling: depth = rooms discovered so far (excluding entrance counted as 0)
+    const endlessDepth = difficulty.id === "endless" ? (level.discovered ? Math.max(0, level.discovered.size - 1) : (level.endlessDepth || 0)) : 0;
+    const tuning = mobTuningFor(difficulty, endlessDepth);
     if (tuning.count <= 0) return [];
     const roster = spawnableRoster(level);
     if (roster.length === 0) return [];
@@ -814,6 +818,10 @@ export function createLoader({ api, log }) {
     const key = chunkKey(chunkX, chunkZ);
     if (level.discovered.has(key)) return false;
     level.discovered.add(key);
+    if (level.difficulty && level.difficulty.id === "endless") {
+      // keep endlessDepth in sync with discovered count (excludes entrance? we store raw size)
+      level.endlessDepth = Math.max(0, level.discovered.size - 1);
+    }
     return true;
   }
 

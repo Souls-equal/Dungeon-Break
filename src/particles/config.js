@@ -27,6 +27,7 @@ export const DIFFICULTY_COLOR = {
   insane: "#9B59B6", // Purple
   nightmare: "#7D3C98", // Dark violet
   hell: "#111111", // Black with dark red glow
+  endless: "#FFFFFF", // White — Endless
 };
 
 export const CRATE_COLOR = {

@@ -50,11 +50,14 @@ test("the lobby offers only the three first difficulties", () => {
   assert.deepEqual(labels, ["Very Easy", "Easy", "Normal"]);
 });
 
-test("Hell is the last level, and the pad after it leads nowhere", () => {
-  assert.equal(nextDifficulty("hell"), null);
-  assert.equal(nextDifficulty("Hell"), null);
+test("Endless is the last level, Hell leads to Endless, Endless leads nowhere", () => {
+  assert.equal(nextDifficulty("endless"), null);
+  assert.equal(nextDifficulty("Endless"), null);
+  assert.equal(nextDifficulty("hell").id, "endless");
+  assert.equal(nextDifficulty("Hell").id, "endless");
   const almost = DIFFICULTIES[DIFFICULTIES.length - 2];
   assert.equal(nextDifficulty(almost.label), DIFFICULTIES.at(-1));
+  assert.equal(DIFFICULTIES.at(-1).id, "endless");
 });
 
 test("a difficulty is found by id, label or object, and never invented", () => {
