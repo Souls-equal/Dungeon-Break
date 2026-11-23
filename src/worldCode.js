@@ -2171,11 +2171,17 @@ onPlayerKilledMob = (playerId, mobId) => {
       api.log(`[Dungeon] mob kill failed: ${error && error.message ? error.message : error}`);
     } catch(e) { reportErrorToOwner(e); }
   }
-  // XP mob : plus la difficulté est haute, plus le mob donne d'XP (3..6 aura)
+  // XP mob : plus la difficulté est haute, plus le mob donne d'XP (3..12, +2%/salle en Endless)
   try {
     const d = service().dungeonOf(playerId);
     if (d && d.difficulty) {
-      const mobAura = mobAuraFor(d.difficulty);
+      let endlessDepth = 0;
+      try {
+        const lvl = service().levelStateOf(playerId);
+        if (lvl && lvl.discovered) endlessDepth = Math.max(0, lvl.discovered.size - 1);
+        if (lvl && Number.isFinite(lvl.endlessDepth)) endlessDepth = lvl.endlessDepth;
+      } catch(_) {}
+      const mobAura = mobAuraFor(d.difficulty, endlessDepth);
       try { api.applyAuraChange(playerId, mobAura); } catch(_) {}
       try { api.sendFlyingMiddleMessage(playerId, [{ str: `+${mobAura} XP` }, { icon: "Aura XP Orb" }], 50, 500); } catch(_) {}
     }

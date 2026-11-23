@@ -48,11 +48,16 @@ test("a level's key weights lean rarer as the level gets harder", () => {
   let previous = 0;
   for (const difficulty of DIFFICULTIES) {
     const chance = diamond(difficulty);
-    assert.ok(chance > previous, `${difficulty.label} does not give a Diamond Key more often than the level before it`);
+    // Endless reuses Hell distribution (equal, not strictly greater) — allow >= for last
+    const isEndless = difficulty.id === "endless";
+    if (isEndless) assert.ok(chance >= previous, `${difficulty.label} does not give a Diamond Key at least as often as the level before it`);
+    else assert.ok(chance > previous, `${difficulty.label} does not give a Diamond Key more often than the level before it`);
     previous = chance;
   }
   assert.ok(Math.abs(diamond(VERY_EASY) - 0.01) < 1e-9, "a Very Easy chest does not give a Diamond Key 1% of the time");
   assert.ok(Math.abs(diamond(HELL) - 0.28) < 1e-9, "a Hell chest does not give a Diamond Key 28% of the time");
+  const ENDLESS = findDifficulty("endless");
+  if (ENDLESS) assert.ok(diamond(ENDLESS) >= diamond(HELL) - 1e-9, "Endless should be at least as good as Hell");
 });
 
 test("every key stays possible at every level", () => {

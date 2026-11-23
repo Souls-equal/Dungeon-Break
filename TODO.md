@@ -63,14 +63,14 @@
 **Métrique :** `analytics.quest.daily_complete`, `analytics.quest.retention_d1/d7`, `analytics.pass.level_reached`
 **Impact :** ⭐⭐⭐ / Effort : **M** → **fait à 80%**
 
-### [ ] 5. Endless + Boss Rush + Seed partageable
-**Faire :**
-- Après Hell : Endless (+2% dégâts/mobs par salle), Boss Rush (5 salles boss)
-- Affiche seed (`/dbg seed` existe) + bouton "Copier seed" + leaderboard temps/morts
-**État actuel :** `/dbg seed` existe, `DIFFICULTIES` = 8 (Very Easy→Hell) sans Endless/Boss Rush. Aucune logique Endless.
-**Fichiers :** `src/dungeon/config.js` (`DIFFICULTIES`), `src/dungeon/service.js`, `src/worldCode.js`
-**Métrique :** `analytics.run.endless_depth_avg`, `analytics.run.bossrush_clear_rate`, `analytics.seed.shared`
-**Impact :** ⭐⭐ / Effort : **M**
+### [x] 5. Endless + Boss Rush
+**Fait (Endless) :**
+- **Endless** : débloqué après Hell via **White Concrete** (`DIFFICULTIES` +1 : `endless`, `White Concrete`, `fromLobby:false`). Base = Hell (8 mobs, 8.0× HP, 5.5× dmg), puis **+2% dégâts & mobs & XP par salle** (linéaire `1+0.02*depth`, cap 20 mobs). `mobTuningFor(difficulty, depth)`, `roomAuraFor`/`mobAuraFor` avec `ENDLESS_SCALING=0.02` et `endlessDepth` stocké sur `levelState` (`discovered.size-1`). XP salle `20 → 20*(1+0.02*depth)`, XP mob `12 → 12*(1+0.02*depth)`.
+- **Boss Rush** : reste à faire (5 salles boss, non implémenté).
+- **Seed partageable retiré** : volontairement abandonné — pas nécessaire même en bonus, `/dbg seed` reste debug seul.
+**Fichiers :** `src/dungeon/config.js` (`DIFFICULTIES`, `ENDLESS_SCALING`, `endlessFactor`, `roomAuraFor`/`mobAuraFor`/`mobTuningFor`), `src/dungeon/loader.js` (`endlessDepth`, `spawnRoomMobs` scaling), `src/dungeon/service.js` (`discoverRoom` aura scaling), `src/worldCode.js` (mob kill XP scaling), `src/particles/config.js` (`DIFFICULTY_COLOR.endless`)
+**Métrique :** `analytics.run.endless_depth_avg`, `analytics.run.bossrush_clear_rate`
+**Impact :** ⭐⭐ / Effort : **M** → **Endless fait, Boss Rush TODO**
 
 ### [~] 6. Draft Blessings avec reroll + synergies — REROLL FAIT, SYNERGIES MANQUANTES
 **Fait :**
@@ -170,6 +170,7 @@ Ces features sont en prod mais n'étaient pas dans le TODO d'origine — à int�
 - **Mobs fiables (2026-11-23) :** fix cap 64 → plus de ban bestiaire, retry salles vides
 - **Armures/Armes/CombatFx :** 12 Armor Sets + 72 Weapons (8 types × 9 sets), stats auto-scalées, capacités élémentaires, shimmer tick
 - **Dungeon tech :** chunks 32³ via `copyChunk`, Bedrock probe, séparation 20 000 blocs, `spawnSeparation`, `chunkLoadTicks:2`, découverte de salles +aura `roomAuraFor`/`mobAuraFor`, loot `mobLoot`
+- **Endless (2026-11-24) :** 9e difficulté `Endless` (White Concrete, après Hell), +2% dégâts/mobs/XP par salle, cap 20 mobs, `/dbg seed` reste debug (pas de partage)
 - **Particules :** `entryVortex`, `padRing/Tick`, `roomClear`, etc.
 - **Tutoriel natif** (voir §3)
 
@@ -181,7 +182,7 @@ Ces features sont en prod mais n'étaient pas dans le TODO d'origine — à int�
 |---|--------|----------|-----------------|
 | 4 | **Quêtes hebdo** (5 hebdo) — seul quotidien existe | P1 — haute | → #11 remplace : 5 hebdo + affixe |
 | 6 | **Synergies Blessings** affichées | P1 — moy | reste : détecter 2-3 combos, +15% |
-| 5 | **Endless / Boss Rush** + bouton Copier seed | P1 — moy | inchangé |
+| 5 | **Endless (White Concrete) + Boss Rush** | P1 — moy | Endless fait (+2%/salle), Boss Rush reste, seed retiré |
 | 11 | **Affixes hebdo** | P1 — haute | **NOUVEAU** — contenu sans map |
 | 12 | **Pity crates** | P1 — haute | **NOUVEAU** — corrige AIR 45% |
 | 13 | **Reforge/Enchant** | P1 — moy | **NOUVEAU** — sink gold |
@@ -217,7 +218,7 @@ Analytics.mobKill(playerId); // alias
 
 - **Semaine 1 :** #11 (hebdo+affixe) + #12 (pity) + #14 feedback/leaderboard
 - **Semaine 2-3 :** #13 reforge + #15 QoL + #6 synergies
-- **Mois 2 :** #5 (Endless/Boss Rush) + finition preview craft
+- **Mois 2 :** #5 Boss Rush + finition preview craft (Endless fait — White Concrete, +2%/salle)
 - **Mois 3 :** #7 (coop si rétention validée) + #8 début saison 1
 
 > Ancienne roadmap (Semaine 1 : #1+#3+#10, Semaine 2-3 : #2+#6, Mois 2 : #4+#5, Mois 3 : #7+#8) obsolète — #1/#2/#3 sont faits.
@@ -230,4 +231,4 @@ Analytics.mobKill(playerId); // alias
 2. Coche `[x]` ici + ajoute test dans `tests/` si logique
 3. `npm run build` → `npm test` (167 tests) → PR → merge auto autorisé (cf `AGENT_RULES.md`)
 
-*Dernière mise à jour : 2026-11-23 — mainteneur : @Souls-equal — maj auto via inventaire code vs TODO (PR #158-160 + crates re-tier 2026-11-23 + mobs fix intégrés)*
+*Dernière mise à jour : 2026-11-24 — mainteneur : @Souls-equal — Endless (+2%/salle, White Concrete) ajouté, seed retiré*

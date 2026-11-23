@@ -16,6 +16,7 @@ export const MOB_DROP_CHANCE = {
   insane: 0.60,
   nightmare: 0.65,
   hell: 0.70,
+  endless: 0.75,
 };
 
 // Table allégée par palier — max 2 items différents, quantités 1-3
@@ -101,6 +102,19 @@ export const MOB_LOOT_TABLE = {
     { name: "Copper Wire", min: 1, max: 1, weight: 5 },
     // Très rare — endgame
     { name: "Star Alloy", min: 1, max: 1, weight: 2 },
+  ],
+  endless: [
+    { name: "Diamond", min: 1, max: 2, weight: 12 },
+    { name: "Diamond Fragment", min: 1, max: 2, weight: 10 },
+    { name: "Geo Shard", min: 1, max: 2, weight: 12 },
+    { name: "Astral Shard", min: 1, max: 2, weight: 12 },
+    { name: "Sanguine Shard", min: 1, max: 2, weight: 8 },
+    { name: "Spectral Shard", min: 1, max: 2, weight: 8 },
+    { name: "Comet Shard", min: 1, max: 1, weight: 8 },
+    { name: "Voltite Dust", min: 1, max: 2, weight: 10 },
+    { name: "Moonstone Dust", min: 1, max: 2, weight: 8 },
+    { name: "Copper Wire", min: 1, max: 1, weight: 5 },
+    { name: "Star Alloy", min: 1, max: 2, weight: 4 },
   ],
 };
 
