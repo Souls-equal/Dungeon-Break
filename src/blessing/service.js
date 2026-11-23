@@ -138,6 +138,25 @@ export function createBlessingService(options = {}) {
     };
   }
 
+  /** Rerolls the current offer (gold reroll): replaces the 3 choices, keeps reservation. */
+  function rerollOffer(playerKey) {
+    const account = accountOf(playerKey);
+    if (account.offer.length === 0) return null;
+    const oldIds = new Set(account.offer.map((o) => o.blessing.id));
+    let tries = 0;
+    let choices = null;
+    do {
+      choices = drawChoices(random);
+      tries++;
+      if (!choices || choices.length === 0) return null;
+      const newIds = new Set(choices.map((c) => c.blessing.id));
+      const same = oldIds.size === newIds.size && [...oldIds].every((id) => newIds.has(id));
+      if (!same) break;
+    } while (tries < 5);
+    account.offer = choices;
+    return account.offer.slice();
+  }
+
   /** Drops the offer without spending it: the promise goes back with it. */
   function clearOffer(playerKey) {
     const account = accountOf(playerKey);
@@ -246,6 +265,7 @@ export function createBlessingService(options = {}) {
     pointsFor,
     roll,
     choose,
+    rerollOffer,
     clearOffer,
     offerOf,
     forget,
