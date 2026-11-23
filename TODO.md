@@ -37,6 +37,18 @@
 **Métrique :** `analytics.tutorial.started`, `analytics.tutorial.completed`, `analytics.tutorial.time`
 **Impact :** ⭐⭐⭐ / Effort : **M** → **fait**
 
+### [x] 3b. Spawns mobs fiables — fait (2026-11-23)
+**Fait :** cap global 64 → bannissait tout le bestiaire + salles à 0 marquées `populated`. Fix `src/dungeon/loader.js` : `successfulMobTypes`, ban seulement si salle pleine, retry si 0.
+**Fichiers :** `src/dungeon/loader.js`, `src/dungeon/service.js`
+**Métrique :** `analytics.dungeon.mobs_per_room`, `analytics.dungeon.empty_room_rate`
+**Impact :** ⭐⭐⭐ / Effort : **S** → **fait** — 167/167 tests
+
+### [x] 3c. Crates "au minimum leur crate" — fait (2026-11-23)
+**Fait :** `Wood→Common` (bois/armes bois), `Stone→Uncommon` (stone + Amethite/Magmasteel/Rubellite/Serpentite), `Iron→Rare`, `Gold→Epic`, `Diamond→Legendary`; `Cotton/Arrow/Coal` only Common, `Apple/Bread` partout; Serpentite groupé avec les 3 précédents.
+**Fichiers :** `src/crate/config.js`
+**Métrique :** `analytics.crate.open_rate` par rareté, `analytics.crate.progression_drop`
+**Impact :** ⭐⭐ / Effort : **S** → **fait**
+
 ---
 
 ## 🟠 P1 — Rejouabilité
@@ -68,6 +80,26 @@
 **Fichiers :** `src/blessing/config.js` (`REROLL_BASE_GOLD`, `rerollGoldCost`, `CHOICE_COUNT`, `RARITIES`), `src/blessing/presentation.js` (`choiceTile`), `src/blessing/service.js` (`roll`, `choose`, `rerollOffer`), `src/worldCode.js:rollBlessing/rerollBlessing/refreshBlessingTiles`
 **Métrique :** `analytics.blessing.pick_rate` par blessing/rarity, `analytics.blessing.reroll_rate`
 **Impact :** ⭐⭐ / Effort : **S** → **fait à 70%**
+
+### [ ] 11. Quêtes hebdo + Affixes hebdomadaires — NOUVEAU (proposé)
+**Faire :** 5 quêtes hebdo (reset lundi UTC, `dungeonBreak.quest.weekly.v1`, cibles x5 du quotidien, récompenses x3 + 1 Gold Key garanti) + 1 affixe tournante (`Volatile` = +30% dégâts mobs / -20% HP, `Greedy` = +50% gold, `Glass` = +100% dégâts des deux côtés). Affixe affichée en lobby + modifieur `MOB_TUNING` + `LOOT_TABLE` poids.
+**Pourquoi :** les quotidiennes rétiennent J1-J7, mais le week-end sans objectif long → churn. Un affixe crée du contenu sans nouveau donjon.
+**Fichiers :** `src/quest/config.js` (nouveaux templates `weekly:true`), `src/quest/service.js` (`pickWeeklyForToday`), `src/dungeon/config.js` (`WEEKLY_AFFIXES`), `src/worldCode.js`
+**Métrique :** `analytics.quest.weekly_complete`, `analytics.affix.weekly_pick_rate`
+**Impact :** ⭐⭐⭐ / Effort : **M** — prioritaire après #4
+
+### [ ] 12. Pity & Duplication clean pour crates — NOUVEAU
+**Faire :** compteur `cratePity:{Common:0,…}` en DB (`dungeonBreak.crate.pity.v1`) : +1 par crate sans légendaire, à 25 → force 1 item légendaire + reset. Doublon arme/armure → `+5-15 Iron Fragment` auto (au lieu d'Air). Tooltip in-game `Pity 12/25`.
+**Pourquoi :** 45% `AIR_CHANCE` en Common + doublons → sentiment "crate vide". Le pity est standard et mesurable.
+**Fichiers :** `src/crate/config.js` (`PITY_THRESHOLD=25`), `src/crate/service.js` (`rollWithPity`, `getAmountForItem`)
+**Métrique :** `analytics.crate.pity_triggered`, `analytics.crate.air_rate_observed`
+**Impact :** ⭐⭐ / Effort : **S**
+
+### [ ] 13. Enchant / Reforge léger — NOUVEAU
+**Faire :** station `Anvil` (près Artisan Bench) : 1 arme/armure + 3 fragments du tier → relance 1 stat (ex: `+2% crit` → `+3% crit`) pour `100 * tier` gold. 3 rerolls max / item (`reforgeCount` en `itemData`). Pas de P2W, sink gold demandé.
+**Fichiers :** `src/crafting/config.js` (nouveaux `reforgeRecipes`), `src/crafting/service.js`, `src/utils/analytics.js` (`analytics.craft.reforge`)
+**Métrique :** `analytics.craft.reforge_count`, `analytics.economy.gold_sink`
+**Impact :** ⭐⭐ / Effort : **M**
 
 ---
 
@@ -110,6 +142,18 @@
 **Métrique :** `analytics.feedback.sent`, `analytics.feedback.satisfaction_avg`
 **Impact :** ⭐⭐ / Effort : **S** → **fait**
 
+### [ ] 14. Feedback in-game + Leaderboard local — NOUVEAU (débloqué par #10)
+**Faire :** catégorie shop `Feedback` : 5 emojis → `analytics.feedback.sent {satisfaction:1-5, text}` + panneau `Leaderboard` (`/lb` + shop tile) : 3 tabs — `Richest` (gold), `Deepest` (salle max en Hell/Endless), `Fastest` (temps VeryEasy→Hell). Stockage DB globale `dungeonBreak.lb.v1` (top 20, anti-spam 1 submit/run).
+**Fichiers :** `src/feedback/service.js` (nouveau), `src/leaderboard/service.js` (nouveau), `src/worldCode.js` (shop category)
+**Métrique :** `analytics.feedback.sent_rate`, `analytics.leaderboard.view`
+**Impact :** ⭐⭐ / Effort : **M**
+
+### [ ] 15. Qualité de vie craft/inventaire — NOUVEAU
+**Faire :** (a) `Mass craft` (x1/x5/x10 via shift), (b) `Comparer` (hover arme → tooltip + équipé côte-à-côte), (c) `Loadout` 2 slots (sauvegarde arme+armure, switch 3s cooldown), (d) tri auto `Iron Fragment → stock` en 1 clic.
+**Fichiers :** `src/crafting/service.js` (`craftMultiple`), `src/worldCode.js` (`onPlayerClick` compare), `src/loadout/service.js` (nouveau)
+**Métrique :** `analytics.craft.mass_craft_rate`, `analytics.loadout.switch`
+**Impact :** ⭐⭐ / Effort : **M**
+
 ---
 
 ## 📦 Faits depuis 2026-02-15 — hors TODO initial (non listés au-dessus)
@@ -122,6 +166,8 @@ Ces features sont en prod mais n'étaient pas dans le TODO d'origine — à int�
 - **Unification shop Ranks → Utilities** (PR #158) : plus propre, 1 catégorie
 - **Blessings catalogue x3 :** ~62 blessings (vs 20 initiales) avec tradeoffs bonus/malus type Hades/Dead Cells, 6 raretés, 3 scopes (PERM/RUN/TIMED)
 - **Caisse/Crate :** système clés 5 raretés, protection anti-vol 16s, file chunked 6 slots/tick, particules `crateFountain`
+- **Crates re-tierées (2026-11-23) :** `Common=bois`, `Uncommon=stone+4 premiers fragments`, `Rare=fer+Sanguine/Spectral/Geo`, `Epic=or+Astral/Comet/Voltite`, `Legendary=diamant+Star Alloy`; `Cotton/Arrow/Coal` only Common, `Apple/Bread` partout
+- **Mobs fiables (2026-11-23) :** fix cap 64 → plus de ban bestiaire, retry salles vides
 - **Armures/Armes/CombatFx :** 12 Armor Sets + 72 Weapons (8 types × 9 sets), stats auto-scalées, capacités élémentaires, shimmer tick
 - **Dungeon tech :** chunks 32³ via `copyChunk`, Bedrock probe, séparation 20 000 blocs, `spawnSeparation`, `chunkLoadTicks:2`, découverte de salles +aura `roomAuraFor`/`mobAuraFor`, loot `mobLoot`
 - **Particules :** `entryVortex`, `padRing/Tick`, `roomClear`, etc.
@@ -131,19 +177,21 @@ Ces features sont en prod mais n'étaient pas dans le TODO d'origine — à int�
 
 ## 🚨 Manques signalés — à prioriser (résumé)
 
-| # | Manque | Criticité |
-|---|--------|-----------|
-| 4 | **Quêtes hebdo** (5 hebdo) — seul quotidien existe | Moyenne |
-| 6 | **Synergies Blessings** affichées | Moyenne |
-| 5 | **Endless / Boss Rush** + bouton Copier seed | Moyenne |
-| 7 | **Coop + rez** | Haute (mais effort L) |
-| 8 | **Saisons** | Basse (Mois 3) |
-| 9 | **Cosmétiques Rank** (trails, emotes, `/rank preview`) | Basse |
-| 10 | **Analytics wrapper** `src/utils/analytics.js` — **FAIT** (feedback panel reste) | — |
-| — | **Preview craft UI** (mention §2 "reste TODO futur") | Moyenne |
-| — | **Patch notes in-game** panneau | Basse |
-
-> #10 **fait** — metrics actives (bloxd internal). Reste feedback panel + dashboard.
+| # | Manque | Priorité | Notes 2026-11-23 |
+|---|--------|----------|-----------------|
+| 4 | **Quêtes hebdo** (5 hebdo) — seul quotidien existe | P1 — haute | → #11 remplace : 5 hebdo + affixe |
+| 6 | **Synergies Blessings** affichées | P1 — moy | reste : détecter 2-3 combos, +15% |
+| 5 | **Endless / Boss Rush** + bouton Copier seed | P1 — moy | inchangé |
+| 11 | **Affixes hebdo** | P1 — haute | **NOUVEAU** — contenu sans map |
+| 12 | **Pity crates** | P1 — haute | **NOUVEAU** — corrige AIR 45% |
+| 13 | **Reforge/Enchant** | P1 — moy | **NOUVEAU** — sink gold |
+| 7 | **Coop + rez** | P2 — haute (L) | inchangé |
+| 14 | **Feedback + Leaderboard** | P2 — moy | **NOUVEAU** — débloqué par analytics |
+| 15 | **QoL craft/loadout** | P2 — moy | **NOUVEAU** |
+| 8 | **Saisons** | P2 — basse | Mois 3 |
+| 9 | **Cosmétiques Rank** (trails, emotes, `/rank preview`) | P2 — basse | inchangé |
+| — | **Preview craft UI** (mention §2 "reste TODO futur") | P2 — moy | inchangé |
+| — | **Patch notes in-game** panneau | P3 — basse | inchangé |
 
 ---
 
@@ -161,14 +209,15 @@ Analytics.mobKill(playerId); // alias
 
 **Events prioritaires à logger dès maintenant :**
 - `tutorial.completed`, `craft.success`, `run.clear`, `run.death`, `blessing.pick`, `blessing.reroll`, `quest.complete`, `crate.open`, `coop.run_started`
+- **Nouveaux :** `crate.pity_triggered`, `craft.reforge`, `affix.weekly_pick_rate`, `feedback.sent`, `leaderboard.view`
 
 ---
 
 ## Roadmap suggérée — mise à jour 2026-11-23
 
-- **Semaine 1 :** #10 (analytics wrapper — débloque tout) + #4 hebdo + #6 synergies
-- **Semaine 2-3 :** #9 cosmétiques rank (trails) + preview craft + feedback shop
-- **Mois 2 :** #5 (Endless/Boss Rush) + #2 finition preview
+- **Semaine 1 :** #11 (hebdo+affixe) + #12 (pity) + #14 feedback/leaderboard
+- **Semaine 2-3 :** #13 reforge + #15 QoL + #6 synergies
+- **Mois 2 :** #5 (Endless/Boss Rush) + finition preview craft
 - **Mois 3 :** #7 (coop si rétention validée) + #8 début saison 1
 
 > Ancienne roadmap (Semaine 1 : #1+#3+#10, Semaine 2-3 : #2+#6, Mois 2 : #4+#5, Mois 3 : #7+#8) obsolète — #1/#2/#3 sont faits.
@@ -181,4 +230,4 @@ Analytics.mobKill(playerId); // alias
 2. Coche `[x]` ici + ajoute test dans `tests/` si logique
 3. `npm run build` → `npm test` (167 tests) → PR → merge auto autorisé (cf `AGENT_RULES.md`)
 
-*Dernière mise à jour : 2026-11-23 — mainteneur : @Souls-equal — maj auto via inventaire code vs TODO (PR #158-160 intégrées)*
+*Dernière mise à jour : 2026-11-23 — mainteneur : @Souls-equal — maj auto via inventaire code vs TODO (PR #158-160 + crates re-tier 2026-11-23 + mobs fix intégrés)*
