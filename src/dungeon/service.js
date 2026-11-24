@@ -659,8 +659,119 @@ export function createDungeonService(options) {
     return rows;
   }
 
+  // Team shared dungeon support (for co-op revive)
+  function enterDifficultyWithOrigin(playerId, difficultyReference, origin, onReady) {
+    const difficulty = findDifficulty(difficultyReference);
+    if (!difficulty) {
+      try { api.sendMessage(playerId, [cStr("Unknown difficulty", MSG_COLORS.red)]); } catch(_){}
+      return null;
+    }
+    if (!gateDifficulty(playerId, difficulty)) return null;
+    const level = loader.levelState(difficulty, playerId);
+    if (level.templates.length === 0) {
+      try { api.sendMessage(playerId, [cStr(difficulty.label, MSG_COLORS.gold), cStr(" has no rooms yet", MSG_COLORS.gray)]); } catch(_){}
+      return null;
+    }
+    loader.warmTemplates(difficulty, playerId);
+    const previous = dungeonOf(playerId);
+    if (previous) {
+      forgetMobsOf(previous.difficulty, playerId);
+      loader.release(previous.difficulty, playerId);
+    }
+    // use provided origin instead of drawing new one
+    const state = loader.levelState(difficulty, playerId);
+    state.origin = origin ? { ...origin } : state.origin;
+    // remember as last origin for this difficulty
+    try { loader.levelState(difficulty, playerId); } catch(_){}
+    const actualOrigin = loader.levelState(difficulty, playerId).origin;
+    if (!actualOrigin) {
+      try { api.sendMessage(playerId, [cStr("Failed to find origin", MSG_COLORS.red)]); } catch(_){}
+      log(`newOrigin failed for ${playerId} on ${difficulty.label}`);
+      return null;
+    }
+    const provisionalY = floorOfLayer(actualOrigin.y) + DUNGEON_CONFIG.spawnAboveFloor;
+    const centreX = actualOrigin.x * SIZE + DUNGEON_CONFIG.probeLocalXZ[0] + 0.5;
+    const centreZ = actualOrigin.z * SIZE + DUNGEON_CONFIG.probeLocalXZ[1] + 0.5;
+    api.setClientOptions(playerId, { gravityMultiplier: 0 });
+    api.setPosition(playerId, [centreX, provisionalY, centreZ]);
+    playerDungeons.set(playerId, {
+      difficulty,
+      landed: false,
+      position: [centreX, provisionalY, centreZ],
+      justPlaced: true,
+    });
+    usedLevels.add(difficulty);
+    scheduleTimeout(() => {
+      if (!playerDungeons.has(playerId)) return;
+      loader.placeEntrance(difficulty, playerId);
+      const waitForFloor = (attemptsLeft) => {
+        scheduleTimeout(() => {
+          if (!playerDungeons.has(playerId)) return;
+          const record = playerDungeons.get(playerId);
+          if (record && record.difficulty.id !== difficulty.id) return;
+          const landing = loader.landingPosition(difficulty, playerId);
+          if (!landing) {
+            if (attemptsLeft > 0) {
+              loader.placeEntrance(difficulty, playerId);
+              waitForFloor(attemptsLeft - 1);
+              return;
+            }
+            api.setClientOptions(playerId, { gravityMultiplier: 1 });
+            try { api.sendMessage(playerId, [cStr("Build failed — not loaded", MSG_COLORS.red)]); } catch(_){}
+            leave(playerId);
+            log(`entrance copy failed for ${playerId} on ${difficulty.label}`);
+            return;
+          }
+          api.setPosition(playerId, landing);
+          const standing = api.getPosition(playerId) || landing;
+          const floorY = Math.floor(standing[1]) - DUNGEON_CONFIG.spawnAboveFloor;
+          const under = api.getBlock(Math.floor(standing[0]), floorY, Math.floor(standing[2]));
+          if (under === null || under === "Air") {
+            if (attemptsLeft > 0) {
+              loader.placeEntrance(difficulty, playerId);
+              waitForFloor(attemptsLeft - 1);
+              return;
+            }
+            api.setClientOptions(playerId, { gravityMultiplier: 1 });
+            try { api.sendMessage(playerId, [cStr("Build failed — not loaded", MSG_COLORS.red)]); } catch(_){}
+            leave(playerId);
+            log(`entrance copy failed for ${playerId} on ${difficulty.label}`);
+            return;
+          }
+          api.setClientOptions(playerId, { gravityMultiplier: 1 });
+          const state2 = playerDungeons.get(playerId);
+          if (state2) {
+            state2.landed = true;
+            state2.position = landing;
+            state2.spawnY = landing[1];
+          }
+          try { api.sendMessage(playerId, [cStr("Level: ", MSG_COLORS.white), cStr(difficulty.label, MSG_COLORS.gold)]); } catch(_){}
+          try { api.sendMessage(playerId, [cStr(`Landed at y ${landing[1]} · floor block at y ${floorY}`, MSG_COLORS.gray)]); } catch(_){}
+          loader.planAround(level, actualOrigin.x, actualOrigin.z);
+          const entrance = chunkOfWorld(landing[0], landing[2]);
+          loader.markRoomClear(level, entrance.x, entrance.z);
+          if (state2) state2.room = `${entrance.x}|${entrance.z}`;
+          loader.enterRoom(level, entrance.x, entrance.z, landing[1]);
+          if (state2) discoverRoom(playerId, state2, entrance.x, entrance.z);
+          if (onReady) onReady(difficulty, landing);
+        }, 1);
+      };
+      waitForFloor(DUNGEON_CONFIG.entryMaxTicks);
+    }, DUNGEON_CONFIG.chunkLoadTicks);
+    return difficulty;
+  }
+
+  function getOriginForPlayer(playerId, difficulty) {
+    try {
+      const lvl = loader.levelState(difficulty, playerId);
+      return lvl ? lvl.origin : null;
+    } catch(_) { return null; }
+  }
+
   return {
     enterDifficulty,
+    enterDifficultyWithOrigin,
+    getOriginForPlayer,
     usePad,
     leave,
     leaveToLobby: leave,
