@@ -445,6 +445,10 @@ function completeLobbyCountdown(playerIdOrGroup, countdownMaybe) {
   }
 
   for (const pid of membersSnapshot) {
+    // guard: if player already in dungeon (multiple lobby timers bug or re-entry), skip second TP
+    try { if (service().inDungeon(pid)) { removePlayerFromAllLobbyGroups(pid); continue; } } catch(_){}
+    // clean lobby state for this player before TP (so no lingering timers)
+    try { removePlayerFromAllLobbyGroups(pid); } catch(_){}
     try {
       const entered = service().enterDifficulty(pid, difficulty, (diff, landing)=>{
         try {
@@ -504,10 +508,26 @@ function startLobbyCountdown(playerId, x, y, z, difficulty) {
   const key = padKey(x, y, z);
   let state = playerPadState[pidStr];
 
-  // switching difficulty -> leave old group
+  // switching difficulty -> leave old group completely (bug fix: walking over many colors without ground must not keep multiple timers)
   if (state && state.difficulty.id !== difficulty.id) {
-    // remove pad from old difficulty group
-    handlePadLeave(playerId, state.difficulty, key);
+    const oldDiff = state.difficulty;
+    const oldMembers = lobbyGroups[oldDiff.id];
+    if (oldMembers) {
+      oldMembers.delete(pidStr);
+      // update party for remaining members of old group
+      if (oldMembers.size > 0) {
+        refreshLobbyParty(oldDiff);
+      } else {
+        const oldGroup = lobbyGroupTimers[oldDiff.id];
+        if (oldGroup) deferLobbyCountdownCancellation(playerId, oldGroup);
+      }
+    }
+    delete lobbyCountdowns[pidStr];
+    // clear HUD for the leaving player (old countdown)
+    try { api.setClientOption(playerId, "middleTextUpper", ""); } catch(_){}
+    clearLobbyPartyFor(playerId);
+    try { api.sendMessage(playerId, [cStr("Countdown cancelled", MSG_COLORS.gray)]); } catch(_){}
+    delete playerPadState[pidStr];
     state = null;
   }
 
@@ -647,6 +667,31 @@ function handlePadLeave(playerId, difficulty, padKeyStr) {
 // One handler for every pad, in the lobby and in a dungeon: the block names the
 // difficulty, and where the player is decides what happens. Fewer paths means
 // fewer places for a pad to work in one room and not in the next.
+
+function removePlayerFromAllLobbyGroups(playerId) {
+  const pidStr = String(playerId);
+  for (const diffId of Object.keys(lobbyGroups)) {
+    const members = lobbyGroups[diffId];
+    if (!members || !members.has(pidStr)) continue;
+    members.delete(pidStr);
+    delete lobbyCountdowns[pidStr];
+    // if was in playerPadState for this diff, clear it
+    const st = playerPadState[pidStr];
+    if (st && st.difficulty.id === diffId) delete playerPadState[pidStr];
+    clearLobbyPartyFor(playerId);
+    try { api.setClientOption(playerId, "middleTextUpper", ""); } catch(_){}
+    if (members.size === 0) {
+      const grp = lobbyGroupTimers[diffId];
+      if (grp) {
+        try { grp.timer.stop(); } catch(_){}
+        delete lobbyGroupTimers[diffId];
+        clearLobbyPartyGroup(grp.difficulty);
+      }
+    } else {
+      refreshLobbyParty(lobbyGroupTimers[diffId] ? lobbyGroupTimers[diffId].difficulty : { id: diffId });
+    }
+  }
+}
 
 function onPadStart(playerId, x, y, z, difficulty) {
   if (!difficulty) return;
