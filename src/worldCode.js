@@ -2353,6 +2353,16 @@ onPlayerJoin = (playerId) => {
   // Nothing is read from a database, because nothing was ever written to one.
   resetPlayerProgress(playerId);
   api.setPosition(playerId, LOBBY_POSITION);
+  // Fix re-join while dead: Bloxd keeps health 0 after leave, which triggers Bad return value onRespawnRequest if we returned false. Heal and clear downed.
+  try {
+    let h = null;
+    try { h = typeof api.getHealth === "function" ? api.getHealth(playerId) : null; } catch(_){}
+    if (Number.isFinite(h) && h <= 0) {
+      try { if (typeof api.setHealth === "function") api.setHealth(playerId, 20); else if (typeof api.applyHealthChange === "function") api.applyHealthChange(playerId, 20, undefined, false); } catch(_){}
+    }
+    try { cleanupReviveForPlayer(String(playerId)); } catch(_){}
+    try { removePlayerFromTeam(String(playerId)); } catch(_){}
+  } catch(_){}
   try { spawnMode.set(String(playerId), true); } catch(e) { reportErrorToOwner(e); }
   try { ensureSurvivalGamemode(playerId); } catch(e) { reportErrorToOwner(e); }
   // In spawn, keep blessings but fix speed for navigation (no slowdown)
@@ -2891,14 +2901,30 @@ onRespawnRequest = (playerId) => {
   try {
     if (isDowned(pidStr)) {
       const info = downedPlayers.get(pidStr);
-      if (info && info.pos) return info.pos;
-      try { const p = api.getPosition(pidStr); if (p) return p; } catch(_){}
-      return false;
+      if (info && info.pos && Array.isArray(info.pos) && info.pos.length===3) return info.pos;
+      try { const p = api.getPosition(pidStr); if (p && Array.isArray(p) && p.length===3) return p; } catch(_){}
+      // fallback: keep at current pos or lobby, never return false (Bloxd requires true/undefined/[x,y,z])
+      try { const p2 = api.getPosition(pidStr); if (p2) return p2; } catch(_){}
+      return LOBBY_POSITION;
     }
   } catch(_){}
-  // Not in a dungeon: the game's own respawn is the right one, and taking it over would
-  // teleport a lobby player into the lobby for nothing.
-  if (!service().inDungeon(playerId)) return false;
+  // Not in a dungeon: let the game's own respawn handle it (return undefined, not false)
+  // Special case: player re-joined while dead (health 0) after leaving - ensure they go to lobby, not error
+  if (!service().inDungeon(playerId)) {
+    // If health is 0/dead, force to lobby to avoid "Bad return value" and stuck death screen
+    try {
+      let h = null;
+      try { h = typeof api.getHealth === "function" ? api.getHealth(playerId) : null; } catch(_){}
+      if (Number.isFinite(h) && h <= 0) {
+        try { api.setHealth(playerId, 20); } catch(_){}
+        // clean any lingering downed/team
+        try { cleanupReviveForPlayer(pidStr); } catch(_){}
+        try { removePlayerFromTeam(pidStr); } catch(_){}
+        return LOBBY_POSITION;
+      }
+    } catch(_){}
+    return;
+  }
   // Team death -> try downed instead of spawn if team size >1
   try {
     const teamId = getTeamId(pidStr);
@@ -2909,9 +2935,9 @@ onRespawnRequest = (playerId) => {
         // if not already downed, try to enter downed and stay in place
         if (!isDowned(pidStr) && tryEnterDowned(pidStr, posR)) {
           const inf = downedPlayers.get(pidStr);
-          if (inf && inf.pos) return inf.pos;
-          if (posR) return posR;
-          return false;
+          if (inf && inf.pos && Array.isArray(inf.pos) && inf.pos.length===3) return inf.pos;
+          if (posR && Array.isArray(posR) && posR.length===3) return posR;
+          return LOBBY_POSITION;
         }
       }
     }
