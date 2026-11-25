@@ -462,7 +462,7 @@ const saidText = (world, playerId) => world.messages.filter((e) => e.playerId ==
 
 function startDungeon(world, playerId, blockName = "Lime Concrete") {
   world.context.onBlockStandStart(playerId, 2, 10, 3, blockName);
-  world.tick(5 * 20 + 6);
+  world.tick(8 * 20 + 6);
 }
 
 // ------------------------------------------------------------------- lobby --
@@ -475,7 +475,7 @@ test("steping on a pad starts a countdown that clears itself on completion", () 
     const v = world.clientOptions.filter(e=>e.option==="middleTextUpper").at(-1).value;
     assert.ok(Array.isArray(v), "countdown should be a translation");
     assert.equal(v[0].str.translationKey, "greenvilleGame:spleefGameStartCounter");
-    assert.equal(v[0].str.params.seconds, "5s");
+    assert.equal(v[0].str.params.seconds, "8s");
     assert.equal(v[0].style.color, "#ffd700");
   }
 
@@ -484,7 +484,7 @@ test("steping on a pad starts a countdown that clears itself on completion", () 
   {
     const v = world.clientOptions.filter(e=>e.option==="middleTextUpper").at(-1).value;
     assert.ok(Array.isArray(v));
-    assert.equal(v[0].str.params.seconds, "1s");
+    assert.equal(v[0].str.params.seconds, "4s");
   }
 });
 
@@ -496,7 +496,7 @@ test("moving between same-colour pads keeps the countdown running", () => {
   world.tick(15);
   {
     const v = world.clientOptions.filter(e=>e.option==="middleTextUpper").at(-1).value;
-    assert.equal(v[0].str.params.seconds, "3s",
+    assert.equal(v[0].str.params.seconds, "6s",
       "crossing to another pad of the same difficulty restarted the countdown");
   }
 });
@@ -513,7 +513,7 @@ test("leaving the pad cancels the countdown", () => {
 test("a stale stop in the final tick does not cancel the descent", () => {
   const world = createWorld(["p1"]);
   world.context.onBlockStandStart("p1", 2, 10, 3, "Lime Concrete");
-  world.tick(99);
+  world.tick(159);
   world.context.onBlockStandStop("p1", 2, 10, 3, "Lime Concrete");
   world.tick(12);
   // Two moves: into the empty chunk, then onto the floor the copy produced. What
@@ -632,7 +632,7 @@ test("a Concrete pad built into a room leads to the next level", () => {
 test("a room is never copied from an unloaded template, and that is said once", () => {
   const world = createWorld(["p1"], { loadDelay: 1000 });
   world.context.onBlockStandStart("p1", 2, 10, 3, "Lime Concrete");
-  world.tick(5 * 20 + 40);
+  world.tick(8 * 20 + 40);
   // The template was never readable, so no copy could be trusted: the player is
   // told why instead of being dropped into the void.
   assert.equal(world.copies.length, 0, "a copy was attempted from an unreadable template");
@@ -645,7 +645,7 @@ test("a level with no template at all is a message, not a fall", () => {
   const world = createWorld(["p1"], { templates: null });
   world.context.onPlayerJoin("p1");
   world.context.onBlockStandStart("p1", 2, 10, 3, "Purple Concrete");
-  world.tick(5 * 20 + 20);
+  world.tick(8 * 20 + 20);
   const told = saidText(world, "p1");
   assert.equal(world.copies.length, 0);
   assert.ok(told.some((message) => /has no rooms yet|not loaded/.test(message)),
@@ -880,7 +880,7 @@ test("a teleport during the entrance wait abandons the entrance", () => {
   // later. Teleporting must not place them back in the dungeon.
   const world = createWorld(["p1"]);
   world.context.onBlockStandStart("p1", 2, 10, 3, "Lime Concrete");
-  world.tick(5 * 20 + 1);
+  world.tick(8 * 20 + 1);
   assert.ok(!saidText(world, "p1").includes("Level: Very Easy"));
   world.context.onPlayerBoughtShopItem("p1", "Utilities", "Teleport to spawn", {}, "");
   world.tick(20);
@@ -1614,7 +1614,7 @@ test("a run blessing is dropped by death, leave and teleport, and the permanent 
     const world = joinAtLevel(createWorld(["p1"]), 40);
     // Enter dungeon so run blessings actually apply (spawn disables them for navigation)
     world.context.onBlockStandStart("p1", 2, 10, 3, "Lime Concrete");
-    world.tick(5 * 20 + 6);
+    world.tick(8 * 20 + 6);
     tickUntil(world, () => saidText(world, "p1").includes("Level: Very Easy"), 400);
     const permanent = takeBlessing(world, /\(PERM\)/);
     assert.ok(permanent, "no permanent blessing was ever offered");
@@ -1672,7 +1672,7 @@ test("a run blessing is dropped by death, leave and teleport, and the permanent 
 test("a timed blessing applies one potion effect of 30 s to 2 min, and nothing else", () => {
   const world = joinAtLevel(createWorld(["p1"]), 40);
   world.context.onBlockStandStart("p1", 2, 10, 3, "Lime Concrete");
-  world.tick(5 * 20 + 6);
+  world.tick(8 * 20 + 6);
   tickUntil(world, () => saidText(world, "p1").includes("Level: Very Easy"), 400);
   const taken = takeBlessing(world, /\(TIMED\)/);
   assert.ok(taken, "no timed blessing was ever offered");
