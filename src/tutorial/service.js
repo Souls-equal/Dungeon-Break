@@ -138,7 +138,24 @@ export const TUTORIAL_MESSAGES = {
 
 export function onTutorialJoin(api, playerId) {
   if (hasDoneTutorial(api, playerId)) return false;
-  // Anti-dupe: si le joueur a déjà une Wooden Key (déco/reco avant fin tuto), on ne redonne pas
+  // Resume si déjà en cours — ne pas redonner de clé (anti-dupli déco/reco)
+  let existingT = null;
+  let existingStep = null;
+  try { existingT = api.getPlayerDbValue(playerId, TUTORIAL_DB_KEY); } catch {}
+  try { existingStep = api.getPlayerDbValue(playerId, TUTORIAL_STEP_KEY); } catch {}
+  const alreadyStarted = existingT === 0 || existingT === "0" || (existingStep && TUTORIAL_STEPS.includes(existingStep));
+  if (alreadyStarted) {
+    const step = getStep(api, playerId);
+    if (step === "dungeon" || step === "loot") {
+      setArrow(api, playerId, "#69EA5E", TUTORIAL_DUNGEON_TARGET);
+      try { clearHighlight(api, playerId); } catch {}
+    } else {
+      setArrow(api, playerId, "red", TUTORIAL_CRATE_TARGET);
+      try { highlightWoodenKey(api, playerId); } catch {}
+    }
+    return true;
+  }
+  // Anti-dupe: si le joueur a déjà une Wooden Key (autre source), on ne redonne pas
   try {
     if (findWoodenKeyAnySlot(api, playerId) !== null) {
       try {
