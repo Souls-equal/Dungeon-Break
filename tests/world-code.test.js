@@ -996,7 +996,8 @@ test("dying outside a dungeon is left to the game", () => {
   // The game's own respawn is used: no message, no dungeon, and the callback does not take over.
   const said_before = saidText(world, "p1").length;
   const spot = world.context.onRespawnRequest("p1");
-  assert.equal(spot, false, "the code took over a respawn it had no dungeon for");
+  // Bloxd 2025+: onRespawnRequest must return true, nothing (undefined) or [x,y,z] — false is Bad return value
+  assert.ok(spot === undefined || spot === false, "the code took over a respawn it had no dungeon for");
   assert.equal(saidText(world, "p1").length, said_before, "a player with no dungeon was told they died");
 });
 
