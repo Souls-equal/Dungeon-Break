@@ -759,7 +759,7 @@ function setDownedSpeed(playerId, downed) {
 }
 function setReviveArrowForTeam(downedId, teamId, pos) {
   const members = getTeamMembers(teamId);
-  const downName = (()=>{ try{ const n=api.getEntityName?api.getEntityName(downedId):null; return n||String(downedId);}catch(_){return String(downedId);} })();
+  const downName = getPlayerName(downedId);
   for (const pid of members) {
     if (String(pid) === String(downedId)) continue;
     if (isDowned(pid)) continue;
@@ -843,7 +843,7 @@ function revivePlayer(downedId) {
   const members = getTeamMembers(info.teamId);
   for (const pid of members) {
     if (String(pid)===pidStr) continue;
-    try { api.sendMessage(pid, [cStr(`${pidStr} revived!`, MSG_COLORS.green)]); } catch(_){}
+    try { const n = getPlayerName(pidStr); api.sendMessage(pid, [cStr(`${n} has been revived!`, MSG_COLORS.green)]); } catch(_){}
     try { api.setClientOption(pid, "middleTextLower", ""); } catch(_){}
     try { api.setClientOption(pid, "middleTextUpper", ""); } catch(_){}
   }
@@ -887,11 +887,11 @@ function tryEnterDowned(playerId, lethalPosMaybe) {
   } catch(_){}
   // also apply slowness via speed 0 already
   try { setReviveArrowForTeam(pidStr, teamId, pos); } catch(_){}
-  try { api.sendMessage(pidStr, [cStr("DOWN! Allongé — tes coéquipiers doivent te réanimer (reste sur le corps 10s)", MSG_COLORS.red)]); } catch(_){}
+  try { api.sendMessage(pidStr, [cStr("DOWNED! Stay still — teammates must stand on you for 10s to revive", MSG_COLORS.red)]); } catch(_){}
   for (const pid of members) {
     if (String(pid)===pidStr) continue;
     if (isDowned(pid)) continue;
-    try { api.sendMessage(pid, [cStr(`${pidStr} est à terre! Va sur son corps pour réanimer`, MSG_COLORS.gold)]); } catch(_){}
+    try { const n = getPlayerName(pidStr); api.sendMessage(pid, [cStr(`${n} is down! Stand on them to revive`, MSG_COLORS.gold)]); } catch(_){}
   }
   // particles vertes initiales
   try {
@@ -923,6 +923,17 @@ function tickRevive() {
           try { if (typeof api.setPlayerPose==="function") api.setPlayerPose(downedId, "sleeping"); } catch(_){}
         }
       }
+    } catch(_){}
+    // keep downed alive and invulnerable: heal if damaged, clear fire
+    try {
+      let h = null;
+      try { h = typeof api.getHealth === "function" ? api.getHealth(downedId) : null; } catch(_){}
+      if (Number.isFinite(h) && h < 6) {
+        try { api.setHealth(downedId, 6); } catch(_){}
+      }
+      // also prevent fire/lava tick from killing: extinguish
+      try { if (typeof api.extinguish === "function") api.extinguish(downedId); } catch(_){}
+      try { if (typeof api.setFire === "function") api.setFire(downedId, 0); } catch(_){}
     } catch(_){}
 
     // find alive teammates (not downed) who are close to downed
@@ -2671,6 +2682,7 @@ onPlayerDamagingOtherPlayer = (attackingPlayer, damagedPlayer, damageDealt, with
 // For custom weapons, effective damage is already in `damage` stat (refreshWeaponStats),
 // so we don't apply 2x multiplier. Only add elemental procs.
 onPlayerDamagingMob = (playerId, mobId, damageDealt, ...rest) => {
+  try { if (isDowned(playerId)) return "preventDamage"; } catch(_){}
   try {
     if (api.getEntityName && api.getEntityName(mobId) === "Quest") {
       try { onQuestInteract(api, playerId, mobId); } catch(_){}
@@ -2736,6 +2748,12 @@ onPlayerDamagingMob = (playerId, mobId, damageDealt, ...rest) => {
 };
 
 onMobDamagingPlayer = (mobId, playerId, damageDealt, ...rest) => {
+  try {
+    // Block any damage to downed players (victim is playerId or mobId depending on call order)
+    const maybeVictim1 = String(playerId);
+    const maybeVictim2 = String(mobId);
+    if (isDowned(maybeVictim1) || isDowned(maybeVictim2)) return "preventDamage";
+  } catch(_){}
   try { if (Number.isFinite(Number(damageDealt)) && Number(damageDealt)>0) track((Number.isFinite(Number(playerId)) ? playerId : mobId), "combat", "damage_taken", { numericValue: Number(damageDealt) }); } catch(_){}
   try { if (Number.isFinite(Number(damageDealt)) && Number(damageDealt)>0) { const _pid = (Number.isFinite(Number(playerId)) ? playerId : mobId); onQuestDamageTaken(api, _pid, Number(damageDealt)); } } catch(e){ reportErrorToOwner(e); }
   let scaled = undefined;
@@ -2780,7 +2798,7 @@ onMobDamagingPlayer = (mobId, playerId, damageDealt, ...rest) => {
 // Fallback tick-based lava damage is also enforced (see tickLavaDamage) because
 // Bloxd's onPlayerTookDamage is not reliably fired for lava on this host.
 onPlayerTookDamage = (playerId, damage, cause) => {
-  try { if (isDowned(playerId)) return; } catch(_){}
+  try { if (isDowned(playerId)) return 0; } catch(_){}
 
   try { if (Number.isFinite(Number(damage)) && Number(damage)>0) onQuestDamageTaken(api, playerId, Number(damage)); } catch(e){ reportErrorToOwner(e); }
   try {
