@@ -444,18 +444,46 @@ function completeLobbyCountdown(playerIdOrGroup, countdownMaybe) {
     lobbyGroups[difficulty.id].clear();
   }
 
+  // Team creation for co-op revive: all members share same origin
+  let teamIdForGroup = null;
+  let sharedOrigin = null;
+  // Try to get origin from first member that will enter; we will capture after first entry
   for (const pid of membersSnapshot) {
     // guard: if player already in dungeon (multiple lobby timers bug or re-entry), skip second TP
     try { if (service().inDungeon(pid)) { removePlayerFromAllLobbyGroups(pid); continue; } } catch(_){}
     // clean lobby state for this player before TP (so no lingering timers)
     try { removePlayerFromAllLobbyGroups(pid); } catch(_){}
     try {
-      const entered = service().enterDifficulty(pid, difficulty, (diff, landing)=>{
-        try {
-          const col = DIFFICULTY_COLOR[diff.id] || "#FFD700";
-          spawnParticles(api, landing, PRESETS.entryVortex(col), { radius: 0.6, height: 3.5 });
-        } catch(e) { reportErrorToOwner(e); }
-      });
+      let entered = null;
+      if (!teamIdForGroup) {
+        entered = service().enterDifficulty(pid, difficulty, (diff, landing)=>{
+          try {
+            const col = DIFFICULTY_COLOR[diff.id] || "#FFD700";
+            spawnParticles(api, landing, PRESETS.entryVortex(col), { radius: 0.6, height: 3.5 });
+          } catch(e) { reportErrorToOwner(e); }
+        });
+        if (entered) {
+          try { sharedOrigin = service().getOriginForPlayer(pid, difficulty); } catch(_){}
+          try { teamIdForGroup = createTeamForLobby(membersSnapshot, difficulty, sharedOrigin); } catch(_){}
+        }
+      } else {
+        // subsequent members use same origin if available
+        if (sharedOrigin && typeof service().enterDifficultyWithOrigin === "function") {
+          entered = service().enterDifficultyWithOrigin(pid, difficulty, sharedOrigin, (diff, landing)=>{
+            try {
+              const col = DIFFICULTY_COLOR[diff.id] || "#FFD700";
+              spawnParticles(api, landing, PRESETS.entryVortex(col), { radius: 0.6, height: 3.5 });
+            } catch(e) { reportErrorToOwner(e); }
+          });
+        } else {
+          entered = service().enterDifficulty(pid, difficulty, (diff, landing)=>{
+            try {
+              const col = DIFFICULTY_COLOR[diff.id] || "#FFD700";
+              spawnParticles(api, landing, PRESETS.entryVortex(col), { radius: 0.6, height: 3.5 });
+            } catch(e) { reportErrorToOwner(e); }
+          });
+        }
+      }
       if (entered) {
         try { onQuestDungeonEntered(api, pid); } catch(e) { reportErrorToOwner(e); }
         try { track(pid, "dungeon", "enter", { gameCategoryId: difficulty ? difficulty.id : null }); Analytics.padUse(pid, difficulty ? difficulty.id : null); } catch(_){}
@@ -662,6 +690,321 @@ function handlePadLeave(playerId, difficulty, padKeyStr) {
   }
 }
 
+// ------------------------------------------------------------------ teams & revive --
+// Team = lobby party that entered together; shared origin for co-op. Simple in-memory, not persisted.
+let teamCounter = 0;
+const teams = new Map(); // teamId -> { members: Set<string>, difficulty: object|null, origin: object|null }
+const playerTeam = new Map(); // playerId string -> teamId
+
+function createTeamForLobby(members, difficulty, origin) {
+  const teamId = `team-${++teamCounter}-${Date.now()}`;
+  const set = new Set(members.map(String));
+  teams.set(teamId, { members: set, difficulty, origin: origin ? { ...origin } : null });
+  for (const pid of set) playerTeam.set(String(pid), teamId);
+  return teamId;
+}
+function getTeamId(playerId) { return playerTeam.get(String(playerId)) || null; }
+function getTeamMembers(teamId) {
+  const tm = teams.get(teamId);
+  return tm ? [...tm.members] : [];
+}
+function removePlayerFromTeam(playerId) {
+  const pidStr = String(playerId);
+  const teamId = playerTeam.get(pidStr);
+  if (!teamId) return;
+  const tm = teams.get(teamId);
+  if (tm) {
+    tm.members.delete(pidStr);
+    if (tm.members.size === 0) teams.delete(teamId);
+  }
+  playerTeam.delete(pidStr);
+  // also clean any downed where this player was reviver or downed
+  try { cleanupReviveForPlayer(pidStr); } catch(_){}
+}
+function disbandTeam(teamId) {
+  const tm = teams.get(teamId);
+  if (!tm) return;
+  for (const pid of [...tm.members]) playerTeam.delete(String(pid));
+  teams.delete(teamId);
+}
+
+// Downed / revive state
+const downedPlayers = new Map(); // downedId string -> { teamId, pos:[x,y,z], progress:0, downTick: number, revivers: Set }
+let reviveTickCounter = 0;
+
+function isDowned(playerId) { return downedPlayers.has(String(playerId)); }
+
+function setDownedPose(playerId, downed) {
+  try {
+    if (downed) {
+      if (typeof api.setPlayerPose === "function") api.setPlayerPose(playerId, "sleeping");
+      // also ensure sleeping pose sticks: try setting again after tick
+      try { scheduleTimeout(()=>{ try{ if(isDowned(playerId)) api.setPlayerPose(playerId, "sleeping"); }catch(_){} }, 1); } catch(_){}
+    } else {
+      if (typeof api.setPlayerPose === "function") api.setPlayerPose(playerId, "standing");
+      try { scheduleTimeout(()=>{ try{ api.setPlayerPose(playerId, "standing"); }catch(_){} }, 1); } catch(_){}
+    }
+  } catch(_){}
+}
+function setDownedSpeed(playerId, downed) {
+  try {
+    if (downed) {
+      // freeze movement: speed 0
+      api.setClientOptions(playerId, { speedMultiplier: 0, walkingSpeed: 0, runningSpeed: 0 });
+    } else {
+      // restore via blessings
+      try { applyBlessingOptions(playerId, baseClientOptions()); } catch(_){}
+    }
+  } catch(_){}
+}
+function setReviveArrowForTeam(downedId, teamId, pos) {
+  const members = getTeamMembers(teamId);
+  const downName = (()=>{ try{ const n=api.getEntityName?api.getEntityName(downedId):null; return n||String(downedId);}catch(_){return String(downedId);} })();
+  for (const pid of members) {
+    if (String(pid) === String(downedId)) continue;
+    if (isDowned(pid)) continue;
+    try {
+      if (typeof api.setDirectionArrow === "function") {
+        api.setDirectionArrow(pid, `revive-${downedId}`, pos, [{ str: `${downName} DOWN`, style:{color:"#ff5555"}}], true, { color: "#ff0000" });
+        // also set ground arrow as fallback for clients without directionArrow
+        try { if (typeof api.setClientOption === "function") api.setClientOption(pid, "groundArrowPath", { colour: "red", target: pos }); } catch(_){}
+      } else if (typeof api.setClientOption === "function") {
+        api.setClientOption(pid, "groundArrowPath", { colour: "red", target: pos });
+      }
+    } catch(_){}
+  }
+}
+function clearReviveArrowForTeam(downedId, teamId) {
+  const members = getTeamMembers(teamId);
+  for (const pid of members) {
+    try {
+      if (typeof api.clearDirectionArrow === "function") {
+        try { api.clearDirectionArrow(pid, `revive-${downedId}`); } catch(_){}
+        try { api.clearDirectionArrow(pid, null); } catch(_){}
+      }
+    } catch(_){}
+    try { if (typeof api.setClientOption==="function") api.setClientOption(pid, "groundArrowPath", null); } catch(_){}
+  }
+  try {
+    if (typeof api.clearDirectionArrow==="function") {
+      try { api.clearDirectionArrow(downedId, `revive-${downedId}`); } catch(_){}
+      try { api.clearDirectionArrow(downedId, null); } catch(_){}
+    }
+  } catch(_){}
+  try { if (typeof api.setClientOption==="function") api.setClientOption(downedId, "groundArrowPath", null); } catch(_){}
+}
+function cleanupReviveForPlayer(playerId) {
+  const pidStr = String(playerId);
+  // if player was downed, clear their state and arrows for team
+  if (downedPlayers.has(pidStr)) {
+    const info = downedPlayers.get(pidStr);
+    try { clearReviveArrowForTeam(pidStr, info.teamId); } catch(_){}
+    try { setDownedPose(pidStr, false); } catch(_){}
+    try { setDownedSpeed(pidStr, false); } catch(_){}
+    downedPlayers.delete(pidStr);
+  }
+  // if player was reviver for any downed, remove from revivers sets
+  for (const [downedId, info] of [...downedPlayers.entries()]) {
+    if (info.revivers && info.revivers.has(pidStr)) info.revivers.delete(pidStr);
+    // if downed's team is same as player's team and player left team, update teamId?
+    // team changes handled separately
+  }
+  // clear any direction arrows that pointed to others where this player was target? already handled
+  try { if (typeof api.clearDirectionArrow==="function") api.clearDirectionArrow(pidStr, null); } catch(_){}
+}
+function revivePlayer(downedId) {
+  const pidStr = String(downedId);
+  const info = downedPlayers.get(pidStr);
+  if (!info) return;
+  const pos = info.pos;
+  // restore pose/speed
+  setDownedPose(pidStr, false);
+  setDownedSpeed(pidStr, false);
+  // heal
+  try {
+    if (typeof api.setHealth==="function") api.setHealth(pidStr, 20);
+    else if (typeof api.applyHealthChange==="function") api.applyHealthChange(pidStr, 20, undefined, false);
+    else if (typeof api.setHealth==="function") api.setHealth(pidStr, 10);
+  } catch(_){}
+  // particles vert (soin)
+  try {
+    const green = "#00ff00";
+    spawnParticles(api, pos, PRESETS.crateFountain(green, "Common"), { radius: 0.6, height: 1.2 });
+    // also try heal preset if exists
+    if (PRESETS.rubelliteRegen) spawnParticles(api, [pos[0], pos[1]+0.5, pos[2]], PRESETS.rubelliteRegen(), { radius: 0.8, height: 1.5 });
+  } catch(_){}
+  // clear arrows
+  clearReviveArrowForTeam(pidStr, info.teamId);
+  downedPlayers.delete(pidStr);
+  try { api.sendMessage(pidStr, [cStr("Revived!", MSG_COLORS.green)]); } catch(_){}
+  try { api.setClientOption(pidStr, "middleTextUpper", ""); } catch(_){}
+  try { api.setClientOption(pidStr, "middleTextLower", ""); } catch(_){}
+  // notify revivers
+  const members = getTeamMembers(info.teamId);
+  for (const pid of members) {
+    if (String(pid)===pidStr) continue;
+    try { api.sendMessage(pid, [cStr(`${pidStr} revived!`, MSG_COLORS.green)]); } catch(_){}
+    try { api.setClientOption(pid, "middleTextLower", ""); } catch(_){}
+    try { api.setClientOption(pid, "middleTextUpper", ""); } catch(_){}
+  }
+}
+
+function tryEnterDowned(playerId, lethalPosMaybe) {
+  const pidStr = String(playerId);
+  if (isDowned(pidStr)) return false; // already downed
+  // check if in dungeon — if not in dungeon, no downed
+  try { if (!service().inDungeon(pidStr)) return false; } catch(_){ return false; }
+  const teamId = getTeamId(pidStr);
+  if (!teamId) return false; // solo -> no revive
+  const members = getTeamMembers(teamId);
+  // spec: si 1 seul en équipe mort = spawn direct
+  if (members.length <= 1) return false;
+  let pos = lethalPosMaybe;
+  if (!pos || !Array.isArray(pos) || pos.length<3) {
+    try { pos = api.getPosition(pidStr); } catch(_){ pos = null; }
+  }
+  // fallback to dungeon stored position if void or null (y < -50)
+  if (!pos || !Array.isArray(pos) || pos.length<3 || pos[1] < -10) {
+    try {
+      const d = service().dungeonOf ? service().dungeonOf(pidStr) : null;
+      if (d && d.position) pos = [...d.position];
+      else if (!pos) pos = [0,0,0];
+    } catch(_){ if (!pos) pos = [0,0,0]; }
+  }
+  if (!pos || !Array.isArray(pos)) pos = [0,0,0];
+  // enter downed
+  const info = { teamId, pos: [...pos], progress: 0, downTick: reviveTickCounter, revivers: new Set() };
+  downedPlayers.set(pidStr, info);
+  try { setDownedPose(pidStr, true); } catch(_){}
+  try { setDownedSpeed(pidStr, true); } catch(_){}
+  // keep alive: heal to 4 hearts so not dead
+  try {
+    if (typeof api.setHealth === "function") api.setHealth(pidStr, 6);
+    else if (typeof api.getHealth === "function" && typeof api.setHealth === "function") {
+      const cur = api.getHealth(pidStr);
+      if (Number.isFinite(cur) && cur <= 0) api.setHealth(pidStr, 6);
+    }
+  } catch(_){}
+  // also apply slowness via speed 0 already
+  try { setReviveArrowForTeam(pidStr, teamId, pos); } catch(_){}
+  try { api.sendMessage(pidStr, [cStr("DOWN! Allongé — tes coéquipiers doivent te réanimer (reste sur le corps 10s)", MSG_COLORS.red)]); } catch(_){}
+  for (const pid of members) {
+    if (String(pid)===pidStr) continue;
+    if (isDowned(pid)) continue;
+    try { api.sendMessage(pid, [cStr(`${pidStr} est à terre! Va sur son corps pour réanimer`, MSG_COLORS.gold)]); } catch(_){}
+  }
+  // particles vertes initiales
+  try {
+    spawnParticles(api, pos, PRESETS.crateFountain("#00ff00", "Common"), { radius: 0.6, height: 1.0 });
+  } catch(_){}
+  return true;
+}
+
+function tickRevive() {
+  if (downedPlayers.size===0) return;
+  reviveTickCounter++;
+  const processedWipeTeams = new Set();
+  // every tick (20/sec), check each downed
+  for (const [downedId, info] of [...downedPlayers.entries()]) {
+    if (!downedPlayers.has(downedId)) continue; // already wiped via team wipe
+    const teamId = info.teamId;
+    const members = getTeamMembers(teamId);
+    if (members.length===0) { downedPlayers.delete(downedId); continue; }
+    // lock downed position: if they drift, teleport back (anti-push)
+    try {
+      const curPos = api.getPosition(downedId);
+      if (curPos && Array.isArray(curPos) && info.pos) {
+        const dx = curPos[0]-info.pos[0];
+        const dz = curPos[2]-info.pos[2];
+        const horiz = Math.sqrt(dx*dx+dz*dz);
+        if (horiz > 1.0) {
+          try { api.setPosition(downedId, [info.pos[0], info.pos[1], info.pos[2]]); } catch(_){}
+          try { api.setVelocity(downedId, [0,0,0]); } catch(_){}
+          try { if (typeof api.setPlayerPose==="function") api.setPlayerPose(downedId, "sleeping"); } catch(_){}
+        }
+      }
+    } catch(_){}
+
+    // find alive teammates (not downed) who are close to downed
+    const downPos = info.pos;
+    if (!downPos || downPos.length<3) continue;
+    let revivers = [];
+    for (const pid of members) {
+      if (String(pid)===String(downedId)) continue;
+      if (isDowned(pid)) continue;
+      // must be in dungeon (same team, but check position exists)
+      let ppos = null;
+      try { ppos = api.getPosition(pid); } catch(_){}
+      if (!ppos || ppos.length<3) continue;
+      const dx = ppos[0]-downPos[0];
+      const dy = ppos[1]-downPos[1];
+      const dz = ppos[2]-downPos[2];
+      const dist = Math.sqrt(dx*dx+dy*dy+dz*dz);
+      // "sur" le joueur mort: within 1.5 blocks horizontally and <1.2 vertical
+      const horiz = Math.sqrt(dx*dx+dz*dz);
+      if (horiz <= 1.5 && Math.abs(dy) <= 1.2) {
+        revivers.push(pid);
+      } else if (dist <= 2.0) {
+        // also count if very close
+        revivers.push(pid);
+      }
+    }
+    // update revivers set for this downed
+    info.revivers = new Set(revivers.map(String));
+    if (revivers.length>0) {
+      // cumule: + revivers / (10*20) per tick (10 sec with 1 person)
+      const perTick = revivers.length / (10 * 20);
+      info.progress = Math.min(1, (info.progress||0) + perTick);
+      // show progress to revivers and downed
+      const pct = Math.round(info.progress*100);
+      for (const pid of revivers) {
+        try { api.setClientOption(pid, "middleTextLower", [{ str: `Reviving ${pct}%`, style:{color:"#55ff55"}}]); } catch(_){}
+      }
+      try { api.setClientOption(downedId, "middleTextUpper", [{ str: `Being revived ${pct}%`, style:{color:"#ff5555"}}]); } catch(_){}
+      if (info.progress >= 1) {
+        // clear progress HUD
+        for (const pid of revivers) { try{ api.setClientOption(pid, "middleTextLower", ""); }catch(_){} }
+        try{ api.setClientOption(downedId, "middleTextUpper", ""); }catch(_){}
+        revivePlayer(downedId);
+      }
+    } else {
+      // no reviver: keep progress (cumule), clear HUD hints
+      for (const pid of members) {
+        if (String(pid)===String(downedId)) continue;
+        if (info.revivers && info.revivers.size>0) continue; // was reviving, now stopped
+      }
+      // clear lower for non-revivers? keep minimal
+    }
+    // if team has no alive members at all (all downed), then team wipe -> all go to spawn after 3 sec?
+    const aliveCount = members.filter(pid => !isDowned(pid)).length;
+    if (aliveCount===0) {
+      if (processedWipeTeams.has(teamId)) continue;
+      const teamDowned = [...downedPlayers.entries()].filter(([id, inf])=> inf.teamId===teamId);
+      if (teamDowned.length === members.length) {
+        processedWipeTeams.add(teamId);
+        // team wipe
+        for (const [did, inf] of teamDowned) {
+          try { api.sendMessage(did, [cStr("Team wiped — returning to spawn", MSG_COLORS.red)]); } catch(_){}
+          try { api.setClientOption(did, "middleTextUpper", ""); } catch(_){}
+          try { api.setClientOption(did, "middleTextLower", ""); } catch(_){}
+          try { clearReviveArrowForTeam(did, teamId); } catch(_){}
+          try { downedPlayers.delete(did); } catch(_){}
+          try { setDownedPose(did, false); } catch(_){}
+          try { setDownedSpeed(did, false); } catch(_){}
+          try { if (typeof api.setHealth==="function") api.setHealth(did, 20); } catch(_){}
+          try { service().teleportToSpawn(did); } catch(_){ try{ api.setPosition(did, LOBBY_POSITION);}catch(_){} }
+          try { endRun(did, [cStr("Team wiped", MSG_COLORS.gray)]); } catch(_){}
+          try { removePlayerFromTeam(did); } catch(_){}
+          try { api.setClientOption(did, "groundArrowPath", null); } catch(_){}
+          try { if (typeof api.clearDirectionArrow==="function") api.clearDirectionArrow(did, null); } catch(_){}
+        }
+        try { disbandTeam(teamId); } catch(_){}
+      }
+    }
+  }
+}
+
+// ------------------------------------------------------------------ pads --
 // ------------------------------------------------------------------ pads --
 //
 // One handler for every pad, in the lobby and in a dungeon: the block names the
@@ -1933,6 +2276,8 @@ onPlayerBoughtShopItem = (playerId, categoryKey, itemKey, itemOrInput, userInput
   // Teleport and forget are one call, so the tick can never see a player at spawn
   // with a dungeon: `teleportToSpawn` moves first, then drops the record.
   try { track(playerId, "shop", "teleport", { gameCategoryId: "spawn" }); track(playerId, "dungeon", "leave", { gameCategoryId: "teleport" }); } catch(_){}
+  try { cleanupReviveForPlayer(String(playerId)); } catch(_){}
+  try { removePlayerFromTeam(String(playerId)); } catch(_){}
   service().teleportToSpawn(playerId);
   endRun(playerId, [cStr("Run over — permanent stay", MSG_COLORS.gray)]);
   stopLobbyCountdown(playerId);
@@ -2075,6 +2420,8 @@ onPlayerToggledShopMenu = (playerId, isOpen) => {
 };
 
 onPlayerLeave = (playerId) => {
+  try { cleanupReviveForPlayer(String(playerId)); } catch(_){}
+  try { removePlayerFromTeam(String(playerId)); } catch(_){}
   try {
     const st = playerPadState[String(playerId)];
     if (st) handlePadLeave(playerId, st.difficulty, [...(st.pads||[])][0] || "");
@@ -2423,6 +2770,8 @@ onMobDamagingPlayer = (mobId, playerId, damageDealt, ...rest) => {
 // Fallback tick-based lava damage is also enforced (see tickLavaDamage) because
 // Bloxd's onPlayerTookDamage is not reliably fired for lava on this host.
 onPlayerTookDamage = (playerId, damage, cause) => {
+  try { if (isDowned(playerId)) return; } catch(_){}
+
   try { if (Number.isFinite(Number(damage)) && Number(damage)>0) onQuestDamageTaken(api, playerId, Number(damage)); } catch(e){ reportErrorToOwner(e); }
   try {
     let dmg = Number(damage);
@@ -2452,6 +2801,15 @@ onPlayerTookDamage = (playerId, damage, cause) => {
       if (Number.isFinite(am)) modified = am;
     } catch(_){}
     // Magmasteel = Heat Resistance → laisse Bloxd bloquer (return undefined = immunité)
+    // lethal -> downed
+    try {
+      let curHp2 = null;
+      try { curHp2 = typeof api.getHealth === "function" ? api.getHealth(playerId) : null; } catch(_){}
+      if (Number.isFinite(curHp2) && Number.isFinite(modified) && curHp2 - modified <= 0) {
+        let pos2 = null; try { pos2 = api.getPosition(playerId); } catch(_){}
+        if (tryEnterDowned(playerId, pos2)) return;
+      }
+    } catch(_){}
     if (isLava) {
       try { if (typeof getArmorLevelForHeat === "function" && getArmorLevelForHeat(api, playerId, "Magmasteel") > 0) {
         if (Number.isFinite(modified) && modified !== dmg) return modified;
@@ -2472,6 +2830,7 @@ function tickLavaDamage() {
   try { pids = typeof api.getPlayerIds === "function" ? api.getPlayerIds() : []; } catch(_){}
   for (const pid of pids) {
     try {
+      if (isDowned(pid)) continue;
       // Magmasteel immune via Heat Resistance
       if (typeof getArmorLevelForHeat === "function" && getArmorLevelForHeat(api, pid, "Magmasteel") > 0) continue;
       const p = api.getPosition(pid);
@@ -2491,6 +2850,16 @@ function tickLavaDamage() {
         if (Number.isFinite(am)) dmg = am;
       } catch(_){}
       if (!Number.isFinite(dmg) || dmg <= 0) continue;
+      // if would kill, enter downed
+      try {
+        let curHpL = null;
+        try { curHpL = typeof api.getHealth === "function" ? api.getHealth(pid) : null; } catch(_){}
+        if (Number.isFinite(curHpL) && curHpL - dmg <= 0) {
+          let posL = null; try { posL = api.getPosition(pid); } catch(_){}
+          if (tryEnterDowned(pid, posL)) continue;
+        }
+      } catch(_){}
+      if (isDowned(pid)) continue;
       try {
         if (typeof api.applyHealthChange === "function") api.applyHealthChange(pid, -Math.max(1, Math.round(dmg)), undefined, false);
         else if (typeof api.setHealth === "function" && typeof api.getHealth === "function") {
@@ -2517,9 +2886,39 @@ function tickLavaDamage() {
  * A player who is not in a dungeon is left to the game.
  */
 onRespawnRequest = (playerId) => {
+  const pidStr = String(playerId);
+  // If already downed, respawn request should keep them downed at same place (prevent TP)
+  try {
+    if (isDowned(pidStr)) {
+      const info = downedPlayers.get(pidStr);
+      if (info && info.pos) return info.pos;
+      try { const p = api.getPosition(pidStr); if (p) return p; } catch(_){}
+      return false;
+    }
+  } catch(_){}
   // Not in a dungeon: the game's own respawn is the right one, and taking it over would
   // teleport a lobby player into the lobby for nothing.
   if (!service().inDungeon(playerId)) return false;
+  // Team death -> try downed instead of spawn if team size >1
+  try {
+    const teamId = getTeamId(pidStr);
+    if (teamId) {
+      const members = getTeamMembers(teamId);
+      if (members.length > 1) {
+        let posR = null; try { posR = api.getPosition(pidStr); } catch(_){}
+        // if not already downed, try to enter downed and stay in place
+        if (!isDowned(pidStr) && tryEnterDowned(pidStr, posR)) {
+          const inf = downedPlayers.get(pidStr);
+          if (inf && inf.pos) return inf.pos;
+          if (posR) return posR;
+          return false;
+        }
+      }
+    }
+  } catch(_){}
+  // Normal death -> cleanup revive state and team
+  try { cleanupReviveForPlayer(pidStr); } catch(_){}
+  try { removePlayerFromTeam(pidStr); } catch(_){}
   stopLobbyCountdown(playerId);
   service().teleportToSpawn(playerId);
   try { spawnMode.set(String(playerId), true); } catch(e) { reportErrorToOwner(e); }
@@ -2529,6 +2928,8 @@ onRespawnRequest = (playerId) => {
   api.setClientOption(playerId, "middleTextUpper", "");
   endRun(playerId, [cStr("You died — run lost, permanent stay", MSG_COLORS.gray)]);
   // XP gardé en mourrant: on ne reset plus l'aura, on garde le niveau
+  try { cleanupReviveForPlayer(String(playerId)); } catch(_){}
+  try { removePlayerFromTeam(String(playerId)); } catch(_){}
   blessings().forget(accountKeyOf(playerId));
   blessings().setPermanent(accountKeyOf(playerId), loadPermanent(playerId));
   try { applyBlessingOptions(playerId, baseClientOptions()); } catch(e) { reportErrorToOwner(e); }
@@ -2640,6 +3041,31 @@ scheduleInterval(() => {
 scheduleInterval(() => {
   try { tickMusic(); } catch(e) { reportErrorToOwner(e); }
 }, 100);
+
+scheduleInterval(() => {
+  try { tickRevive(); } catch(e) { reportErrorToOwner(e); }
+}, 1);
+
+scheduleInterval(() => {
+  try { tickReviveParticles(); } catch(e) { reportErrorToOwner(e); }
+}, 20);
+
+function tickReviveParticles() {
+  if (downedPlayers.size === 0) return;
+  for (const [downedId, info] of [...downedPlayers.entries()]) {
+    if (!info.pos) continue;
+    // periodic green particles around downed
+    try {
+      // only every second call (we run every 20 ticks = 1s)
+      spawnParticles(api, info.pos, PRESETS.crateFountain("#00ff00", "Common"), { radius: 0.5, height: 0.8 });
+      // if being revived, extra
+      if (info.revivers && info.revivers.size > 0) {
+        spawnParticles(api, [info.pos[0], info.pos[1]+0.5, info.pos[2]], PRESETS.crateFountain("#55ff55", "Common"), { radius: 0.4, height: 1.0 });
+      }
+    } catch(_){}
+  }
+}
+
 
 // The shop is registered once at load; `onPlayerJoin` repeats it for the first player.
 registerShopItems();
