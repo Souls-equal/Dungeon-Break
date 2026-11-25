@@ -350,7 +350,7 @@ export const QUEST_TEMPLATES = [
     description: (target) => `Spend ${Math.round(target/20/60)} min in dungeons`,
     detail: (progress, target) => `${Math.floor(progress/20)}/${Math.floor(target/20)}s`,
     type: "time_played",
-    baseTarget: 12000, // 10 min = 600s = 12000 ticks
+    baseTarget: 6000, // 5 min = 300s = 6000 ticks (was 10 min, halved + dungeon-only)
     reward: (target) => ({
       gold: Math.round(target / 10),
       aura: Math.max(8, Math.round(target / 1000)),

@@ -55,6 +55,21 @@ const confirmMap = new Map();
 
 // Walk & time tracking
 const lastPosMap = new Map(); // pid -> [x,y,z]
+// LOBBY is [10,21,10]; dungeons are far (20000 separation, Y ~1000+). Check dungeon-only for time_played
+const LOBBY_POS = [10, 21, 10];
+function isInDungeonForQuest(api, playerId) {
+  try {
+    const pos = api.getPosition(playerId);
+    if (!pos || !Array.isArray(pos) || pos.length<3) return false;
+    // Y check: dungeons are at y ~ 1000+, lobby y=21
+    if (pos[1] > 100) return true;
+    const dx = pos[0]-LOBBY_POS[0], dy = pos[1]-LOBBY_POS[1], dz = pos[2]-LOBBY_POS[2];
+    const d2 = dx*dx+dy*dy+dz*dz;
+    // far from lobby (>50 blocks) => in dungeon
+    if (d2 > 2500) return true;
+    return false;
+  } catch(_) { return false; }
+}
 
 /** Helpers */
 function nowMs() {
@@ -450,16 +465,15 @@ function tickWalkAndTime(api) {
           lastPosMap.set(String(pid), [pos[0], pos[1], pos[2]]);
         }
       } catch(_){}
-      // TIME_PLAYED: if player has such quest, increment 1 per tick (only in dungeon ideally, but count everywhere for simplicity)
-      // To avoid farming at spawn, only count if player has a time_played quest active
+      // TIME_PLAYED: only in dungeon (halved to 5 min, dungeon-only)
       try {
         const state = loadQuestState(api, pid);
         if (state && !state.completed) {
           const tpl = templateForState(state);
           if (tpl && tpl.type === "time_played") {
-            // Only count if in dungeon — check via spawn distance or service if available
-            // For now count always but throttle: 1 per tick = 20 per second
-            addProgress(api, pid, "time_played", 1);
+            if (isInDungeonForQuest(api, pid)) {
+              addProgress(api, pid, "time_played", 1);
+            }
           }
         }
       } catch(_){}
