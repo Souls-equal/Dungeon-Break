@@ -2,7 +2,7 @@
  * Tutorial ~90s — 3 steps, native groundArrowPath.
  * 1) Join → Wooden Key + red arrow to crate [31.5,20,-0.5] + highlight hotbar slot
  * 2) generateChest() → "collect the loot" + remove highlight
- * 3) Green arrow to dungeon [2.5,20,-7.5]
+ * 3) Green arrow to dungeon [21.5,20,-24.5]
  * Flag hasDoneTutorial via api.get/setPlayerDbValue with t:0/t:1 (persisted).
  */
 import { setTimeout as scheduleTimeout } from "../utils/scheduler.js";
@@ -13,7 +13,7 @@ const TUTORIAL_STEP_KEY = "dungeonBreak.tutorial.step";
 export const TUTORIAL_STEPS = ["crate", "loot", "dungeon", "done"];
 
 export const TUTORIAL_CRATE_TARGET = [31.5, 20, -0.5];
-export const TUTORIAL_DUNGEON_TARGET = [2.5, 20, -7.5];
+export const TUTORIAL_DUNGEON_TARGET = [21.5, 20, -24.5];
 export const TUTORIAL_CRATE_POS = [31, 20, -1];
 export const TUTORIAL_PORTAL_POS = [2, 21, -8];
 
