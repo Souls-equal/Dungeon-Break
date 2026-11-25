@@ -96,19 +96,10 @@ function safeSendMessage(playerId, message) {
   return api.sendMessage(playerId, message);
 }
 
-// Discord header & periodic save (from block-pirate_v3)
-const DISCORD_CODE = "discord.gg/dungeonbreak"; // TODO: replace with real invite code
-const dCode = DISCORD_CODE.replace("discord.gg/","").replace("https://","").replace("http://","");
-const w = dCode;
-const C = { MONEY: "#FFD700", GOLD: "#FFD700" };
+// Discord header & periodic save - inline str/icon, no helpers (used once)
 let $t = 0;
-function bold(s,c){ return { str: String(s), style:{ color:c, fontWeight:"bold" } }; }
-function txt(s,c){ const map={ gold:"#FFD700", white:"#FFFFFF", lightgray:"#CCCCCC" }; let col = map[c] || c; return { str: String(s), style:{ color: col } }; }
-function ic(iconName,color){ return { icon: iconName, style:{ color } }; }
-function icon(iconName,color){ return { icon: iconName, style: color ? { color } : {} }; }
-function shout(msgs){ try{ api.broadcastMessage(msgs); }catch(_){ try{ const ids = typeof api.getPlayerIds==="function"?api.getPlayerIds():[]; for(const pid of ids) try{ api.sendMessage(pid, msgs);}catch(_){} }catch(_){} } }
-function applyDiscordHeader(playerId){ try{ api.setClientOptions(playerId, { "ambientLightColourOverride": "#083783", "canRecordReplays": true, "droppedItemScale": 1.6, "headerChips": [ { content: [bold("Discord:", "#5865F2")], showBackground: true }, { content: [txt(["discord.", "gg", "/", dCode].join(""), "#CBD5E1")], showBackground: true }, { content: [ic("fa-solid fa-brands fa-discord", "#7DD3FC"), bold(" Join Now! ", C.MONEY)], showBackground: false } ], "hideCoordinates": false, "lightingOverride": true, }); }catch(_){} }
-let doPeriodicSave = () => { $t++; $t % 2 == 0 && shout([ icon("fa-solid fa-brands fa-discord", "#7DD3FC"), txt(" Found a bug or a glitch? Tell us on the Discord: ", "gold"), bold(["discord.", "gg", "/", w].join(""), "#7DD3FC"), txt(".", "gold"), ]); };
+function applyDiscordHeader(playerId){ try{ api.setClientOptions(playerId, { ambientLightColourOverride: "#083783", canRecordReplays: true, droppedItemScale: 1.6, headerChips: [ { content: [{ str: "Discord:", style: { color: "#5865F2", fontWeight: "bold" } }], showBackground: true }, { content: [{ str: "discord.gg/dungeonbreak", style: { color: "#CBD5E1" } }], showBackground: true }, { content: [{ icon: "fa-solid fa-brands fa-discord", style: { color: "#7DD3FC" } }, { str: " Join Now! ", style: { color: "#FFD700", fontWeight: "bold" } }], showBackground: false } ], hideCoordinates: false, lightingOverride: true }); }catch(_){} }
+let doPeriodicSave = () => { $t++; if($t % 2 == 0){ const msgs = [{ icon: "fa-solid fa-brands fa-discord", style: { color: "#7DD3FC" } }, { str: " Found a bug or a glitch? Tell us on the Discord: ", style: { color: "#FFD700" } }, { str: "discord.gg/dungeonbreak", style: { color: "#7DD3FC", fontWeight: "bold" } }, { str: ".", style: { color: "#FFD700" } }]; try{ api.broadcastMessage(msgs); }catch(_){ try{ const ids = typeof api.getPlayerIds==="function"?api.getPlayerIds():[]; for(const pid of ids) try{ api.sendMessage(pid, msgs); }catch(_){} }catch(_){} } } };
 
 const LOBBY_CONFIG = {
   countdownSeconds: 8,
