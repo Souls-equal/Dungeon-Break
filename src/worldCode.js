@@ -2998,7 +2998,21 @@ onRespawnRequest = (playerId) => {
   return LOBBY_POSITION;
 };
 
-// ----------------------------------------------------------- crate lock — prevent stealing (only roller can open, no exceptions) --
+// Trapdoor grief protection
+onPlayerChangeBlock = (playerId, x, y, z, fromBlock, toBlock) => {
+  try {
+    const b1 = String(fromBlock ?? "");
+    const b2 = String(toBlock ?? "");
+    if (b1.includes("Trapdoor") || b2.includes("Trapdoor")) return "preventChange";
+    // fallback: check world block in case args are different shape
+    try {
+      const cur = api.getBlock(x, y, z);
+      if (cur && String(cur).includes("Trapdoor")) return "preventChange";
+    } catch {}
+  } catch {}
+};
+
+ // ----------------------------------------------------------- crate lock — prevent stealing (only roller can open, no exceptions) --
 onPlayerAttemptOpenChest = (playerId, x, y, z, isMoonstoneChest, isIronChest) => {
   if (isMoonstoneChest) return;
   try {
