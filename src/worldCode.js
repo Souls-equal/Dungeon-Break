@@ -96,6 +96,20 @@ function safeSendMessage(playerId, message) {
   return api.sendMessage(playerId, message);
 }
 
+// Discord header & periodic save (from block-pirate_v3)
+const DISCORD_CODE = "discord.gg/dungeonbreak"; // TODO: replace with real invite code
+const dCode = DISCORD_CODE.replace("discord.gg/","").replace("https://","").replace("http://","");
+const w = dCode;
+const C = { MONEY: "#FFD700", GOLD: "#FFD700" };
+let $t = 0;
+function bold(s,c){ return { str: String(s), style:{ color:c, fontWeight:"bold" } }; }
+function txt(s,c){ const map={ gold:"#FFD700", white:"#FFFFFF", lightgray:"#CCCCCC" }; let col = map[c] || c; return { str: String(s), style:{ color: col } }; }
+function ic(iconName,color){ return { icon: iconName, style:{ color } }; }
+function icon(iconName,color){ return { icon: iconName, style: color ? { color } : {} }; }
+function shout(msgs){ try{ api.broadcastMessage(msgs); }catch(_){ try{ const ids = typeof api.getPlayerIds==="function"?api.getPlayerIds():[]; for(const pid of ids) try{ api.sendMessage(pid, msgs);}catch(_){} }catch(_){} } }
+function applyDiscordHeader(playerId){ try{ api.setClientOptions(playerId, { "ambientLightColourOverride": "#083783", "canRecordReplays": true, "droppedItemScale": 1.6, "headerChips": [ { content: [bold("Discord:", "#5865F2")], showBackground: true }, { content: [txt(["discord.", "gg", "/", dCode].join(""), "#CBD5E1")], showBackground: true }, { content: [ic("fa-solid fa-brands fa-discord", "#7DD3FC"), bold(" Join Now! ", C.MONEY)], showBackground: false } ], "hideCoordinates": false, "lightingOverride": true, }); }catch(_){} }
+let doPeriodicSave = () => { $t++; $t % 2 == 0 && shout([ icon("fa-solid fa-brands fa-discord", "#7DD3FC"), txt(" Found a bug or a glitch? Tell us on the Discord: ", "gold"), bold(["discord.", "gg", "/", w].join(""), "#7DD3FC"), txt(".", "gold"), ]); };
+
 const LOBBY_CONFIG = {
   countdownSeconds: 8,
   ticksPerSecond: 20,
@@ -2357,6 +2371,7 @@ onPlayerJoin = (playerId) => {
   // The shop is re-registered per join: an item created while nobody was online is
   // not always offered to the first player who arrives, and replacing it is free.
   registerShopItems();
+  try { applyDiscordHeader(playerId); } catch(e) { reportErrorToOwner(e); }
   // ranks load + visuals
   try { ranks().load(playerId); } catch(e) { reportErrorToOwner(e); }
   try { ranks().checkUnlocks(playerId); } catch(e) { reportErrorToOwner(e); }
@@ -3089,6 +3104,11 @@ scheduleInterval(() => {
 scheduleInterval(() => {
   try { tickRevive(); } catch(e) { reportErrorToOwner(e); }
 }, 1);
+
+// Discord periodic reminder (from block-pirate)
+scheduleInterval(() => {
+  try { doPeriodicSave(); } catch(e) { reportErrorToOwner(e); }
+}, 6000); // every 5 min (6000 ticks @20tps), shout every 2nd call = 10 min
 
 scheduleInterval(() => {
   try { tickReviveParticles(); } catch(e) { reportErrorToOwner(e); }
