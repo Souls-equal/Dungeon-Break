@@ -97,7 +97,7 @@ function safeSendMessage(playerId, message) {
 }
 
 const LOBBY_CONFIG = {
-  countdownSeconds: 5,
+  countdownSeconds: 8,
   ticksPerSecond: 20,
   // Bloxd starts the new block callback before stopping the old one, so a player
   // crossing two pads of the same colour would otherwise restart the countdown.
