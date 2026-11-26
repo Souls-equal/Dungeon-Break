@@ -109,6 +109,10 @@ const LOBBY_CONFIG = {
   padSwitchGraceTicks: 2,
 };
 
+// Lobby limits: 10 via Quick Play, 16 via friend join
+function applyLobbyLimits(){ try{ if(typeof api.setMaxPlayers==="function") api.setMaxPlayers(10,16); }catch{} }
+try{ applyLobbyLimits(); }catch{}
+
 // Gold unlock for dungeons (cstm_smp_gold via Market Place plugin)
 function getGoldAmount(playerId) {
   if (typeof api.getCurrencyAmount === "function") {
@@ -736,6 +740,58 @@ function disbandTeam(teamId) {
 // Downed / revive state
 const downedPlayers = new Map(); // downedId string -> { teamId, pos:[x,y,z], progress:0, downTick: number, revivers: Set }
 let reviveTickCounter = 0;
+// 8s immunity after revive
+const reviveImmuneUntil = new Map(); // playerId string -> tick until immune
+function isReviveImmune(playerId){ const until = reviveImmuneUntil.get(String(playerId)); return until !== undefined && reviveTickCounter < until; }
+function clearReviveImmune(playerId){ reviveImmuneUntil.delete(String(playerId)); }
+function giveReviveImmune(playerId, seconds=8){ reviveImmuneUntil.set(String(playerId), reviveTickCounter + Math.ceil(seconds*20)); }
+// helper to clear all arrows (ground + direction) for a player — fixes spawn TP keeping revive arrow
+function clearAllArrows(pid){
+  try{ if(typeof api.clearDirectionArrow==="function") api.clearDirectionArrow(pid, null); }catch{}
+  try{ if(typeof api.setClientOption==="function") api.setClientOption(pid, "groundArrowPath", null); }catch{}
+}
+// safe pos helpers — avoid lava like Block does
+function isLavaBlock(x,y,z){
+  try{ const b = api.getBlock(x,y,z); return b && String(b).toLowerCase().includes("lava"); }catch{ return false; }
+}
+function isStandablePos(x,y,z){
+  // need air at y and y+1, solid below, no lava
+  try{
+    if(isLavaBlock(x,y,z) || isLavaBlock(x,y+1,z) || isLavaBlock(x,y-1,z)) return false;
+    // check solidity if available
+    if(typeof api.getBlockSolidity==="function"){
+      if(api.getBlockSolidity(x,y,z) || api.getBlockSolidity(x,y+1,z)) return false;
+      if(!api.getBlockSolidity(x,y-1,z)) return false;
+    } else {
+      // fallback: block name check
+      const foot = String(api.getBlock(x,y,z) ?? "Air");
+      const head = String(api.getBlock(x,y+1,z) ?? "Air");
+      if(foot !== "Air" && foot !== "" ) return false;
+      if(head !== "Air" && head !== "" ) return false;
+      const below = String(api.getBlock(x,y-1,z) ?? "Air");
+      if(below === "Air" || below === "" ) return false;
+    }
+    return true;
+  }catch{ return false; }
+}
+function findSafeRevivePos(pos){
+  if(!pos || !Array.isArray(pos) || pos.length<3) return pos;
+  const baseX = Math.floor(pos[0]), baseY = Math.floor(pos[1]), baseZ = Math.floor(pos[2]);
+  if(isStandablePos(baseX, baseY, baseZ) && !isLavaBlock(baseX, baseY, baseZ) && !isLavaBlock(baseX, baseY+1, baseZ)) return [baseX+0.5, baseY, baseZ+0.5];
+  // search 5x3x5
+  for(let r=1;r<=5;r++){
+    for(let dy=-2;dy<=2;dy++){
+      for(let dx=-r;dx<=r;dx++){
+        for(let dz=-r;dz<=r;dz++){
+          if(Math.abs(dx)!==r && Math.abs(dz)!==r) continue;
+          const x = baseX+dx, y = baseY+dy, z = baseZ+dz;
+          if(isStandablePos(x,y,z)) return [x+0.5, y, z+0.5];
+        }
+      }
+    }
+  }
+  return [baseX+0.5, baseY, baseZ+0.5];
+}
 
 function isDowned(playerId) { return downedPlayers.has(String(playerId)); }
 
@@ -816,6 +872,8 @@ function cleanupReviveForPlayer(playerId) {
   }
   // clear any direction arrows that pointed to others where this player was target? already handled
   try { if (typeof api.clearDirectionArrow==="function") api.clearDirectionArrow(pidStr, null); } catch(_){}
+  try { if (typeof api.setClientOption==="function") api.setClientOption(pidStr, "groundArrowPath", null); } catch(_){}
+  clearReviveImmune(pidStr);
 }
 function revivePlayer(downedId) {
   const pidStr = String(downedId);
@@ -841,7 +899,14 @@ function revivePlayer(downedId) {
   // clear arrows
   clearReviveArrowForTeam(pidStr, info.teamId);
   downedPlayers.delete(pidStr);
-  try { api.sendMessage(pidStr, [cStr("Revived!", MSG_COLORS.green)]); } catch(_){}
+  // 8s immunity
+  try{ giveReviveImmune(pidStr, 8); }catch{}
+  try{ api.sendMessage(pidStr, [cStr("Revived! +8s immunity", MSG_COLORS.green)]); }catch{}
+  try{
+    // visual immunity: green particles + optional effect
+    spawnParticles(api, pos, PRESETS.crateFountain("#55ff55", "Common"), { radius: 0.8, height: 1.5 });
+    if(typeof api.applyEffect==="function") api.applyEffect(pidStr, "Invulnerable", 8000, { inbuiltLevel: 1 });
+  }catch{}
   try { api.setClientOption(pidStr, "middleTextUpper", ""); } catch(_){}
   try { api.setClientOption(pidStr, "middleTextLower", ""); } catch(_){}
   // notify revivers
@@ -877,6 +942,8 @@ function tryEnterDowned(playerId, lethalPosMaybe) {
     } catch(_){ if (!pos) pos = [0,0,0]; }
   }
   if (!pos || !Array.isArray(pos)) pos = [0,0,0];
+  // safe pos — évite lave
+  try{ const safe = findSafeRevivePos(pos); if(safe && Array.isArray(safe)) { pos = safe; try{ api.setPosition(pidStr, pos); }catch{} } }catch{}
   // enter downed
   const info = { teamId, pos: [...pos], progress: 0, downTick: reviveTickCounter, revivers: new Set() };
   downedPlayers.set(pidStr, info);
@@ -906,8 +973,10 @@ function tryEnterDowned(playerId, lethalPosMaybe) {
 }
 
 function tickRevive() {
-  if (downedPlayers.size===0) return;
   reviveTickCounter++;
+  // clean expired revive immunity
+  for(const [pid, until] of [...reviveImmuneUntil.entries()]){ if(reviveTickCounter >= until){ reviveImmuneUntil.delete(pid); try{ if(typeof api.removeEffect==="function") api.removeEffect(pid, "Invulnerable"); }catch{} } }
+  if (downedPlayers.size===0) return;
   const processedWipeTeams = new Set();
   // every tick (20/sec), check each downed
   for (const [downedId, info] of [...downedPlayers.entries()]) {
@@ -2295,6 +2364,7 @@ onPlayerBoughtShopItem = (playerId, categoryKey, itemKey, itemOrInput, userInput
   try { cleanupReviveForPlayer(String(playerId)); } catch(_){}
   try { removePlayerFromTeam(String(playerId)); } catch(_){}
   service().teleportToSpawn(playerId);
+  try{ clearAllArrows(playerId); }catch{}
   endRun(playerId, [cStr("Run over — permanent stay", MSG_COLORS.gray)]);
   stopLobbyCountdown(playerId);
   try { spawnMode.set(String(playerId), true); } catch(e) { reportErrorToOwner(e); }
@@ -2681,6 +2751,7 @@ onPlayerCrouch = (playerId, isCrouching) => {
 
 // Prevent all PvP in the game — explicitly requested
 onPlayerDamagingOtherPlayer = (attackingPlayer, damagedPlayer, damageDealt, withItem, bodyPartHit, damagerDbId, damageInfo) => {
+  try{ if(isReviveImmune(damagedPlayer) || isDowned(damagedPlayer) || isDowned(attackingPlayer)) return "preventDamage"; }catch{}
   return "preventDamage";
 };
 
@@ -2688,7 +2759,7 @@ onPlayerDamagingOtherPlayer = (attackingPlayer, damagedPlayer, damageDealt, with
 // For custom weapons, effective damage is already in `damage` stat (refreshWeaponStats),
 // so we don't apply 2x multiplier. Only add elemental procs.
 onPlayerDamagingMob = (playerId, mobId, damageDealt, ...rest) => {
-  try { if (isDowned(playerId)) return "preventDamage"; } catch(_){}
+  try { if (isReviveImmune(playerId) || isDowned(playerId)) return "preventDamage"; } catch(_){}
   try {
     if (api.getEntityName && api.getEntityName(mobId) === "Quest") {
       try { onQuestInteract(api, playerId, mobId); } catch(_){}
@@ -2755,10 +2826,10 @@ onPlayerDamagingMob = (playerId, mobId, damageDealt, ...rest) => {
 
 onMobDamagingPlayer = (mobId, playerId, damageDealt, ...rest) => {
   try {
-    // Block any damage to downed players (victim is playerId or mobId depending on call order)
+    // Block any damage to downed or revive-immune players
     const maybeVictim1 = String(playerId);
     const maybeVictim2 = String(mobId);
-    if (isDowned(maybeVictim1) || isDowned(maybeVictim2)) return "preventDamage";
+    if (isReviveImmune(maybeVictim1) || isReviveImmune(maybeVictim2) || isDowned(maybeVictim1) || isDowned(maybeVictim2)) return "preventDamage";
   } catch(_){}
   try { if (Number.isFinite(Number(damageDealt)) && Number(damageDealt)>0) track((Number.isFinite(Number(playerId)) ? playerId : mobId), "combat", "damage_taken", { numericValue: Number(damageDealt) }); } catch(_){}
   try { if (Number.isFinite(Number(damageDealt)) && Number(damageDealt)>0) { const _pid = (Number.isFinite(Number(playerId)) ? playerId : mobId); onQuestDamageTaken(api, _pid, Number(damageDealt)); } } catch(e){ reportErrorToOwner(e); }
@@ -2804,6 +2875,7 @@ onMobDamagingPlayer = (mobId, playerId, damageDealt, ...rest) => {
 // Fallback tick-based lava damage is also enforced (see tickLavaDamage) because
 // Bloxd's onPlayerTookDamage is not reliably fired for lava on this host.
 onPlayerTookDamage = (playerId, damage, cause) => {
+  try { if (isReviveImmune(playerId)) return 0; } catch(_){}
   try { if (isDowned(playerId)) return 0; } catch(_){}
 
   try { if (Number.isFinite(Number(damage)) && Number(damage)>0) onQuestDamageTaken(api, playerId, Number(damage)); } catch(e){ reportErrorToOwner(e); }
@@ -2864,7 +2936,7 @@ function tickLavaDamage() {
   try { pids = typeof api.getPlayerIds === "function" ? api.getPlayerIds() : []; } catch(_){}
   for (const pid of pids) {
     try {
-      if (isDowned(pid)) continue;
+      if (isDowned(pid) || isReviveImmune(pid)) continue;
       // Magmasteel immune via Heat Resistance
       if (typeof getArmorLevelForHeat === "function" && getArmorLevelForHeat(api, pid, "Magmasteel") > 0) continue;
       const p = api.getPosition(pid);
@@ -2971,6 +3043,7 @@ onRespawnRequest = (playerId) => {
   try { removePlayerFromTeam(pidStr); } catch(_){}
   stopLobbyCountdown(playerId);
   service().teleportToSpawn(playerId);
+  try{ clearAllArrows(pidStr); }catch{}
   try { spawnMode.set(String(playerId), true); } catch(e) { reportErrorToOwner(e); }
   try { ensureSurvivalGamemode(playerId); } catch(e) { reportErrorToOwner(e); }
   try { applyBlessingOptions(playerId, baseClientOptions()); } catch(e) { reportErrorToOwner(e); }
