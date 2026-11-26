@@ -163,6 +163,21 @@ function isUnlocked(playerId, difficulty) {
 const MSG_COLORS = { gold:"#ffd700", green:"#55ff55", red:"#ff5555", gray:"#aaaaaa", white:"#ffffff", aqua:"#55ffff" };
 function cStr(text, color) { return { str: text, style:{color} }; }
 
+function giveGold(playerId, amount) {
+  if (!amount || amount <= 0) return true;
+  try {
+    if (typeof api.giveCurrencyAmount === "function") {
+      api.giveCurrencyAmount(playerId, UNLOCK_CURRENCY, amount);
+      return true;
+    }
+    if (typeof api.setCurrencyAmount === "function" && typeof api.getCurrencyAmount === "function") {
+      const cur = Number(api.getCurrencyAmount(playerId, UNLOCK_CURRENCY) || 0);
+      api.setCurrencyAmount(playerId, UNLOCK_CURRENCY, cur + amount);
+      return true;
+    }
+  } catch(e){ reportErrorToOwner(e); }
+  return false;
+}
 function ensureUnlockedOrPay(playerId, difficulty) {
   const d = typeof difficulty === "object" && difficulty.id ? difficulty : null;
   if (!d) return false;
@@ -1156,7 +1171,52 @@ function onPadStop(playerId, x, y, z, difficulty) {
   handlePadLeave(playerId, difficulty, padKey(x, y, z));
 }
 
+// Finish Block — retour lobby + gold. Chunk -40,1,0 en contient un (et tout futur chunk qui en posera).
+const FINISH_BLOCK_NAMES = new Set(["Finish Block", "finish block", "Finish", "finish"]);
+function isFinishBlock(blockName) {
+  if (!blockName || typeof blockName !== "string") return false;
+  const n = blockName.trim().toLowerCase();
+  return n === "finish block" || n === "finish" || n.includes("finish");
+}
+const FINISH_REWARDS = { veryEasy:100, easy:200, normal:400, medium:800, hard:1500, insane:3000, nightmare:6000, hell:10000, endless:5000 };
+function finishRewardFor(difficulty) { return FINISH_REWARDS[difficulty?.id] ?? 250; }
+const finishCooldown = new Map(); // pid -> tick
+function handleFinishBlock(playerId, x, y, z, blockName) {
+  if (!isFinishBlock(blockName)) return false;
+  if (!service().inDungeon(playerId)) return false;
+  const now = tickNow();
+  const last = finishCooldown.get(String(playerId)) || -999;
+  if (now - last < 20) return true; // debounce 1s — reste appuyé
+  finishCooldown.set(String(playerId), now);
+  const dungeon = service().dungeonOf(playerId);
+  const reward = finishRewardFor(dungeon?.difficulty);
+  const gave = giveGold(playerId, reward);
+  try {
+    api.sendMessage(playerId, [
+      { str: `Finish ! +${reward} gold`, style:{color:"#ffd700", fontWeight:"bold"} },
+      ...(gave ? [] : [{str:" (gold error)", style:{color:"#ff5555"}}]),
+      { str: ` — retour au lobby`, style:{color:"#aaaaaa"} },
+    ]);
+  } catch(_){}
+  try { spawnParticles(api, [x+0.5, y+1, z+0.5], PRESETS.crateFountain("#FFD700", "Legendary"), {radius:0.6, height:1.5}); } catch(_){}
+  // même nettoyage que le shop "Teleport to spawn"
+  try { cleanupReviveForPlayer(String(playerId)); } catch(_){}
+  try { removePlayerFromTeam(String(playerId)); } catch(_){}
+  try { service().teleportToSpawn(playerId); } catch(_) { try{ api.setPosition(playerId, LOBBY_POSITION);}catch(_){} }
+  try { clearAllArrows(playerId); } catch(_){}
+  try { endRun(playerId, [cStr("Run finished — back to lobby", MSG_COLORS.gray)]); } catch(_){}
+  try { stopLobbyCountdown(playerId); } catch(_){}
+  try { spawnMode.set(String(playerId), true); } catch(_){}
+  try { ensureSurvivalGamemode(playerId); } catch(_){}
+  try { applyBlessingOptions(playerId, baseClientOptions()); } catch(_){}
+  try { applyMusic(playerId); } catch(_){}
+  try { api.setClientOption(playerId, "middleTextUpper", ""); } catch(_){}
+  try { closeShop(playerId); } catch(_){}
+  return true;
+}
+
 onBlockStandStart = (playerId, x, y, z, blockName) => {
+  if (handleFinishBlock(playerId, x, y, z, blockName)) return;
   onPadStart(playerId, x, y, z, difficultyForPadBlock(blockName));
 };
 

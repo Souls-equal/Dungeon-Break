@@ -194,9 +194,9 @@ test("a block belongs to the chunk that contains it, negatives included", () => 
 
 test("the shipped rooms are fifteen distinct chunks, two apart", () => {
   const list = templatesFor({ id: "veryEasy" }, () => {});
-  assert.equal(list.length, 18, "the table no longer holds the eighteen built rooms");
+  assert.equal(list.length, 20, "the table no longer holds the twenty built rooms");
   const chunks = new Set(list.map((room) => room.chunk.join("|")));
-  assert.equal(chunks.size, 18, "two rooms point at the same chunk: copying one would copy the other");
+  assert.equal(chunks.size, 20, "two rooms point at the same chunk: copying one would copy the other");
   for (let index = 1; index < list.length; index += 1) {
     assert.equal(list[index].chunk[0] - list[index - 1].chunk[0], -2,
       `rooms #${index - 1} and #${index} are not two chunks apart`);

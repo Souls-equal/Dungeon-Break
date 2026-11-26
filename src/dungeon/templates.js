@@ -92,13 +92,16 @@ export function chunkToBlock(chunkX, chunkY, chunkZ) {
  * coordinate to its chunk.
  */
 const READY_ROOMS = [
-  // The fifteen rooms that already exist, in the order of the series.
-  [-2, 1, 0],
+  // The rooms that already exist, in the order of the series.
+  // 3 salles marquées "chest" d'après les coords données (chest pos → chunk) :
+  // -49,41,16 → chunk -2,1,0 ; -356,50,9 → chunk -12,1,0 ; -953,40,15 → chunk -30,1,0
+  // Nouvelle salle -40,1,0 contient un Finish Block (→finish → retour lobby + gold)
+  [-2, 1, 0, "chest"],
   [-4, 1, 0],
   [-6, 1, 0],
   [-8, 1, 0],
   [-10, 1, 0],
-  [-12, 1, 0],
+  [-12, 1, 0, "chest"],
   [-14, 1, 0],
   [-16, 1, 0],
   [-18, 1, 0],
@@ -107,10 +110,12 @@ const READY_ROOMS = [
   [-24, 1, 0],
   [-26, 1, 0],
   [-28, 1, 0],
-  [-30, 1, 0],
+  [-30, 1, 0, "chest"],
   [-32, 1, 0],
   [-34, 1, 0],
   [-36, 1, 0],
+  [-38, 1, 0],
+  [-40, 1, 0, { kind: "finish", eventId: "finish" }],
 ];
 
 /** The sixty rooms still to build, in the same series. Uncomment as they land. */
