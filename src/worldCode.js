@@ -1171,7 +1171,7 @@ function onPadStop(playerId, x, y, z, difficulty) {
   handlePadLeave(playerId, difficulty, padKey(x, y, z));
 }
 
-// Finish Block — retour lobby + gold. Chunk -40,1,0 en contient un (et tout futur chunk qui en posera).
+// Finish Block — 5s hold to confirm, then back to lobby + gold. Chunk -40,1,0 has one (and any future chunk may).
 const FINISH_BLOCK_NAMES = new Set(["Finish Block", "finish block", "Finish", "finish"]);
 function isFinishBlock(blockName) {
   if (!blockName || typeof blockName !== "string") return false;
@@ -1180,47 +1180,127 @@ function isFinishBlock(blockName) {
 }
 const FINISH_REWARDS = { veryEasy:100, easy:200, normal:400, medium:800, hard:1500, insane:3000, nightmare:6000, hell:10000, endless:5000 };
 function finishRewardFor(difficulty) { return FINISH_REWARDS[difficulty?.id] ?? 250; }
-const finishCooldown = new Map(); // pid -> tick
-function handleFinishBlock(playerId, x, y, z, blockName) {
-  if (!isFinishBlock(blockName)) return false;
-  if (!service().inDungeon(playerId)) return false;
-  const now = tickNow();
-  const last = finishCooldown.get(String(playerId)) || -999;
-  if (now - last < 20) return true; // debounce 1s — reste appuyé
-  finishCooldown.set(String(playerId), now);
-  const dungeon = service().dungeonOf(playerId);
-  const reward = finishRewardFor(dungeon?.difficulty);
-  const gave = giveGold(playerId, reward);
+const FINISH_HOLD_SECONDS = 5;
+const finishCountdowns = {}; // playerId str -> { timer, secondsLeft, reward, difficulty, x,y,z, completed:false, cancelTimer?:timer }
+function showFinishCountdown(playerId, secondsLeft) {
   try {
-    api.sendMessage(playerId, [
-      { str: `Finish ! +${reward} gold`, style:{color:"#ffd700", fontWeight:"bold"} },
-      ...(gave ? [] : [{str:" (gold error)", style:{color:"#ff5555"}}]),
-      { str: ` — retour au lobby`, style:{color:"#aaaaaa"} },
+    api.setClientOption(playerId, "middleTextUpper", [
+      { str: { translationKey: "greenvilleGame:spleefGameStartCounter", params: { seconds: `${secondsLeft}s` } }, style: { color: "#ffd700" } },
+    ]);
+    api.setClientOption(playerId, "middleTextLower", [
+      { str: "Stay on Finish Block to return to spawn", style: { color: "#aaaaaa" } },
     ]);
   } catch(_){}
-  try { spawnParticles(api, [x+0.5, y+1, z+0.5], PRESETS.crateFountain("#FFD700", "Legendary"), {radius:0.6, height:1.5}); } catch(_){}
-  // même nettoyage que le shop "Teleport to spawn"
-  try { cleanupReviveForPlayer(String(playerId)); } catch(_){}
-  try { removePlayerFromTeam(String(playerId)); } catch(_){}
+}
+function clearFinishHud(playerId) {
+  try { api.setClientOption(playerId, "middleTextUpper", ""); } catch(_){}
+  try { api.setClientOption(playerId, "middleTextLower", ""); } catch(_){}
+}
+function clearFinishForPlayer(playerId) {
+  const pidStr = String(playerId);
+  const cd = finishCountdowns[pidStr];
+  if (!cd) return;
+  try { if (cd.timer) cd.timer.stop(); } catch(_){}
+  try { if (cd.cancelTimer) cd.cancelTimer.stop(); } catch(_){}
+  delete finishCountdowns[pidStr];
+  clearFinishHud(playerId);
+}
+function completeFinishCountdown(playerId) {
+  const pidStr = String(playerId);
+  const countdown = finishCountdowns[pidStr];
+  if (!countdown || countdown.completed) return;
+  if (countdown.timer) try { countdown.timer.stop(); } catch(_){}
+  if (countdown.cancelTimer) try { countdown.cancelTimer.stop(); } catch(_){}
+  countdown.completed = true;
+  delete finishCountdowns[pidStr];
+  clearFinishHud(playerId);
+  // reward + single message with Gold Coin icon (no second message from endRun)
+  const reward = countdown.reward;
+  try { giveGold(playerId, reward); } catch(_){}
+  try {
+    api.sendMessage(playerId, [
+      { str: `Run finished! +${reward} `, style:{ color:"#55ff55", fontWeight:"bold"} },
+      { icon: "Gold Coin", style:{ color:"#ffd700"} },
+    ]);
+  } catch(_) { try { api.sendMessage(playerId, `Run finished! +${reward} gold`); } catch(_){} }
+  try { spawnParticles(api, [countdown.x+0.5, countdown.y+1, countdown.z+0.5], PRESETS.crateFountain("#FFD700", "Legendary"), {radius:0.6, height:1.5}); } catch(_){}
+  try { cleanupReviveForPlayer(pidStr); } catch(_){}
+  try { removePlayerFromTeam(pidStr); } catch(_){}
   try { service().teleportToSpawn(playerId); } catch(_) { try{ api.setPosition(playerId, LOBBY_POSITION);}catch(_){} }
   try { clearAllArrows(playerId); } catch(_){}
-  try { endRun(playerId, [cStr("Run finished — back to lobby", MSG_COLORS.gray)]); } catch(_){}
+  try { endRun(playerId, ""); } catch(_){} // no message — already sent above
   try { stopLobbyCountdown(playerId); } catch(_){}
-  try { spawnMode.set(String(playerId), true); } catch(_){}
+  try { spawnMode.set(pidStr, true); } catch(_){}
   try { ensureSurvivalGamemode(playerId); } catch(_){}
   try { applyBlessingOptions(playerId, baseClientOptions()); } catch(_){}
   try { applyMusic(playerId); } catch(_){}
-  try { api.setClientOption(playerId, "middleTextUpper", ""); } catch(_){}
   try { closeShop(playerId); } catch(_){}
+}
+function deferFinishCancellation(playerId, countdown) {
+  if (countdown.cancelTimer) return;
+  countdown.cancelTimer = scheduleTimeout(() => {
+    countdown.cancelTimer = null;
+    if (finishCountdowns[String(playerId)] !== countdown) return;
+    if (countdown.secondsLeft <= 1) { completeFinishCountdown(playerId); return; }
+    try { countdown.timer.stop(); } catch(_){}
+    delete finishCountdowns[String(playerId)];
+    clearFinishHud(playerId);
+    try { api.sendMessage(playerId, [cStr("Countdown cancelled", MSG_COLORS.gray)]); } catch(_){}
+  }, LOBBY_CONFIG.padSwitchGraceTicks);
+}
+function startFinishCountdown(playerId, x, y, z, blockName) {
+  if (!isFinishBlock(blockName)) return false;
+  if (!service().inDungeon(playerId)) return false;
+  const pidStr = String(playerId);
+  if (finishCountdowns[pidStr]) {
+    const existing = finishCountdowns[pidStr];
+    if (existing.cancelTimer) { try { existing.cancelTimer.stop(); } catch(_){} existing.cancelTimer = null; }
+    return true; // already counting — don't restart
+  }
+  const dungeon = service().dungeonOf(playerId);
+  const reward = finishRewardFor(dungeon?.difficulty);
+  const countdown = { secondsLeft: FINISH_HOLD_SECONDS, reward, difficulty: dungeon?.difficulty || null, x, y, z, completed:false, timer:null, cancelTimer:null };
+  finishCountdowns[pidStr] = countdown;
+  // particles + initial HUD
+  try {
+    spawnParticles(api, [x+0.5, y+0.5, z+0.5], PRESETS.padRing("#FFD700"), { radius: 0.9, height: 0.1 });
+    api.sendMessage(playerId, [cStr("Finish Block", MSG_COLORS.gold), cStr(` · ${FINISH_HOLD_SECONDS}s`, MSG_COLORS.white)]);
+  } catch(_){}
+  showFinishCountdown(playerId, countdown.secondsLeft);
+  countdown.timer = scheduleInterval(() => {
+    if (finishCountdowns[pidStr] !== countdown) { try { countdown.timer.stop(); } catch(_){} return; }
+    try {
+      spawnParticles(api, [countdown.x+0.5, countdown.y+0.5, countdown.z+0.5], PRESETS.padTick("#FFD700"), { radius: 0.5, height: 0.8 });
+    } catch(_){}
+    countdown.secondsLeft -= 1;
+    if (countdown.secondsLeft <= 0) { completeFinishCountdown(playerId); return; }
+    showFinishCountdown(playerId, countdown.secondsLeft);
+  }, LOBBY_CONFIG.ticksPerSecond);
   return true;
+}
+function cancelFinishCountdown(playerId, blockName) {
+  // blockName may be undefined on teleport/death — only filter if provided and is finish
+  if (blockName && !isFinishBlock(blockName)) return false;
+  const pidStr = String(playerId);
+  const countdown = finishCountdowns[pidStr];
+  if (!countdown) return false;
+  // final-tick grace: if at 1s left, still complete instead of cancelling (same as lobby pads)
+  if (countdown.secondsLeft <= 1) { completeFinishCountdown(playerId); return true; }
+  deferFinishCancellation(playerId, countdown);
+  return true;
+}
+function handleFinishBlock(playerId, x, y, z, blockName) {
+  // kept for backwards compat — now delegates to hold countdown
+  return startFinishCountdown(playerId, x, y, z, blockName);
 }
 
 onBlockStandStart = (playerId, x, y, z, blockName) => {
-  if (handleFinishBlock(playerId, x, y, z, blockName)) return;
+  if (startFinishCountdown(playerId, x, y, z, blockName)) return;
   onPadStart(playerId, x, y, z, difficultyForPadBlock(blockName));
 };
 
 onBlockStandStop = (playerId, x, y, z, blockName) => {
+  if (cancelFinishCountdown(playerId, blockName)) return;
   onPadStop(playerId, x, y, z, difficultyForPadBlock(blockName));
 };
 
@@ -2433,6 +2513,7 @@ onPlayerBoughtShopItem = (playerId, categoryKey, itemKey, itemOrInput, userInput
   // Teleport and forget are one call, so the tick can never see a player at spawn
   // with a dungeon: `teleportToSpawn` moves first, then drops the record.
 
+  try { clearFinishForPlayer(playerId); } catch(_){}
   try { cleanupReviveForPlayer(String(playerId)); } catch(_){}
   try { removePlayerFromTeam(String(playerId)); } catch(_){}
   service().teleportToSpawn(playerId);
@@ -2590,6 +2671,7 @@ onPlayerToggledShopMenu = (playerId, isOpen) => {
 };
 
 onPlayerLeave = (playerId) => {
+  try { clearFinishForPlayer(playerId); } catch(_){}
   try { cleanupReviveForPlayer(String(playerId)); } catch(_){}
   try { removePlayerFromTeam(String(playerId)); } catch(_){}
   try {
@@ -3112,6 +3194,7 @@ onRespawnRequest = (playerId) => {
     }
   } catch(_){}
   // Normal death -> cleanup revive state and team
+  try { clearFinishForPlayer(playerId); } catch(_){}
   try { cleanupReviveForPlayer(pidStr); } catch(_){}
   try { removePlayerFromTeam(pidStr); } catch(_){}
   stopLobbyCountdown(playerId);

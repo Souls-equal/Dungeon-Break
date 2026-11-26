@@ -93,9 +93,9 @@ export function chunkToBlock(chunkX, chunkY, chunkZ) {
  */
 const READY_ROOMS = [
   // The rooms that already exist, in the order of the series.
-  // 3 salles marquées "chest" d'après les coords données (chest pos → chunk) :
+  // 3 rooms tagged "chest" from given coords (chest pos → chunk):
   // -49,41,16 → chunk -2,1,0 ; -356,50,9 → chunk -12,1,0 ; -953,40,15 → chunk -30,1,0
-  // Nouvelle salle -40,1,0 contient un Finish Block (→finish → retour lobby + gold)
+  // New room -40,1,0 contains a Finish Block (finish → back to lobby + gold)
   [-2, 1, 0, "chest"],
   [-4, 1, 0],
   [-6, 1, 0],
