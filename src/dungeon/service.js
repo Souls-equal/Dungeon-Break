@@ -14,6 +14,7 @@
  */
 
 import { setTimeout as scheduleTimeout } from "../utils/scheduler.js";
+import { track } from "../utils/analytics.js";
 import { chestOfClick, drawChestKey, openChest } from "./loot.js";
 import { keyItemName } from "./reward.js";
 import {
@@ -329,10 +330,16 @@ export function createDungeonService(options) {
     return true;
   }
 
+  function trackDungeonLeave(playerId) {
+    try { track(playerId, "dungeon", "leave"); } catch(_){}
+  }
+
   /** Sends a player back to the lobby. Every exit goes through here. */
   function leave(playerId) {
+    const wasInDungeon = inDungeon(playerId);
     stopBuilding(playerId);
     api.setPosition(playerId, LOBBY_POSITION);
+    if (wasInDungeon) trackDungeonLeave(playerId);
   }
 
   /**
@@ -349,6 +356,7 @@ export function createDungeonService(options) {
     const wasInDungeon = inDungeon(playerId);
     api.setPosition(playerId, LOBBY_POSITION);
     stopBuilding(playerId);
+    if (wasInDungeon) trackDungeonLeave(playerId);
     return wasInDungeon;
   }
 

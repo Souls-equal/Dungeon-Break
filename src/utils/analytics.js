@@ -78,9 +78,10 @@ export function trackPos(playerId, gameCategoryId = null) {
 }
 
 // Minimal analytics — que l'important (limite journalière Bloxd)
-// Gardé: kill, tutorial crate, tutorial dungeon
+// Gardé: kill, tutorial crate, tutorial dungeon, + dungeon leave (peu importe le moyen)
 export const Analytics = {
   mobKill: (pid, props={}) => track(pid, "combat", "kill", props),
   tutorialCrate: (pid, props={}) => track(pid, "tutorial", "crate_opened", props),
   tutorialDungeon: (pid, props={}) => track(pid, "tutorial", "complete", props),
+  dungeonLeave: (pid, props={}) => track(pid, "dungeon", "leave", props),
 };
