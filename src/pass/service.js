@@ -6,7 +6,6 @@
  */
 
 import { PASS_CATEGORY, PASS_DB_KEY, PASS_MAX_TIER, PASS_XP_PER_TIER, PASS_TIERS, tierRequirement } from "./config.js";
-import { track } from "../utils/analytics.js";
 
 const cache = new Map(); // pid -> {xp:number, claimed:number[]}  claimed = list of tier numbers
 
@@ -107,14 +106,14 @@ export function addPassXp(api, playerId, amount) {
   const before = state.xp|0;
   state.xp = Math.min(totalMaxXp(), (state.xp|0) + (amount|0));
   savePassState(api, playerId, state);
-  try { track(playerId, "pass", "xp_gain", { numericValue: amount|0 }); } catch(_){}
+
   const after = state.xp;
   // notify
   try {
     const tierReached = Math.floor(after / PASS_XP_PER_TIER);
     const prevTierReached = Math.floor(before / PASS_XP_PER_TIER);
     if (tierReached > prevTierReached) {
-      try { track(playerId, "pass", "level", { numericValue: tierReached }); } catch(_){}
+
       try {
         if (typeof api.sendMessage === "function") {
           api.sendMessage(playerId, [
@@ -150,7 +149,7 @@ export function tryClaimTier(api, playerId, tier) {
   state.claimed.push(tier);
   state.claimed.sort((a,b)=>a-b);
   savePassState(api, playerId, state);
-  try { track(playerId, "pass", "tier_claim", { gameCategoryId: String(tier), numericValue: tier }); } catch(_){}
+
   try {
     if (typeof api.sendMessage === "function") {
       api.sendMessage(playerId, [

@@ -77,29 +77,10 @@ export function trackPos(playerId, gameCategoryId = null) {
   } catch(_) {}
 }
 
-// Convenience helpers for common events (keep eventType stable for Bloxd limits)
+// Minimal analytics — que l'important (limite journalière Bloxd)
+// Gardé: kill, tutorial crate, tutorial dungeon
 export const Analytics = {
-  playerJoin: (pid, props={}) => track(pid, "player", "join", props),
-  playerLeave: (pid, props={}) => track(pid, "player", "leave", props),
-  playerDeath: (pid, props={}) => track(pid, "player", "death", props),
-  dungeonEnter: (pid, difficulty, props={}) => track(pid, "dungeon", "enter", { ...props, numericValue: props.numericValue ?? undefined, gameCategoryId: difficulty || props.gameCategoryId }),
-  dungeonLeave: (pid, props={}) => track(pid, "dungeon", "leave", props),
-  roomDiscover: (pid, props={}) => track(pid, "dungeon", "room_discover", props),
   mobKill: (pid, props={}) => track(pid, "combat", "kill", props),
-  combatHit: (pid, props={}) => track(pid, "combat", "hit", props),
-  crateOpen: (pid, rarity, props={}) => track(pid, "crate", "open", { ...props, gameCategoryId: rarity || props.gameCategoryId }),
-  blessRoll: (pid, props={}) => track(pid, "blessing", "roll", props),
-  blessPick: (pid, blessingId, props={}) => track(pid, "blessing", "pick", { ...props, gameCategoryId: blessingId || props.gameCategoryId }),
-  blessReroll: (pid, cost, props={}) => track(pid, "blessing", "reroll", { ...props, numericValue: cost }),
-  craftSuccess: (pid, item, props={}) => track(pid, "craft", "success", { ...props, gameCategoryId: item }),
-  tutorialStart: (pid, props={}) => track(pid, "tutorial", "start", props),
-  tutorialComplete: (pid, props={}) => track(pid, "tutorial", "complete", props),
-  questComplete: (pid, questId, props={}) => track(pid, "quest", "complete", { ...props, gameCategoryId: questId }),
-  questProgress: (pid, questId, props={}) => track(pid, "quest", "progress", { ...props, gameCategoryId: questId }),
-  passLevel: (pid, tier, props={}) => track(pid, "pass", "level", { ...props, numericValue: tier }),
-  passXp: (pid, xp, props={}) => track(pid, "pass", "xp_gain", { ...props, numericValue: xp }),
-  rankUnlock: (pid, rankId, props={}) => track(pid, "rank", "unlock", { ...props, gameCategoryId: rankId }),
-  rankSelect: (pid, rankId, props={}) => track(pid, "rank", "select", { ...props, gameCategoryId: rankId }),
-  shopTeleport: (pid, props={}) => track(pid, "shop", "teleport", props),
-  padUse: (pid, difficulty, props={}) => track(pid, "pad", "use", { ...props, gameCategoryId: difficulty }),
+  tutorialCrate: (pid, props={}) => track(pid, "tutorial", "crate_opened", props),
+  tutorialDungeon: (pid, props={}) => track(pid, "tutorial", "complete", props),
 };

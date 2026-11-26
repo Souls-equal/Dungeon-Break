@@ -21,7 +21,7 @@ import {
   setTimeout as scheduleTimeout,
   step as stepScheduler,
 } from "./utils/scheduler.js";
-import { track, Analytics } from "./utils/analytics.js";
+import { track } from "./utils/analytics.js";
 import { DIFFICULTIES, DUNGEON_CONFIG, difficultyForPadBlock, priceForDifficulty, formatGold, UNLOCK_CURRENCY, UNLOCK_DB_KEY, DUNGEON_PRICES, mobAuraFor } from "./dungeon/config.js";
 import { LOBBY_POSITION, createDungeonService } from "./dungeon/service.js";
 import { isChestBlock } from "./dungeon/loot.js";
@@ -272,7 +272,7 @@ function service() {
       },
       onRoomDiscovered: (playerId, chunkX, chunkZ, difficulty) => {
         try { onQuestRoomDiscovered(api, playerId); } catch(e) { reportErrorToOwner(e); }
-        try { track(playerId, "dungeon", "room_discover", { gameCategoryId: difficulty ? difficulty.id : null }); } catch(_){}
+
         try {
           const newly = ranks().recordRoom(playerId);
           if (newly && newly.length) handleRankUnlocks(playerId, newly);
@@ -495,7 +495,7 @@ function completeLobbyCountdown(playerIdOrGroup, countdownMaybe) {
       }
       if (entered) {
         try { onQuestDungeonEntered(api, pid); } catch(e) { reportErrorToOwner(e); }
-        try { track(pid, "dungeon", "enter", { gameCategoryId: difficulty ? difficulty.id : null }); Analytics.padUse(pid, difficulty ? difficulty.id : null); } catch(_){}
+
         spawnMode.set(String(pid), false);
         ensureSurvivalGamemode(pid);
         applyBlessingOptions(pid, baseClientOptions());
@@ -1127,7 +1127,7 @@ function onPadStart(playerId, x, y, z, difficulty) {
     const progressed = service().usePad(playerId);
     if (progressed) {
       try { onQuestDungeonEntered(api, playerId); } catch(e) { reportErrorToOwner(e); }
-    try { track(playerId, "dungeon", "enter", { gameCategoryId: difficulty ? difficulty.id : null }); Analytics.padUse(playerId, difficulty ? difficulty.id : null); } catch(_){}
+
       spawnMode.set(String(playerId), false);
       ensureSurvivalGamemode(playerId);
       applyBlessingOptions(playerId, baseClientOptions());
@@ -2360,7 +2360,7 @@ onPlayerBoughtShopItem = (playerId, categoryKey, itemKey, itemOrInput, userInput
   if (categoryKey !== SHOP_CATEGORY || itemKey !== SPAWN_ITEM) return;
   // Teleport and forget are one call, so the tick can never see a player at spawn
   // with a dungeon: `teleportToSpawn` moves first, then drops the record.
-  try { track(playerId, "shop", "teleport", { gameCategoryId: "spawn" }); track(playerId, "dungeon", "leave", { gameCategoryId: "teleport" }); } catch(_){}
+
   try { cleanupReviveForPlayer(String(playerId)); } catch(_){}
   try { removePlayerFromTeam(String(playerId)); } catch(_){}
   service().teleportToSpawn(playerId);
@@ -2423,7 +2423,7 @@ tick = () => {
 };
 
 onPlayerJoin = (playerId) => {
-  try { track(playerId, "player", "join", { noPos: true }); } catch(_){}
+
   // Crafts custom: shards -> materials -> armors (12 sets, 72 recipes) + renames/descriptions
   try { registerCraftingRecipes(api, playerId); } catch(e) { reportErrorToOwner(e); }
   try { applyItemStats(api, playerId); } catch(e) { reportErrorToOwner(e); }
@@ -2535,7 +2535,7 @@ onPlayerLeave = (playerId) => {
       }
     }
   } catch(_){}
-  try { track(playerId, "player", "leave"); } catch(_){}
+
   stopLobbyCountdown(playerId);
   try {
     api.setClientOption(playerId, "middleTextUpper", "");
@@ -2631,7 +2631,7 @@ onPlayerClick = (playerId, wasAltClick, x, y, z, block, targetEId) => {
   // know what a chest gives to know what a chest is.
   if (targetEId) return;
   if (!isChestBlock(block)) return;
-  try { track(playerId, "crate", "click"); } catch(_){}
+
   try {
     service().clickPosition(playerId, [x, y, z]);
   } catch (error) {
@@ -2723,7 +2723,7 @@ onMobDespawned = (mobId) => {
 };
 // Ne plus utiliser isAlive (pas fiable) — on track les deletes avec onEntityDeleted (ajout 28 Aug 2026)
 onPlayerCrafted = (playerId, recipeName, amount) => {
-  try { track(playerId, "craft", "success", { gameCategoryId: String(recipeName||"unknown"), numericValue: Number(amount)||1 }); } catch(_){}
+
 };
 onEntityDeleted = (entityId) => {
   try { markEntityDeleted(entityId); } catch(e) { reportErrorToOwner(e); }
@@ -2767,7 +2767,7 @@ onPlayerDamagingMob = (playerId, mobId, damageDealt, ...rest) => {
     }
   } catch(_){}
   try { if (Number.isFinite(Number(damageDealt)) && Number(damageDealt)>0) onQuestDamageDealt(api, playerId, Number(damageDealt)); } catch(e){ reportErrorToOwner(e); }
-  try { if (Number.isFinite(Number(damageDealt)) && Number(damageDealt)>0) track(playerId, "combat", "hit", { numericValue: Number(damageDealt) }); } catch(_){}
+
   let baseDmg = Number(damageDealt);
   const hasBase = Number.isFinite(baseDmg);
   // Custom weapon detection: if player holds one of our sets, damage stat is already effective
@@ -2831,7 +2831,7 @@ onMobDamagingPlayer = (mobId, playerId, damageDealt, ...rest) => {
     const maybeVictim2 = String(mobId);
     if (isReviveImmune(maybeVictim1) || isReviveImmune(maybeVictim2) || isDowned(maybeVictim1) || isDowned(maybeVictim2)) return "preventDamage";
   } catch(_){}
-  try { if (Number.isFinite(Number(damageDealt)) && Number(damageDealt)>0) track((Number.isFinite(Number(playerId)) ? playerId : mobId), "combat", "damage_taken", { numericValue: Number(damageDealt) }); } catch(_){}
+
   try { if (Number.isFinite(Number(damageDealt)) && Number(damageDealt)>0) { const _pid = (Number.isFinite(Number(playerId)) ? playerId : mobId); onQuestDamageTaken(api, _pid, Number(damageDealt)); } } catch(e){ reportErrorToOwner(e); }
   let scaled = undefined;
   let pid = playerId;
