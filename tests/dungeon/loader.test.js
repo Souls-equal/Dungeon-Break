@@ -939,7 +939,9 @@ test("entering a room puts mobs in the four rooms around it, never in the room i
   }
   assert.equal(level.mobs.has("0|0"), false, "the room the player is in was populated");
   // Nothing is marked clear by entering a room: a room is clear when its last mob dies.
-  assert.deepEqual(server.calls.setBlockData, [], "entering a room wrote a clear record");
+  // Corner stamping (kind/templateIndex) happens on copy, not on enter — filter for clear.
+  const clears = server.calls.setBlockData.filter(c => c.data && c.data.clear);
+  assert.deepEqual(clears, [], "entering a room wrote a clear record");
 });
 
 test("the mobs stand at the player's height, and never inside a plant or a wall", () => {

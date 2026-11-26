@@ -210,11 +210,18 @@ test("a room has nothing to declare but a chunk", () => {
   // No faces, no spawn flag, no height: the table is a list of coordinates. This
   // asserts the shape rather than trusting a comment, because a leftover property
   // is a promise the generator would silently stop honouring.
+  // Since the corner-block metadata feature, a room may carry kind/meta/eventId — still just a chunk plus optional identity.
   const saved = globalThis.ROOM_TEMPLATES;
   globalThis.ROOM_TEMPLATES = { rooms: [[-2, 1, 0]] };
   try {
     const [room] = templatesFor({ id: "veryEasy" }, () => {});
-    assert.deepEqual(Object.keys(room).sort(), ["chunk", "index", "src"]);
+    const keys = Object.keys(room).sort();
+    assert.ok(keys.includes("chunk") && keys.includes("index") && keys.includes("src"), `missing core keys: ${keys}`);
+    // allowed keys: core + kind/meta/eventId
+    const allowed = new Set(["chunk", "index", "src", "kind", "meta", "eventId"]);
+    for (const k of keys) assert.ok(allowed.has(k), `unexpected room key ${k}`);
+    // still no legacy props
+    assert.equal(room.faces, undefined, "a shipped room still carries faces");
   } finally {
     globalThis.ROOM_TEMPLATES = saved;
   }

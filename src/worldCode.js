@@ -277,16 +277,12 @@ function service() {
           const newly = ranks().recordRoom(playerId);
           if (newly && newly.length) handleRankUnlocks(playerId, newly);
         } catch(e) { reportErrorToOwner(e); }
-        // particules room clear: anneau + burst
-        try {
-          const col = difficulty ? (DIFFICULTY_COLOR[difficulty.id] || "#FFD700") : "#FFD700";
-          const cx = chunkX * 32 + 16;
-          const cz = chunkZ * 32 + 16;
-          // y from player pos or difficulty floor
-          let y = 0;
-          try { const p = api.getPosition(playerId); if(p) y = p[1]; } catch(e) { reportErrorToOwner(e); }
-          spawnParticles(api, [cx, y+0.5, cz], PRESETS.roomClear(col), { radius: 1.2, height: 1.2 });
-        } catch(e) { reportErrorToOwner(e); }
+        // NOTE: plus de particules génériques ici — elles étaient visibles seulement
+        // dans les salles ouvertes (coffre) car cachées par les murs ailleurs, d'où la
+        // confusion “salle à coffre”. La salle porte désormais son identité dans le
+        // bloc coin `[0,0,0]` (getBlockData/setBlockData) : kind/event/templateIndex.
+        // Si un effet est voulu, lire `getRoomData` et n'afficher que pour kind==="chest"
+        // ou eventId précis, plutôt que pour chaque découverte.
       },
     });
   }

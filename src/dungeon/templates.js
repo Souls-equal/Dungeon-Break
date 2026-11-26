@@ -181,15 +181,48 @@ globalThis.ROOM_TEMPLATES = globalThis.ROOM_TEMPLATES || {
   rooms: READY_ROOMS,
 };
 
-/** A room, as the engine uses it: a world block coordinate and its chunk. */
+/** Extra room info builders can put in the table: kind, eventId, … */
+function roomMetaFrom(entry) {
+  if (!entry || typeof entry !== "object") return {};
+  // Entry itself may be the meta shorthand: "chest" string
+  if (typeof entry === "string") return { kind: entry };
+  const out = {};
+  if (typeof entry.kind === "string") out.kind = entry.kind;
+  if (typeof entry.eventId === "string") out.eventId = entry.eventId;
+  if (typeof entry.event === "string") out.eventId = entry.event;
+  if (typeof entry.type === "string" && !out.kind) out.kind = entry.type;
+  // any other plain keys (difficulty, preset…) forwarded as-is
+  for (const k of Object.keys(entry)) {
+    if (k === "chunk" || k === "src" || k === "pos" || k === "kind" || k === "eventId" || k === "event" || k === "type") continue;
+    const v = entry[k];
+    if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") out[k] = v;
+  }
+  return out;
+}
+
+/** A room, as the engine uses it: a world block coordinate and its chunk + optional meta. */
 function roomFrom(entry, index, log) {
+  // Shorthand: [-2,1,0, "chest"] or [-2,1,0, {kind:"event", eventId:"trap"}]
+  if (Array.isArray(entry) && (entry.length === 4 || entry.length === 3)) {
+    const nums = entry.slice(0, 3);
+    if (nums.some((value) => typeof value !== "number" || !Number.isFinite(value))) {
+      // not a chunk triple — fall through to object handling
+    } else {
+      const chunk = [Math.floor(nums[0]), Math.floor(nums[1]), Math.floor(nums[2])];
+      const src = chunkToBlock(chunk[0], chunk[1], chunk[2]);
+      if (entry.length === 3) return { index, chunk, src, kind: "normal", meta: {} };
+      const metaRaw = entry[3];
+      const meta = typeof metaRaw === "string" ? { kind: metaRaw } : (metaRaw && typeof metaRaw === "object" ? roomMetaFrom(metaRaw) : {});
+      return { index, chunk, src, kind: meta.kind || "normal", eventId: meta.eventId || null, meta };
+    }
+  }
   if (Array.isArray(entry) && entry.length === 3) {
     if (entry.some((value) => typeof value !== "number" || !Number.isFinite(value))) {
       if (log) log(`room #${index} has a non-numeric chunk coordinate`);
       return null;
     }
     const chunk = [Math.floor(entry[0]), Math.floor(entry[1]), Math.floor(entry[2])];
-    return { index, chunk, src: chunkToBlock(chunk[0], chunk[1], chunk[2]) };
+    return { index, chunk, src: chunkToBlock(chunk[0], chunk[1], chunk[2]), kind: "normal", meta: {} };
   }
   // A full `[x, y, z]` in blocks, for a room that is not on the chunk grid. The
   // engine copies the whole chunk anyway, so this is only a convenience.
@@ -200,7 +233,20 @@ function roomFrom(entry, index, log) {
       return null;
     }
     const chunk = src.map((value) => Math.floor(value / 32));
-    return { index, chunk, src };
+    const meta = roomMetaFrom(entry);
+    return { index, chunk, src, kind: meta.kind || "normal", eventId: meta.eventId || null, meta };
+  }
+  // Object with chunk: { chunk:[x,y,z], kind:"chest", eventId:"..." }
+  if (entry && (Array.isArray(entry.chunk) || Array.isArray(entry.pos))) {
+    const arr = entry.chunk || entry.pos;
+    if (!Array.isArray(arr) || arr.length !== 3 || arr.some((v) => typeof v !== "number" || !Number.isFinite(v))) {
+      if (log) log(`room #${index} has a non-numeric chunk coordinate`);
+      return null;
+    }
+    const chunk = [Math.floor(arr[0]), Math.floor(arr[1]), Math.floor(arr[2])];
+    const src = chunkToBlock(chunk[0], chunk[1], chunk[2]);
+    const meta = roomMetaFrom(entry);
+    return { index, chunk, src, kind: meta.kind || "normal", eventId: meta.eventId || null, meta };
   }
   if (log) log(`room #${index} is not a chunk coordinate [x, y, z]`);
   return null;
