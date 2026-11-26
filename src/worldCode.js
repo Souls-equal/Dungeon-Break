@@ -1232,13 +1232,14 @@ const FINISH_REWARDS = { veryEasy:100, easy:200, normal:400, medium:800, hard:15
 function finishRewardFor(difficulty) { return FINISH_REWARDS[difficulty?.id] ?? 250; }
 const FINISH_HOLD_SECONDS = 5;
 const finishCountdowns = {}; // playerId str -> { timer, secondsLeft, reward, difficulty, x,y,z, completed:false, cancelTimer?:timer }
+const finishPadState = {}; // playerId str -> Set<padKey> — tous les Finish Blocks sur lesquels le joueur est (même principe que lobby)
 function showFinishCountdown(playerId, secondsLeft) {
   try {
     api.setClientOption(playerId, "middleTextUpper", [
-      { str: { translationKey: "greenvilleGame:spleefGameStartCounter", params: { seconds: `${secondsLeft}s` } }, style: { color: "#ffd700" } },
+      { str: `Returning to spawn in ${secondsLeft}s`, style: { color: "#ffd700", fontWeight: "bold" } },
     ]);
     api.setClientOption(playerId, "middleTextLower", [
-      { str: "Stay on Finish Block to return to spawn", style: { color: "#aaaaaa" } },
+      { str: "Stay on Finish Block to leave", style: { color: "#aaaaaa" } },
     ]);
   } catch(_){}
 }
@@ -1249,10 +1250,12 @@ function clearFinishHud(playerId) {
 function clearFinishForPlayer(playerId) {
   const pidStr = String(playerId);
   const cd = finishCountdowns[pidStr];
-  if (!cd) return;
-  try { if (cd.timer) cd.timer.stop(); } catch(_){}
-  try { if (cd.cancelTimer) cd.cancelTimer.stop(); } catch(_){}
-  delete finishCountdowns[pidStr];
+  if (cd) {
+    try { if (cd.timer) cd.timer.stop(); } catch(_){}
+    try { if (cd.cancelTimer) cd.cancelTimer.stop(); } catch(_){}
+    delete finishCountdowns[pidStr];
+  }
+  delete finishPadState[pidStr];
   clearFinishHud(playerId);
 }
 function completeFinishCountdown(playerId) {
@@ -1263,6 +1266,7 @@ function completeFinishCountdown(playerId) {
   if (countdown.cancelTimer) try { countdown.cancelTimer.stop(); } catch(_){}
   countdown.completed = true;
   delete finishCountdowns[pidStr];
+  delete finishPadState[pidStr];
   clearFinishHud(playerId);
   // reward + single message with Gold Coin icon (no second message from endRun)
   const reward = countdown.reward;
@@ -1291,9 +1295,14 @@ function deferFinishCancellation(playerId, countdown) {
   countdown.cancelTimer = scheduleTimeout(() => {
     countdown.cancelTimer = null;
     if (finishCountdowns[String(playerId)] !== countdown) return;
+    // si le joueur est encore sur au moins un Finish Block, on n'annule pas (changement de bloc)
+    const pads = finishPadState[String(playerId)];
+    if (pads && pads.size > 0) return;
     if (countdown.secondsLeft <= 1) { completeFinishCountdown(playerId); return; }
     try { countdown.timer.stop(); } catch(_){}
     delete finishCountdowns[String(playerId)];
+    // pads déjà vide, mais on nettoie
+    delete finishPadState[String(playerId)];
     clearFinishHud(playerId);
     try { api.sendMessage(playerId, [cStr("Countdown cancelled", MSG_COLORS.gray)]); } catch(_){}
   }, LOBBY_CONFIG.padSwitchGraceTicks);
@@ -1302,19 +1311,30 @@ function startFinishCountdown(playerId, x, y, z, blockName) {
   if (!isFinishBlock(blockName)) return false;
   if (!service().inDungeon(playerId)) return false;
   const pidStr = String(playerId);
+  const key = padKey(x, y, z);
+  let pads = finishPadState[pidStr];
+  if (!pads) { pads = new Set(); finishPadState[pidStr] = pads; }
+  const alreadyOnThisPad = pads.has(key);
+  pads.add(key);
+
   if (finishCountdowns[pidStr]) {
     const existing = finishCountdowns[pidStr];
     if (existing.cancelTimer) { try { existing.cancelTimer.stop(); } catch(_){} existing.cancelTimer = null; }
+    // ne pas reset le timer quand on passe d'un Finish à un autre
     return true; // already counting — don't restart
+  }
+  // nouveau countdown
+  if (alreadyOnThisPad && pads.size === 1) {
+    // déjà sur ce pad exact sans timer (cas rare après cancel) — on continue
   }
   const dungeon = service().dungeonOf(playerId);
   const reward = finishRewardFor(dungeon?.difficulty);
-  const countdown = { secondsLeft: FINISH_HOLD_SECONDS, reward, difficulty: dungeon?.difficulty || null, x, y, z, completed:false, timer:null, cancelTimer:null };
+  const countdown = { secondsLeft: FINISH_HOLD_SECONDS, reward, difficulty: dungeon?.difficulty || null, x, y, z, completed:false, timer:null, cancelTimer:null, pads };
   finishCountdowns[pidStr] = countdown;
-  // particles + initial HUD
+  // particles + initial HUD — message distinct du lobby
   try {
     spawnParticles(api, [x+0.5, y+0.5, z+0.5], PRESETS.padRing("#FFD700"), { radius: 0.9, height: 0.1 });
-    api.sendMessage(playerId, [cStr("Finish Block", MSG_COLORS.gold), cStr(` · ${FINISH_HOLD_SECONDS}s`, MSG_COLORS.white)]);
+    api.sendMessage(playerId, [cStr("Leaving in ", MSG_COLORS.white), cStr(`${FINISH_HOLD_SECONDS}s`, MSG_COLORS.gold), cStr(" — stay to return to spawn", MSG_COLORS.gray)]);
   } catch(_){}
   showFinishCountdown(playerId, countdown.secondsLeft);
   countdown.timer = scheduleInterval(() => {
@@ -1328,12 +1348,29 @@ function startFinishCountdown(playerId, x, y, z, blockName) {
   }, LOBBY_CONFIG.ticksPerSecond);
   return true;
 }
-function cancelFinishCountdown(playerId, blockName) {
+function cancelFinishCountdown(playerId, x, y, z, blockName) {
   // blockName may be undefined on teleport/death — only filter if provided and is finish
   if (blockName && !isFinishBlock(blockName)) return false;
   const pidStr = String(playerId);
   const countdown = finishCountdowns[pidStr];
-  if (!countdown) return false;
+  if (!countdown) {
+    // pas de countdown mais on nettoie le pad tout de même
+    const padsNoCd = finishPadState[pidStr];
+    if (padsNoCd && x !== undefined) { padsNoCd.delete(padKey(x,y,z)); if (padsNoCd.size===0) delete finishPadState[pidStr]; }
+    return false;
+  }
+  // retire ce pad précis du set
+  if (x !== undefined && y !== undefined && z !== undefined) {
+    const pads = finishPadState[pidStr];
+    if (pads) { pads.delete(padKey(x,y,z)); if (pads.size > 0) return true; }
+  } else {
+    // appel sans coordonnées (mort/tp) → on vide tout
+    const pads = finishPadState[pidStr];
+    if (pads && pads.size > 0 && countdown.secondsLeft > 1) { /* on va cancel via defer anyway */ }
+  }
+  // encore sur un autre Finish Block → on n'annule pas
+  const remainingPads = finishPadState[pidStr];
+  if (remainingPads && remainingPads.size > 0) return true;
   // final-tick grace: if at 1s left, still complete instead of cancelling (same as lobby pads)
   if (countdown.secondsLeft <= 1) { completeFinishCountdown(playerId); return true; }
   deferFinishCancellation(playerId, countdown);
@@ -1350,7 +1387,7 @@ onBlockStandStart = (playerId, x, y, z, blockName) => {
 };
 
 onBlockStandStop = (playerId, x, y, z, blockName) => {
-  if (cancelFinishCountdown(playerId, blockName)) return;
+  if (cancelFinishCountdown(playerId, x, y, z, blockName)) return;
   onPadStop(playerId, x, y, z, difficultyForPadBlock(blockName));
 };
 
