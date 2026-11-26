@@ -49,6 +49,22 @@
 **Métrique :** `analytics.crate.open_rate` par rareté, `analytics.crate.progression_drop`
 **Impact :** ⭐⭐ / Effort : **S** → **fait**
 
+### [x] 3d. Salles chest + Finish Block 5s + coin blockData identity — fait (2026-11-26)
+**Fait :** 
+- 3 salles taguées `kind:"chest"` d'après coords bloc → chunk : `-49,41,16→[-2,1,0]`, `-356,50,9→[-12,1,0]`, `-953,40,15→[-30,1,0]` via `templates.js` format étendu `[-2,1,0,"chest"]` ou `{kind,eventId}`.
+- Nouvelle salle `[-40,1,0]` (et `[-38,1,0]` pour garder pas de 2 chunks) avec `Finish Block` → `kind:"finish"`.
+- Coin `[0,0,0]` porte `{kind,eventId,templateIndex}` via `setBlockData` après `copyChunk`, lu via `getBlockData` (`src/dungeon/loader.js:stampRoomInfo/getRoomData`). Plus de particule générique trompeuse.
+- `src/dungeon/events.js` exemple `lavaTrap` (damage 3 / 10 ticks, `onRoomEventEnter` + `tickRoomEvents`) démonstration extensible.
+- **Finish Block (2026-11-26 fix FR) :** hold 5s comme pads lobby (`FINISH_HOLD_SECONDS=5`), countdown `middleTextUpper` + lower `"Stay on Finish Block to return to spawn"`, particules `padRing/padTick` dorées, debounce + final-tick 1s grace. Message unique Anglais `"Run finished! +X [Gold Coin icon]"`, `endRun("")` sans doublon. Cleanup sur leave/mort/bouton spawn.
+**Fichiers :** `src/dungeon/templates.js` (20 rooms), `src/dungeon/config.js:roomDataCell`, `src/dungeon/loader.js`, `src/dungeon/service.js:getRoomData`, `src/dungeon/events.js` (NEW), `src/worldCode.js:onBlockStandStart/Stop`, `src/utils/analytics.js:dungeonLeave`
+**Métrique :** `analytics.dungeon.leave` (4 moyens : Leave/Finish/Button/Death), `analytics.dungeon.finish_rate`, `analytics.dungeon.finish_hold_cancel_rate`
+**Impact :** ⭐⭐⭐ / Effort : **M** → **fait** — 167/167 pass, build 336k
+
+### [x] 3e. Analytics minimal viable — fait (2026-11-26)
+**Fait :** réduit à 4 events pour limite journalière Bloxd (20/j) : `combat/kill`, `tutorial/crate_opened`, `tutorial/complete`, `dungeon/leave` (tous moyens via `service.leave/teleportToSpawn`). Supprime 10+ events bruit. Wrapper `track()` + `Analytics.*`.
+**Fichiers :** `src/utils/analytics.js`, `src/dungeon/service.js`, `src/worldCode.js`
+**Impact :** ⭐⭐⭐ / Effort : **S**
+
 ---
 
 ## 🟠 P1 — Rejouabilité
@@ -103,17 +119,76 @@
 
 ---
 
+## 🆕 P1 — Propositions 2026-11-26 (améliorations à fort ROI)
+
+> Ces 8 ajouts exploitent ce qui vient d'être livré (coin `blockData` + Finish Block 5s + `dungeon/leave` analytics) et corrigent les frictions vues en jeu. Tous en Anglais côté joueur.
+
+### [ ] 16. Salles à événements variés — exploiter `ROOM_EVENTS` (SUITE de 3d)
+**Faire :** 5 nouveaux `eventId` dans `src/dungeon/events.js` en plus de `lavaTrap` : `healingShrine` (+1 HP/2s, particules vertes), `poisonFog` (-1 HP/3s + filtre vert), `treasureVault` (2 chests garantis, `kind:"vault"`), `ambush` (2× mobs + reward gold), `shopRoom` (Artisan Bench au centre). Tag via `[-40,1,0,{kind,eventId}]` → `tickRoomEvents` déjà câblé.
+**Pourquoi :** la techno `stampRoomInfo`/`tickRoomEvents` est prête mais 1 seul exemple = pas de rejouabilité. 5 events = 5 raisons de fouiller.
+**Fichiers :** `src/dungeon/events.js`, `src/dungeon/templates.js` (tag 4-5 rooms existantes), `src/worldCode.js` (déjà intégré)
+**Métrique :** `analytics.room.event_enter` {eventId}, `analytics.room.clear_time_by_event`
+**Impact :** ⭐⭐⭐ / Effort : **S** — **recommandé #1** (1-2 jours)
+
+### [ ] 17. Écran de fin de run (Run Summary)
+**Faire :** à chaque sortie (`leave / Finish / Button / Death`), `middleText` + chat récap : `Rooms 12 · Kills 28 · Gold +420 · Time 08:32 · Depth 14`. Stocke `runStartTick` à `enterDifficulty`, calcule à `completeFinishCountdown`/`onRespawnRequest`/`service.leave`. Bouton "Play Again" → re-téléport pad.
+**Pourquoi :** sans feedback, le joueur ne sait pas s'il progresse. C'est le moment #1 de rétention (boucle "encore une").
+**Fichiers :** `src/dungeon/service.js` (runStats {rooms,kills,gold,startTick}), `src/worldCode.js` (render + analytics)
+**Métrique :** `analytics.run.summary_shown`, `analytics.run.replay_rate` (second run < 3min)
+**Impact :** ⭐⭐⭐ / Effort : **S** — **recommandé #2**
+
+### [ ] 18. Mini-boussole + waypoints lobby/donjon
+**Faire :** `groundArrowPath` persistant : au spawn pointe vers pad `Medium` (nouveau joueur) ou quête NPC ; en donjon pointe vers `Finish Block` si découvert (sinon prochaine salle non clear). Toggle `/compass off`. Utilise déjà `directionArrow`/`groundArrowPath`.
+**Pourquoi :** tests joueurs : 30% du temps perdu à chercher la sortie/salle suivante. Flèche = -20% frustration, + temps de jeu utile.
+**Fichiers :** `src/worldCode.js` (arrow helpers), `src/dungeon/service.js:getRoomData` pour Finish pos
+**Métrique :** `analytics.navigation.waypoint_follow`, `analytics.dungeon.time_to_finish`
+**Impact :** ⭐⭐ / Effort : **S**
+
+### [ ] 19. Équilibrage économie & courbe difficulté
+**Faire :** audit `FINISH_REWARDS` (100→10000) vs `DUNGEON_PRICES` (0→1M) vs `REROLL` (50+15) : VeryEasy rentabilisé en 1 run, Hell en 8 runs. Baisser Hell 1M→500k ou augmenter Finish Hell 10k→25k. Ajouter `Daily bonus` +200 gold premier Finish/jour.
+**Pourquoi :** actuellement grind Hell = 100 runs = churn. Un sink gold (reforge #13) sans faucet équilibré = frustration.
+**Fichiers :** `src/dungeon/config.js:DUNGEON_PRICES`, `src/worldCode.js:FINISH_REWARDS`, `src/pass/config.js`
+**Métrique :** `analytics.economy.gold_earned_per_run`, `analytics.progression.days_to_hell`
+**Impact :** ⭐⭐⭐ / Effort : **S** — data-driven, à faire avec #12
+
+### [ ] 20. Juice : son, particules, hit feedback
+**Faire :** 5 sons `api.playSound` si dispo (sinon fallback particules) : `finish_countdown_tick`, `finish_complete` (fanfare), `room_clear` (ding), `level_up` (aura), `crate_open` (déjà partiel). + `screenShake` léger sur gros dégâts (via `setClientOption cameraShake` si Bloxd l'expose, sinon `spawnParticles` flash).
+**Pourquoi :** le jeu est silencieux en dehors du natif Bloxd. 3 SFX = +15% sensation de polish pour 0 gameplay.
+**Fichiers :** `src/particles/config.js` (PRESETS), `src/worldCode.js`, `src/combatFx/service.js`
+**Métrique :** `analytics.juice.sound_played` (debug), retours qualitatifs
+**Impact :** ⭐⭐ / Effort : **S**
+
+### [ ] 21. Finish en équipe + QoL coop
+**Faire :** `completeFinishCountdown` → si `getTeamId(pid)` a membres, téléporte tout le `teamMembers` (même reward partagé ou +10% bonus / coéquipier), `disbandTeam` propre. Annuler si un coéquipier quitte le bloc. Actuellement solo = les coéquipiers restent bloqués.
+**Pourquoi :** coop existe (teams + revive) mais Finish solo casse le groupe. Fix = 1h, impact coop ⭐⭐⭐.
+**Fichiers :** `src/worldCode.js:completeFinishCountdown`, `src/dungeon/service.js`
+**Métrique :** `analytics.coop.finish_together`, `analytics.coop.retention_vs_solo`
+**Impact :** ⭐⭐ / Effort : **S** — bloqueur coop
+
+### [ ] 22. Streak quotidien & calendrier
+**Faire :** DB `dungeonBreak.streak.v1` : jour consécutif avec 1 `dungeon/leave` → +100/200/300/500/1000 gold + jour 7 = Gold Key. Affichage lobby `Streak 3🔥` + `middleTextLower`. Reset si 48h sans jeu.
+**Pourquoi :** rétention D1→D7 la plus rentable. Quêtes existent mais pas de streak = pas d'habitude.
+**Fichiers :** `src/quest/service.js` ou `src/streak/service.js` (new), `src/worldCode.js:onPlayerJoin`
+**Métrique :** `analytics.streak.day_n`, `analytics.retention.d1/d7`
+**Impact :** ⭐⭐⭐ / Effort : **S** — **recommandé #3**
+
+### [ ] 23. Preview craft & comparatif d'items
+**Faire :** dans shop `Crafting` : tooltip `+12 DMG vs équipé (+3)` + preview 3D `giveItemPreview` si dispo, sinon texte. + filtre `Owned`/`Missing mats`. Éviter full UI custom (Bloxd shop limité).
+**Pourquoi :** #2 a réorg les stations mais pas le "est-ce mieux que ce que j'ai ?" → 40% des crafts sont regrettés.
+**Fichiers :** `src/crafting/config.js`, `src/crafting/service.js`, `src/worldCode.js:refreshCraftShop`
+**Métrique :** `analytics.craft.preview_open`, `analytics.craft.regret_rate` (craft → drop < 5min)
+**Impact :** ⭐⭐ / Effort : **M**
+
+---
+
 ## 🟡 P2 — Qualité & Vie communautaire
 
-### [ ] 7. Coop 2-3 joueurs + rez
-**Faire :**
-- Pads à 2 = départ groupé, même instance, vie alliée visible, rez 5s (-50% or)
-- Réutilise `service()` déjà global ("one service for the whole world")
-- Garde `crateIsOwnedByOther` pour anti-vol
-**État actuel :** `service()` est global mais chaque entrée tire une place aléatoire `±100 000` blocs → pas de même instance. Pas de rez. Anti-vol `crateIsOwnedByOther` existe par contre.
+### [ ] 7. Coop 2-3 joueurs + rez — PARTIELLEMENT FAIT (2026-11)
+**Fait :** `createTeamForLobby`, `teamId` partagé à `enterDifficulty`, revive 10s au sol (`downedPlayers`, `reviveTick`, `8s immunity`, `directionArrow` rouge), wipe→spawn, anti-vol crates `crateIsOwnedByOther`.
+**Reste :** lobby départ groupé OK mais Finish solo (→ #21), pas d'UI vie alliée, pas de -50% or au rez (actuellement gratuit). Garde `crateIsOwnedByOther` pour anti-vol.
 **Fichiers :** `src/worldCode.js:onPadStart`, `src/dungeon/service.js`, `src/crate/service.js`
 **Métrique :** `analytics.coop.run_started`, `analytics.coop.rez_count`, `analytics.coop.retention_vs_solo`
-**Impact :** ⭐⭐⭐ / Effort : **L**
+**Impact :** ⭐⭐⭐ / Effort : **L** → **fait à 70%**
 
 ### [ ] 8. Saisons 6 semaines (reset doux, pas full wipe)
 **Faire :**
@@ -152,7 +227,7 @@
 **Faire :** (a) `Mass craft` (x1/x5/x10 via shift), (b) `Comparer` (hover arme → tooltip + équipé côte-à-côte), (c) `Loadout` 2 slots (sauvegarde arme+armure, switch 3s cooldown), (d) tri auto `Iron Fragment → stock` en 1 clic.
 **Fichiers :** `src/crafting/service.js` (`craftMultiple`), `src/worldCode.js` (`onPlayerClick` compare), `src/loadout/service.js` (nouveau)
 **Métrique :** `analytics.craft.mass_craft_rate`, `analytics.loadout.switch`
-**Impact :** ⭐⭐ / Effort : **M**
+**Impact :** ⭐⭐ / Effort : **M** → fusion possible avec #23
 
 ---
 
@@ -171,27 +246,34 @@ Ces features sont en prod mais n'étaient pas dans le TODO d'origine — à int�
 - **Armures/Armes/CombatFx :** 12 Armor Sets + 72 Weapons (8 types × 9 sets), stats auto-scalées, capacités élémentaires, shimmer tick
 - **Dungeon tech :** chunks 32³ via `copyChunk`, Bedrock probe, séparation 20 000 blocs, `spawnSeparation`, `chunkLoadTicks:2`, découverte de salles +aura `roomAuraFor`/`mobAuraFor`, loot `mobLoot`
 - **Endless (2026-11-24) :** 9e difficulté `Endless` (White Concrete, après Hell), +2% dégâts/mobs/XP par salle, cap 20 mobs, `/dbg seed` reste debug (pas de partage)
-- **Particules :** `entryVortex`, `padRing/Tick`, `roomClear`, etc.
+- **Particules :** `entryVortex`, `padRing/Tick`, `crateFountain`, etc.
 - **Tutoriel natif** (voir §3)
+- **Chest rooms tagging + Finish Block (2026-11-26) :** 20 rooms (3× chest, 1× finish -40), `coin [0,0,0] blockData` identity, `ROOM_EVENTS` extensible (`lavaTrap` exemple), `dungeon/leave` analytics 4 moyens, Finish 5s hold Anglais + Gold Coin icon — PR #186 + hotfix 539e46a
+- **Analytics minimal (2026-11-26) :** 4 events seulement (limite 20/j), `dungeon/leave` partout
 
 ---
 
 ## 🚨 Manques signalés — à prioriser (résumé)
 
-| # | Manque | Priorité | Notes 2026-11-23 |
+| # | Manque | Priorité | Notes 2026-11-26 |
 |---|--------|----------|-----------------|
 | 4 | **Quêtes hebdo** (5 hebdo) — seul quotidien existe | P1 — haute | → #11 remplace : 5 hebdo + affixe |
 | 6 | **Synergies Blessings** affichées | P1 — moy | reste : détecter 2-3 combos, +15% |
-| 5 | **Endless (White Concrete) + Boss Rush** | P1 — moy | Endless fait (+2%/salle), Boss Rush reste, seed retiré |
+| 5 | **Boss Rush** | P1 — moy | Endless fait (+2%/salle), Boss Rush reste, seed retiré |
 | 11 | **Affixes hebdo** | P1 — haute | **NOUVEAU** — contenu sans map |
 | 12 | **Pity crates** | P1 — haute | **NOUVEAU** — corrige AIR 45% |
 | 13 | **Reforge/Enchant** | P1 — moy | **NOUVEAU** — sink gold |
-| 7 | **Coop + rez** | P2 — haute (L) | inchangé |
+| 16 | **Salles events variés** | P1 — haute | **NEW 26/11** — 1 event → 6, ROI max |
+| 17 | **Run Summary** | P1 — haute | **NEW 26/11** — boucle rétention |
+| 22 | **Streak quotidien** | P1 — haute | **NEW 26/11** — D1→D7 |
+| 7 | **Coop + rez** | P2 — haute (L) | 70% fait, reste Finish team |
+| 21 | **Finish team TP** | P1 — haute (S) | **NEW 26/11** — bloqueur coop |
 | 14 | **Feedback + Leaderboard** | P2 — moy | **NOUVEAU** — débloqué par analytics |
-| 15 | **QoL craft/loadout** | P2 — moy | **NOUVEAU** |
+| 15/23 | **QoL craft + preview** | P2 — moy | **NOUVEAU** |
+| 19 | **Économie / courbe** | P1 — haute | **NEW 26/11** — Hell grind |
 | 8 | **Saisons** | P2 — basse | Mois 3 |
 | 9 | **Cosmétiques Rank** (trails, emotes, `/rank preview`) | P2 — basse | inchangé |
-| — | **Preview craft UI** (mention §2 "reste TODO futur") | P2 — moy | inchangé |
+| — | **Preview craft UI** (mention §2 "reste TODO futur") | P2 — moy | → #23 |
 | — | **Patch notes in-game** panneau | P3 — basse | inchangé |
 
 ---
@@ -206,22 +288,24 @@ import { track, Analytics } from "./utils/analytics.js";
 track(playerId, "blessing", "pick", { gameCategoryId: blessingId });
 track(playerId, "dungeon", "enter", { gameCategoryId: difficulty.id });
 Analytics.mobKill(playerId); // alias
+Analytics.dungeonLeave(playerId); // 2026-11-26 : leave/Finish/Button/Death
 ```
 
 **Events prioritaires à logger dès maintenant :**
-- `tutorial.completed`, `craft.success`, `run.clear`, `run.death`, `blessing.pick`, `blessing.reroll`, `quest.complete`, `crate.open`, `coop.run_started`
-- **Nouveaux :** `crate.pity_triggered`, `craft.reforge`, `affix.weekly_pick_rate`, `feedback.sent`, `leaderboard.view`
+- `tutorial.completed`, `craft.success`, `run.clear`, `run.death`, `blessing.pick`, `blessing.reroll`, `quest.complete`, `crate.open`, `coop.run_started`, `dungeon.leave`
+- **Nouveaux :** `room.event_enter`, `run.summary_shown`, `crate.pity_triggered`, `craft.reforge`, `affix.weekly_pick_rate`, `feedback.sent`, `leaderboard.view`, `streak.day_n`
 
 ---
 
-## Roadmap suggérée — mise à jour 2026-11-23
+## Roadmap suggérée — mise à jour 2026-11-26
 
-- **Semaine 1 :** #11 (hebdo+affixe) + #12 (pity) + #14 feedback/leaderboard
-- **Semaine 2-3 :** #13 reforge + #15 QoL + #6 synergies
-- **Mois 2 :** #5 Boss Rush + finition preview craft (Endless fait — White Concrete, +2%/salle)
-- **Mois 3 :** #7 (coop si rétention validée) + #8 début saison 1
+- **Sprint 1 (cette semaine) :** #16 events variés (1j) + #17 run summary (1j) + #21 finish team (2h) — **3 petits qui changent tout**
+- **Sprint 2 :** #12 pity + #19 économie + #22 streak — **rétention D1→D7**
+- **Sprint 3 :** #11 hebdo+affixe + #13 reforge + #15/#23 QoL craft
+- **Sprint 4 :** #5 Boss Rush + #7 finition coop (UI vie alliée)
+- **Mois 3 :** #8 saison 1 + #14 feedback/leaderboard + #9 cosmétiques trails
 
-> Ancienne roadmap (Semaine 1 : #1+#3+#10, Semaine 2-3 : #2+#6, Mois 2 : #4+#5, Mois 3 : #7+#8) obsolète — #1/#2/#3 sont faits.
+> Ancienne roadmap (Semaine 1 : #11+#12+#14, Semaine 2-3 : #13+#15+#6, Mois 2 : Boss Rush, Mois 3 : coop+saison) → **mise à jour : on capitalise sur coin blockData/Finish livrés le 26/11**
 
 ---
 
@@ -231,4 +315,4 @@ Analytics.mobKill(playerId); // alias
 2. Coche `[x]` ici + ajoute test dans `tests/` si logique
 3. `npm run build` → `npm test` (167 tests) → PR → merge auto autorisé (cf `AGENT_RULES.md`)
 
-*Dernière mise à jour : 2026-11-24 — mainteneur : @Souls-equal — Endless (+2%/salle, White Concrete) ajouté, seed retiré*
+*Dernière mise à jour : 2026-11-26 — mainteneur : @Souls-equal — Finish Block 5s Anglais + Gold Coin, 20 rooms, events extensible, 4 analytics, +8 propositions (#16-23)*
