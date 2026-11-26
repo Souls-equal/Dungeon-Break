@@ -21,7 +21,7 @@ import {
   setTimeout as scheduleTimeout,
   step as stepScheduler,
 } from "./utils/scheduler.js";
-import { track, Analytics } from "./utils/analytics.js";
+import { track } from "./utils/analytics.js";
 import { DIFFICULTIES, DUNGEON_CONFIG, difficultyForPadBlock, priceForDifficulty, formatGold, UNLOCK_CURRENCY, UNLOCK_DB_KEY, DUNGEON_PRICES, mobAuraFor } from "./dungeon/config.js";
 import { LOBBY_POSITION, createDungeonService } from "./dungeon/service.js";
 import { isChestBlock } from "./dungeon/loot.js";
@@ -64,6 +64,7 @@ import { QUEST_NPC_POS } from "./quest/config.js";
 import { onDamaged as onArmorDamaged, onDealingDamage as onArmorDealingDamage, onMobKilled as onArmorMobKilled, tick as tickArmors, forgetPlayer as forgetArmorAbility, getTemporaryDefense as armorTempDefense, refreshArmorDescriptions, getArmorLevel as getArmorLevelForHeat } from "./armor/service.js";
 import { shouldRunTutorial, onTutorialJoin, onTutorialCrateOpened, onTutorialDungeonEntered, tickTutorialHighlight } from "./tutorial/service.js";
 import { refreshPassShop, initPassForPlayer, onPassBought, forgetPass } from "./pass/service.js";
+import { ROOM_EVENTS, tickRoomEvents } from "./dungeon/events.js";
 const OWNER_NAME = "K4miNoK4mi";
 function getOwnerId() {
   if (typeof api.getPlayerId === "function") {
@@ -162,6 +163,21 @@ function isUnlocked(playerId, difficulty) {
 const MSG_COLORS = { gold:"#ffd700", green:"#55ff55", red:"#ff5555", gray:"#aaaaaa", white:"#ffffff", aqua:"#55ffff" };
 function cStr(text, color) { return { str: text, style:{color} }; }
 
+function giveGold(playerId, amount) {
+  if (!amount || amount <= 0) return true;
+  try {
+    if (typeof api.giveCurrencyAmount === "function") {
+      api.giveCurrencyAmount(playerId, UNLOCK_CURRENCY, amount);
+      return true;
+    }
+    if (typeof api.setCurrencyAmount === "function" && typeof api.getCurrencyAmount === "function") {
+      const cur = Number(api.getCurrencyAmount(playerId, UNLOCK_CURRENCY) || 0);
+      api.setCurrencyAmount(playerId, UNLOCK_CURRENCY, cur + amount);
+      return true;
+    }
+  } catch(e){ reportErrorToOwner(e); }
+  return false;
+}
 function ensureUnlockedOrPay(playerId, difficulty) {
   const d = typeof difficulty === "object" && difficulty.id ? difficulty : null;
   if (!d) return false;
@@ -270,22 +286,33 @@ function service() {
           // A logging failure must never break a build.
         }
       },
-      onRoomDiscovered: (playerId, chunkX, chunkZ, difficulty) => {
+      onRoomDiscovered: (playerId, chunkX, chunkZ, difficulty, roomData) => {
         try { onQuestRoomDiscovered(api, playerId); } catch(e) { reportErrorToOwner(e); }
-        try { track(playerId, "dungeon", "room_discover", { gameCategoryId: difficulty ? difficulty.id : null }); } catch(_){}
+
         try {
           const newly = ranks().recordRoom(playerId);
           if (newly && newly.length) handleRankUnlocks(playerId, newly);
         } catch(e) { reportErrorToOwner(e); }
-        // particules room clear: anneau + burst
+        // Exemple d'event : roomData.eventId === "lavaTrap" vient du coin [0,0,0] de la salle
+        // (posé soit dans templates.js, soit directement sur le chunk template via setBlockData).
+        // On n'affiche des particules QUE pour les salles qui le demandent — plus de particule générique trompeuse.
         try {
-          const col = difficulty ? (DIFFICULTY_COLOR[difficulty.id] || "#FFD700") : "#FFD700";
-          const cx = chunkX * 32 + 16;
-          const cz = chunkZ * 32 + 16;
-          // y from player pos or difficulty floor
-          let y = 0;
-          try { const p = api.getPosition(playerId); if(p) y = p[1]; } catch(e) { reportErrorToOwner(e); }
-          spawnParticles(api, [cx, y+0.5, cz], PRESETS.roomClear(col), { radius: 1.2, height: 1.2 });
+          if (roomData && roomData.eventId) {
+            const cfg = ROOM_EVENTS[roomData.eventId];
+            if (cfg) {
+              const cx = chunkX * 32 + 16, cz = chunkZ * 32 + 16;
+              let y = 0; try { const p = api.getPosition(playerId); if(p) y = p[1]; } catch(_){}
+              const col = cfg.particleColor || DIFFICULTY_COLOR[difficulty.id] || "#FF4400";
+              // burst d'entrée : anneau au centre, bien visible même avec murs bas
+              if (cfg.eventId === "lavaTrap" || cfg.label.includes("Lava")) {
+                // réutilise un preset existant (magma) pour l'exemple — remplace par ton preset si tu veux
+                spawnParticles(api, [cx, y+0.5, cz], PRESETS.magmaBurn(), { radius: 1.0, height: 1.0 });
+              } else {
+                spawnParticles(api, [cx, y+0.5, cz], PRESETS.roomClear(col), { radius: 1.0, height: 1.0 });
+              }
+              if (cfg.message) api.sendMessage(playerId, [{str: cfg.message, style:{color: cfg.messageColor || "#ff5500"}}]);
+            }
+          }
         } catch(e) { reportErrorToOwner(e); }
       },
     });
@@ -495,7 +522,7 @@ function completeLobbyCountdown(playerIdOrGroup, countdownMaybe) {
       }
       if (entered) {
         try { onQuestDungeonEntered(api, pid); } catch(e) { reportErrorToOwner(e); }
-        try { track(pid, "dungeon", "enter", { gameCategoryId: difficulty ? difficulty.id : null }); Analytics.padUse(pid, difficulty ? difficulty.id : null); } catch(_){}
+
         spawnMode.set(String(pid), false);
         ensureSurvivalGamemode(pid);
         applyBlessingOptions(pid, baseClientOptions());
@@ -1127,7 +1154,7 @@ function onPadStart(playerId, x, y, z, difficulty) {
     const progressed = service().usePad(playerId);
     if (progressed) {
       try { onQuestDungeonEntered(api, playerId); } catch(e) { reportErrorToOwner(e); }
-    try { track(playerId, "dungeon", "enter", { gameCategoryId: difficulty ? difficulty.id : null }); Analytics.padUse(playerId, difficulty ? difficulty.id : null); } catch(_){}
+
       spawnMode.set(String(playerId), false);
       ensureSurvivalGamemode(playerId);
       applyBlessingOptions(playerId, baseClientOptions());
@@ -1144,7 +1171,52 @@ function onPadStop(playerId, x, y, z, difficulty) {
   handlePadLeave(playerId, difficulty, padKey(x, y, z));
 }
 
+// Finish Block — retour lobby + gold. Chunk -40,1,0 en contient un (et tout futur chunk qui en posera).
+const FINISH_BLOCK_NAMES = new Set(["Finish Block", "finish block", "Finish", "finish"]);
+function isFinishBlock(blockName) {
+  if (!blockName || typeof blockName !== "string") return false;
+  const n = blockName.trim().toLowerCase();
+  return n === "finish block" || n === "finish" || n.includes("finish");
+}
+const FINISH_REWARDS = { veryEasy:100, easy:200, normal:400, medium:800, hard:1500, insane:3000, nightmare:6000, hell:10000, endless:5000 };
+function finishRewardFor(difficulty) { return FINISH_REWARDS[difficulty?.id] ?? 250; }
+const finishCooldown = new Map(); // pid -> tick
+function handleFinishBlock(playerId, x, y, z, blockName) {
+  if (!isFinishBlock(blockName)) return false;
+  if (!service().inDungeon(playerId)) return false;
+  const now = tickNow();
+  const last = finishCooldown.get(String(playerId)) || -999;
+  if (now - last < 20) return true; // debounce 1s — reste appuyé
+  finishCooldown.set(String(playerId), now);
+  const dungeon = service().dungeonOf(playerId);
+  const reward = finishRewardFor(dungeon?.difficulty);
+  const gave = giveGold(playerId, reward);
+  try {
+    api.sendMessage(playerId, [
+      { str: `Finish ! +${reward} gold`, style:{color:"#ffd700", fontWeight:"bold"} },
+      ...(gave ? [] : [{str:" (gold error)", style:{color:"#ff5555"}}]),
+      { str: ` — retour au lobby`, style:{color:"#aaaaaa"} },
+    ]);
+  } catch(_){}
+  try { spawnParticles(api, [x+0.5, y+1, z+0.5], PRESETS.crateFountain("#FFD700", "Legendary"), {radius:0.6, height:1.5}); } catch(_){}
+  // même nettoyage que le shop "Teleport to spawn"
+  try { cleanupReviveForPlayer(String(playerId)); } catch(_){}
+  try { removePlayerFromTeam(String(playerId)); } catch(_){}
+  try { service().teleportToSpawn(playerId); } catch(_) { try{ api.setPosition(playerId, LOBBY_POSITION);}catch(_){} }
+  try { clearAllArrows(playerId); } catch(_){}
+  try { endRun(playerId, [cStr("Run finished — back to lobby", MSG_COLORS.gray)]); } catch(_){}
+  try { stopLobbyCountdown(playerId); } catch(_){}
+  try { spawnMode.set(String(playerId), true); } catch(_){}
+  try { ensureSurvivalGamemode(playerId); } catch(_){}
+  try { applyBlessingOptions(playerId, baseClientOptions()); } catch(_){}
+  try { applyMusic(playerId); } catch(_){}
+  try { api.setClientOption(playerId, "middleTextUpper", ""); } catch(_){}
+  try { closeShop(playerId); } catch(_){}
+  return true;
+}
+
 onBlockStandStart = (playerId, x, y, z, blockName) => {
+  if (handleFinishBlock(playerId, x, y, z, blockName)) return;
   onPadStart(playerId, x, y, z, difficultyForPadBlock(blockName));
 };
 
@@ -2360,7 +2432,7 @@ onPlayerBoughtShopItem = (playerId, categoryKey, itemKey, itemOrInput, userInput
   if (categoryKey !== SHOP_CATEGORY || itemKey !== SPAWN_ITEM) return;
   // Teleport and forget are one call, so the tick can never see a player at spawn
   // with a dungeon: `teleportToSpawn` moves first, then drops the record.
-  try { track(playerId, "shop", "teleport", { gameCategoryId: "spawn" }); track(playerId, "dungeon", "leave", { gameCategoryId: "teleport" }); } catch(_){}
+
   try { cleanupReviveForPlayer(String(playerId)); } catch(_){}
   try { removePlayerFromTeam(String(playerId)); } catch(_){}
   service().teleportToSpawn(playerId);
@@ -2396,6 +2468,7 @@ tick = () => {
   try { tickArmors(api); } catch(e) { reportErrorToOwner(e); }
   try { tickArmorShimmer(api); } catch(e) { reportErrorToOwner(e); }
   try { tickLavaDamage(); } catch(e) { reportErrorToOwner(e); }
+  try { tickRoomEvents(api, service()); } catch(e) { reportErrorToOwner(e); }
   try { tickTutorialHighlight(api); } catch(e) { reportErrorToOwner(e); }
   try { onQuestTick(api); } catch(e) { reportErrorToOwner(e); }
   // ranks time tracking
@@ -2423,7 +2496,7 @@ tick = () => {
 };
 
 onPlayerJoin = (playerId) => {
-  try { track(playerId, "player", "join", { noPos: true }); } catch(_){}
+
   // Crafts custom: shards -> materials -> armors (12 sets, 72 recipes) + renames/descriptions
   try { registerCraftingRecipes(api, playerId); } catch(e) { reportErrorToOwner(e); }
   try { applyItemStats(api, playerId); } catch(e) { reportErrorToOwner(e); }
@@ -2535,7 +2608,7 @@ onPlayerLeave = (playerId) => {
       }
     }
   } catch(_){}
-  try { track(playerId, "player", "leave"); } catch(_){}
+
   stopLobbyCountdown(playerId);
   try {
     api.setClientOption(playerId, "middleTextUpper", "");
@@ -2631,7 +2704,7 @@ onPlayerClick = (playerId, wasAltClick, x, y, z, block, targetEId) => {
   // know what a chest gives to know what a chest is.
   if (targetEId) return;
   if (!isChestBlock(block)) return;
-  try { track(playerId, "crate", "click"); } catch(_){}
+
   try {
     service().clickPosition(playerId, [x, y, z]);
   } catch (error) {
@@ -2723,7 +2796,7 @@ onMobDespawned = (mobId) => {
 };
 // Ne plus utiliser isAlive (pas fiable) — on track les deletes avec onEntityDeleted (ajout 28 Aug 2026)
 onPlayerCrafted = (playerId, recipeName, amount) => {
-  try { track(playerId, "craft", "success", { gameCategoryId: String(recipeName||"unknown"), numericValue: Number(amount)||1 }); } catch(_){}
+
 };
 onEntityDeleted = (entityId) => {
   try { markEntityDeleted(entityId); } catch(e) { reportErrorToOwner(e); }
@@ -2767,7 +2840,7 @@ onPlayerDamagingMob = (playerId, mobId, damageDealt, ...rest) => {
     }
   } catch(_){}
   try { if (Number.isFinite(Number(damageDealt)) && Number(damageDealt)>0) onQuestDamageDealt(api, playerId, Number(damageDealt)); } catch(e){ reportErrorToOwner(e); }
-  try { if (Number.isFinite(Number(damageDealt)) && Number(damageDealt)>0) track(playerId, "combat", "hit", { numericValue: Number(damageDealt) }); } catch(_){}
+
   let baseDmg = Number(damageDealt);
   const hasBase = Number.isFinite(baseDmg);
   // Custom weapon detection: if player holds one of our sets, damage stat is already effective
@@ -2831,7 +2904,7 @@ onMobDamagingPlayer = (mobId, playerId, damageDealt, ...rest) => {
     const maybeVictim2 = String(mobId);
     if (isReviveImmune(maybeVictim1) || isReviveImmune(maybeVictim2) || isDowned(maybeVictim1) || isDowned(maybeVictim2)) return "preventDamage";
   } catch(_){}
-  try { if (Number.isFinite(Number(damageDealt)) && Number(damageDealt)>0) track((Number.isFinite(Number(playerId)) ? playerId : mobId), "combat", "damage_taken", { numericValue: Number(damageDealt) }); } catch(_){}
+
   try { if (Number.isFinite(Number(damageDealt)) && Number(damageDealt)>0) { const _pid = (Number.isFinite(Number(playerId)) ? playerId : mobId); onQuestDamageTaken(api, _pid, Number(damageDealt)); } } catch(e){ reportErrorToOwner(e); }
   let scaled = undefined;
   let pid = playerId;

@@ -167,7 +167,7 @@ export function onTutorialJoin(api, playerId) {
       setArrow(api, playerId, "red", TUTORIAL_CRATE_TARGET);
       try { highlightWoodenKey(api, playerId); } catch {}
       try { api.sendMessage(playerId, [{ str: TUTORIAL_MESSAGES.join, style: { color: "#ff5555" } }]); } catch {}
-      try { track(playerId, "tutorial", "start"); } catch {}
+
       return true;
     }
   } catch {}
@@ -183,7 +183,7 @@ export function onTutorialJoin(api, playerId) {
   setArrow(api, playerId, "red", TUTORIAL_CRATE_TARGET);
   try { highlightWoodenKey(api, playerId); } catch {}
   try { api.sendMessage(playerId, [{ str: TUTORIAL_MESSAGES.join, style: { color: "#ff5555" } }]); } catch {}
-  try { track(playerId, "tutorial", "start"); } catch(_){}
+
   return true;
 }
 

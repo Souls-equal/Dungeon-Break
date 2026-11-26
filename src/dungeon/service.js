@@ -14,6 +14,7 @@
  */
 
 import { setTimeout as scheduleTimeout } from "../utils/scheduler.js";
+import { track } from "../utils/analytics.js";
 import { chestOfClick, drawChestKey, openChest } from "./loot.js";
 import { keyItemName } from "./reward.js";
 import {
@@ -329,10 +330,16 @@ export function createDungeonService(options) {
     return true;
   }
 
+  function trackDungeonLeave(playerId) {
+    try { track(playerId, "dungeon", "leave"); } catch(_){}
+  }
+
   /** Sends a player back to the lobby. Every exit goes through here. */
   function leave(playerId) {
+    const wasInDungeon = inDungeon(playerId);
     stopBuilding(playerId);
     api.setPosition(playerId, LOBBY_POSITION);
+    if (wasInDungeon) trackDungeonLeave(playerId);
   }
 
   /**
@@ -349,6 +356,7 @@ export function createDungeonService(options) {
     const wasInDungeon = inDungeon(playerId);
     api.setPosition(playerId, LOBBY_POSITION);
     stopBuilding(playerId);
+    if (wasInDungeon) trackDungeonLeave(playerId);
     return wasInDungeon;
   }
 
@@ -458,9 +466,22 @@ export function createDungeonService(options) {
       api.sendFlyingMiddleMessage(playerId, [{ str: "+" + aura }, { icon: "Aura XP Orb" }, { str: " XP" }], 50, 500);
     } catch (_) {}
     if (onRoomDiscovered) {
-      try { onRoomDiscovered(playerId, chunkX, chunkZ, dungeon.difficulty); } catch(_){}
+      // New: rooms carry their identity in the corner block's blockData (kind/event…).
+      // Builders set `{kind:"chest", eventId:"trap"}` on the template's corner, the
+      // loader stamps it after copyChunk, and we read it back after the chunk is loaded.
+      let roomData = null;
+      try { roomData = loader.getRoomData(loader.levelState(dungeon.difficulty, playerId), chunkX, chunkZ); } catch(_){}
+      try { onRoomDiscovered(playerId, chunkX, chunkZ, dungeon.difficulty, roomData); } catch(_){}
     }
     return aura;
+  }
+
+  /** Reads the stashed room identity (kind/event/template) written after copyChunk. */
+  function getRoomData(playerId, chunkX, chunkZ) {
+    const d = dungeonOf(playerId);
+    if (!d) return null;
+    const level = loader.levelState(d.difficulty, playerId);
+    try { return loader.getRoomData(level, chunkX, chunkZ); } catch(_){ return null; }
   }
 
   /**
@@ -774,6 +795,7 @@ export function createDungeonService(options) {
     getOriginForPlayer,
     usePad,
     leave,
+    getRoomData,
     leaveToLobby: leave,
     teleportToSpawn,
     stopBuilding,

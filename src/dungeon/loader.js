@@ -353,30 +353,106 @@ export function createLoader({ api, log }) {
    * A room whose cell answers nothing is not cleared: an old room, a fresh copy, or a
    * block that has been replaced all read `null`.
    */
-  function isRoomClear(level, chunkX, chunkZ) {
-    if (!level || !level.origin) return false;
+  /** Raw blockData of a dungeon room's corner cell, or null if chunk not loaded. */
+  function getRoomBlockData(level, chunkX, chunkZ) {
+    if (!level || !level.origin) return null;
     try {
-      const [localX, localY, localZ] = DUNGEON_CONFIG.mobClearCell;
+      const cell = DUNGEON_CONFIG.roomDataCell || DUNGEON_CONFIG.mobClearCell;
+      const [localX, localY, localZ] = cell;
       const data = api.getBlockData(chunkX * SIZE + localX, floorOfLayer(level.origin.y) + localY, chunkZ * SIZE + localZ);
-      return Boolean(data && data.clear);
+      // real API returns null when no data; fake returns null too — normalize to {} for “no info yet”
+      if (data === null || data === undefined) return {};
+      return data;
     } catch (_) {
-      // chunk pas encore chargé (getBlockData throw "unloaded chunk") -> pas clear, et pas d'erreur tick
-      return false;
+      return null; // unloaded chunk: throw -> null, caller treats as “unknown”
     }
   }
 
-  /** Writes the record of a cleared room. Idempotent, and cheap enough to repeat. */
-  function markRoomClear(level, chunkX, chunkZ) {
+  /** Parsed room info (kind/event/template) from the same cell. Null = chunk not loaded. */
+  function getRoomData(level, chunkX, chunkZ) {
+    const data = getRoomBlockData(level, chunkX, chunkZ);
+    if (data === null) return null;
+    // data may already be the room info; normalize missing fields
+    return {
+      clear: Boolean(data.clear),
+      kind: typeof data.kind === "string" ? data.kind : (data.clear !== undefined || Object.keys(data).length === 0 ? "normal" : "normal"),
+      eventId: typeof data.eventId === "string" ? data.eventId : (typeof data.event === "string" ? data.event : null),
+      templateIndex: Number.isFinite(data.templateIndex) ? data.templateIndex : (Number.isFinite(data.template) ? data.template : null),
+      difficultyId: typeof data.difficultyId === "string" ? data.difficultyId : null,
+      raw: data,
+    };
+  }
+
+  /** Merges patch into the corner cell (preserves kind/clear/etc). */
+  function setRoomData(level, chunkX, chunkZ, patch) {
     if (!level || !level.origin) return;
     try {
-      const [localX, localY, localZ] = DUNGEON_CONFIG.mobClearCell;
-      api.setBlockData(
-        chunkX * SIZE + localX,
-        floorOfLayer(level.origin.y) + localY,
-        chunkZ * SIZE + localZ,
-        { clear: true },
-      );
-    } catch (_) {}
+      const cell = DUNGEON_CONFIG.roomDataCell || DUNGEON_CONFIG.mobClearCell;
+      const [localX, localY, localZ] = cell;
+      const x = chunkX * SIZE + localX, y = floorOfLayer(level.origin.y) + localY, z = chunkZ * SIZE + localZ;
+      let existing = {};
+      try { const cur = api.getBlockData(x, y, z); if (cur && typeof cur === "object") existing = cur; } catch(_){}
+      api.setBlockData(x, y, z, { ...existing, ...patch });
+    } catch(_) {}
+  }
+
+  /** Try to read metadata the builder put on the *source* template's corner block. */
+  function readSourceRoomInfo(template) {
+    if (!template || !template.src) return {};
+    try {
+      const cell = DUNGEON_CONFIG.roomDataCell || DUNGEON_CONFIG.mobClearCell;
+      const [localX, localY, localZ] = cell;
+      const x = template.src[0] + localX, y = template.src[1] + localY, z = template.src[2] + localZ;
+      const data = api.getBlockData(x, y, z);
+      if (!data || typeof data !== "object") return {};
+      const out = {};
+      if (typeof data.kind === "string") out.kind = data.kind;
+      if (typeof data.eventId === "string") out.eventId = data.eventId;
+      else if (typeof data.event === "string") out.eventId = data.event;
+      if (Number.isFinite(data.templateIndex)) out.templateIndex = data.templateIndex;
+      return out;
+    } catch(_) { return {}; }
+  }
+
+  /** Stamps room identity into the *destination* corner right after copyChunk. */
+  function stampRoomInfo(level, chunkX, chunkZ, template) {
+    if (!level || !level.origin || !template) return;
+    try {
+      const cell = DUNGEON_CONFIG.roomDataCell || DUNGEON_CONFIG.mobClearCell;
+      const [localX, localY, localZ] = cell;
+      const x = chunkX * SIZE + localX, y = floorOfLayer(level.origin.y) + localY, z = chunkZ * SIZE + localZ;
+      const sourceInfo = readSourceRoomInfo(template);
+      const kind = sourceInfo.kind || template.kind || (template.meta && template.meta.kind) || "normal";
+      const eventId = sourceInfo.eventId || template.eventId || (template.meta && template.meta.eventId) || null;
+      const payload = {
+        kind,
+        templateIndex: template.index,
+        difficultyId: level.difficulty ? level.difficulty.id : null,
+        placedAt: level.tick,
+      };
+      if (eventId) payload.eventId = eventId;
+      // Carry extra meta keys (difficulty-specific flags) if present
+      if (template.meta) {
+        for (const k of Object.keys(template.meta)) {
+          if (k === "kind" || k === "eventId" || k === "event" || k === "type") continue;
+          const v = template.meta[k];
+          if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") payload[k] = v;
+        }
+      }
+      // Overwrite — a copied room starts fresh; old clear must not survive
+      api.setBlockData(x, y, z, payload);
+    } catch(_) {}
+  }
+
+  function isRoomClear(level, chunkX, chunkZ) {
+    const data = getRoomBlockData(level, chunkX, chunkZ);
+    if (data === null) return false;
+    return Boolean(data && data.clear);
+  }
+
+  /** Writes the record of a cleared room, merging so kind/event survive. */
+  function markRoomClear(level, chunkX, chunkZ) {
+    setRoomData(level, chunkX, chunkZ, { clear: true });
   }
 
   /**
@@ -1200,6 +1276,11 @@ export function createLoader({ api, log }) {
     level.templateAttempts.delete(item.template.index);
 
     api.copyChunk(from, to);
+    // Immediately stamp room identity into the destination's corner block — same cell as
+    // the clear flag, so a later `isRoomClear` sees `clear` alongside `kind`.
+    // Works even if `copyChunk` does not preserve blockData: we write it.
+    // If the builder put `{kind:"chest"}` on the source corner, it overrides the table.
+    try { stampRoomInfo(level, item.chunkX, item.chunkZ, item.template); } catch(_){}
     level.planned.set(key, "placing");
     level.placingSince.set(key, level.tick);
     return true;
@@ -1382,6 +1463,11 @@ export function createLoader({ api, log }) {
     floorBlockYAt,
     isRoomClear,
     markRoomClear,
+    getRoomData,
+    getRoomBlockData,
+    setRoomData,
+    stampRoomInfo,
+    readSourceRoomInfo,
     enterRoom,
     spawnRoomMobs,
     mobKilled,

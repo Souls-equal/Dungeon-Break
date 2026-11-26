@@ -183,7 +183,17 @@ export const DUNGEON_CONFIG = {
   // Above the floor rather than on the Bedrock: the Bedrock under a room is *replaced* by
   // every copy, which is the case where data is reliably lost. The air beside the player
   // is the one cell of a room nothing ever writes.
+  //
+  // This cell is also where **room metadata** lives: `kind`, `eventId`, `templateIndex`,
+  // `difficultyId`… written with `setBlockData` right after `copyChunk`, read back with
+  // `getBlockData` after the chunk is loaded. Same cell as the clear flag — `clear`
+  // merges into the same object so `kind` survives a clear. Builders can put
+  // `{kind:"chest", eventId:"lavaTrap"}` on a template's own corner block and the
+  // generator copies it as the room's identity; otherwise `kind:"normal"` is stamped.
+  // Adding a new room kind needs no code table change beyond the template entry.
   mobClearCell: [0, 0, 0],
+  // Alias — same block, talked about as “room info” instead of “clear flag”.
+  roomDataCell: [0, 0, 0],
 
   // The bestiary is `MOB_ROSTER` below: a level draws among every type unlocked at or
   // before it. A type the game refuses — an unknown name, or a name it will not place —

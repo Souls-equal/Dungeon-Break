@@ -25,7 +25,6 @@
  */
 
 import { BLESSINGS, drawChoices, pointsLeft, rarityOf } from "./config.js";
-import { track } from "../utils/analytics.js";
 
 
 /** How many chosen blessings the shop keeps for its history. */
@@ -100,7 +99,7 @@ export function createBlessingService(options = {}) {
     if (choices.length === 0) return null;
     account.offer = choices;
     account.reserved += 1;
-    try { track(playerKey, "blessing", "roll"); } catch(_){}
+
     return account.offer.slice();
   }
 
@@ -133,7 +132,7 @@ export function createBlessingService(options = {}) {
       scope: chosen.blessing.scope,
     });
     account.history = account.history.slice(0, HISTORY_LIMIT);
-    try { track(playerKey, "blessing", "pick", { gameCategoryId: chosen.blessing.id }); } catch(_){}
+
     return {
       blessing: chosen.blessing,
       rarity: chosen.rarity,
@@ -157,7 +156,7 @@ export function createBlessingService(options = {}) {
       if (!same) break;
     } while (tries < 5);
     account.offer = choices;
-    try { track(playerKey, "blessing", "reroll"); } catch(_){}
+
     return account.offer.slice();
   }
 

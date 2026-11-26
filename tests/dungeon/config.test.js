@@ -194,9 +194,9 @@ test("a block belongs to the chunk that contains it, negatives included", () => 
 
 test("the shipped rooms are fifteen distinct chunks, two apart", () => {
   const list = templatesFor({ id: "veryEasy" }, () => {});
-  assert.equal(list.length, 18, "the table no longer holds the eighteen built rooms");
+  assert.equal(list.length, 20, "the table no longer holds the twenty built rooms");
   const chunks = new Set(list.map((room) => room.chunk.join("|")));
-  assert.equal(chunks.size, 18, "two rooms point at the same chunk: copying one would copy the other");
+  assert.equal(chunks.size, 20, "two rooms point at the same chunk: copying one would copy the other");
   for (let index = 1; index < list.length; index += 1) {
     assert.equal(list[index].chunk[0] - list[index - 1].chunk[0], -2,
       `rooms #${index - 1} and #${index} are not two chunks apart`);
@@ -210,11 +210,18 @@ test("a room has nothing to declare but a chunk", () => {
   // No faces, no spawn flag, no height: the table is a list of coordinates. This
   // asserts the shape rather than trusting a comment, because a leftover property
   // is a promise the generator would silently stop honouring.
+  // Since the corner-block metadata feature, a room may carry kind/meta/eventId — still just a chunk plus optional identity.
   const saved = globalThis.ROOM_TEMPLATES;
   globalThis.ROOM_TEMPLATES = { rooms: [[-2, 1, 0]] };
   try {
     const [room] = templatesFor({ id: "veryEasy" }, () => {});
-    assert.deepEqual(Object.keys(room).sort(), ["chunk", "index", "src"]);
+    const keys = Object.keys(room).sort();
+    assert.ok(keys.includes("chunk") && keys.includes("index") && keys.includes("src"), `missing core keys: ${keys}`);
+    // allowed keys: core + kind/meta/eventId
+    const allowed = new Set(["chunk", "index", "src", "kind", "meta", "eventId"]);
+    for (const k of keys) assert.ok(allowed.has(k), `unexpected room key ${k}`);
+    // still no legacy props
+    assert.equal(room.faces, undefined, "a shipped room still carries faces");
   } finally {
     globalThis.ROOM_TEMPLATES = saved;
   }

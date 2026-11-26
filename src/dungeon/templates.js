@@ -49,7 +49,11 @@
  * 2. The room's floor is **read** from the template, not configured: the loader
  *    walks up the middle column to find the first solid block.
  *
- * No cell of a room is reserved for this generator: it writes nothing, ever.
+ * No cell of a room is reserved for this generator: it writes nothing, ever,
+ * except the single corner block `[0,0,0]` (air au-dessus du sol) qui porte
+ * l'identité de la salle via `setBlockData` (`kind`/`eventId`) — voir `events.js`
+ * pour un exemple complet (lavaTrap). Un builder peut aussi poser la data directement
+ * sur le chunk template : `api.setBlockData(srcX, srcY, srcZ, {kind:"event", eventId:"lavaTrap"})`.
  *
  * ---------------------------------------------------------------------------
  * PICKING A ROOM
@@ -88,13 +92,16 @@ export function chunkToBlock(chunkX, chunkY, chunkZ) {
  * coordinate to its chunk.
  */
 const READY_ROOMS = [
-  // The fifteen rooms that already exist, in the order of the series.
-  [-2, 1, 0],
+  // The rooms that already exist, in the order of the series.
+  // 3 salles marquées "chest" d'après les coords données (chest pos → chunk) :
+  // -49,41,16 → chunk -2,1,0 ; -356,50,9 → chunk -12,1,0 ; -953,40,15 → chunk -30,1,0
+  // Nouvelle salle -40,1,0 contient un Finish Block (→finish → retour lobby + gold)
+  [-2, 1, 0, "chest"],
   [-4, 1, 0],
   [-6, 1, 0],
   [-8, 1, 0],
   [-10, 1, 0],
-  [-12, 1, 0],
+  [-12, 1, 0, "chest"],
   [-14, 1, 0],
   [-16, 1, 0],
   [-18, 1, 0],
@@ -103,10 +110,12 @@ const READY_ROOMS = [
   [-24, 1, 0],
   [-26, 1, 0],
   [-28, 1, 0],
-  [-30, 1, 0],
+  [-30, 1, 0, "chest"],
   [-32, 1, 0],
   [-34, 1, 0],
   [-36, 1, 0],
+  [-38, 1, 0],
+  [-40, 1, 0, { kind: "finish", eventId: "finish" }],
 ];
 
 /** The sixty rooms still to build, in the same series. Uncomment as they land. */
@@ -181,15 +190,48 @@ globalThis.ROOM_TEMPLATES = globalThis.ROOM_TEMPLATES || {
   rooms: READY_ROOMS,
 };
 
-/** A room, as the engine uses it: a world block coordinate and its chunk. */
+/** Extra room info builders can put in the table: kind, eventId, … */
+function roomMetaFrom(entry) {
+  if (!entry || typeof entry !== "object") return {};
+  // Entry itself may be the meta shorthand: "chest" string
+  if (typeof entry === "string") return { kind: entry };
+  const out = {};
+  if (typeof entry.kind === "string") out.kind = entry.kind;
+  if (typeof entry.eventId === "string") out.eventId = entry.eventId;
+  if (typeof entry.event === "string") out.eventId = entry.event;
+  if (typeof entry.type === "string" && !out.kind) out.kind = entry.type;
+  // any other plain keys (difficulty, preset…) forwarded as-is
+  for (const k of Object.keys(entry)) {
+    if (k === "chunk" || k === "src" || k === "pos" || k === "kind" || k === "eventId" || k === "event" || k === "type") continue;
+    const v = entry[k];
+    if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") out[k] = v;
+  }
+  return out;
+}
+
+/** A room, as the engine uses it: a world block coordinate and its chunk + optional meta. */
 function roomFrom(entry, index, log) {
+  // Shorthand: [-2,1,0, "chest"] or [-2,1,0, {kind:"event", eventId:"trap"}]
+  if (Array.isArray(entry) && (entry.length === 4 || entry.length === 3)) {
+    const nums = entry.slice(0, 3);
+    if (nums.some((value) => typeof value !== "number" || !Number.isFinite(value))) {
+      // not a chunk triple — fall through to object handling
+    } else {
+      const chunk = [Math.floor(nums[0]), Math.floor(nums[1]), Math.floor(nums[2])];
+      const src = chunkToBlock(chunk[0], chunk[1], chunk[2]);
+      if (entry.length === 3) return { index, chunk, src, kind: "normal", meta: {} };
+      const metaRaw = entry[3];
+      const meta = typeof metaRaw === "string" ? { kind: metaRaw } : (metaRaw && typeof metaRaw === "object" ? roomMetaFrom(metaRaw) : {});
+      return { index, chunk, src, kind: meta.kind || "normal", eventId: meta.eventId || null, meta };
+    }
+  }
   if (Array.isArray(entry) && entry.length === 3) {
     if (entry.some((value) => typeof value !== "number" || !Number.isFinite(value))) {
       if (log) log(`room #${index} has a non-numeric chunk coordinate`);
       return null;
     }
     const chunk = [Math.floor(entry[0]), Math.floor(entry[1]), Math.floor(entry[2])];
-    return { index, chunk, src: chunkToBlock(chunk[0], chunk[1], chunk[2]) };
+    return { index, chunk, src: chunkToBlock(chunk[0], chunk[1], chunk[2]), kind: "normal", meta: {} };
   }
   // A full `[x, y, z]` in blocks, for a room that is not on the chunk grid. The
   // engine copies the whole chunk anyway, so this is only a convenience.
@@ -200,7 +242,20 @@ function roomFrom(entry, index, log) {
       return null;
     }
     const chunk = src.map((value) => Math.floor(value / 32));
-    return { index, chunk, src };
+    const meta = roomMetaFrom(entry);
+    return { index, chunk, src, kind: meta.kind || "normal", eventId: meta.eventId || null, meta };
+  }
+  // Object with chunk: { chunk:[x,y,z], kind:"chest", eventId:"..." }
+  if (entry && (Array.isArray(entry.chunk) || Array.isArray(entry.pos))) {
+    const arr = entry.chunk || entry.pos;
+    if (!Array.isArray(arr) || arr.length !== 3 || arr.some((v) => typeof v !== "number" || !Number.isFinite(v))) {
+      if (log) log(`room #${index} has a non-numeric chunk coordinate`);
+      return null;
+    }
+    const chunk = [Math.floor(arr[0]), Math.floor(arr[1]), Math.floor(arr[2])];
+    const src = chunkToBlock(chunk[0], chunk[1], chunk[2]);
+    const meta = roomMetaFrom(entry);
+    return { index, chunk, src, kind: meta.kind || "normal", eventId: meta.eventId || null, meta };
   }
   if (log) log(`room #${index} is not a chunk coordinate [x, y, z]`);
   return null;
