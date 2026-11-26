@@ -59,7 +59,7 @@ import { applyItemStats } from "./crafting/itemStats.js";
 import { tickCombatFx, onWeaponHit, onArmorHit, tickArmorShimmer, forgetPlayer as forgetCombatFx } from "./combatFx/service.js";
 import { refreshWeaponStats, tickWeapons, onMobKilled, forgetPlayer as forgetWeaponAbility, markEntityDeleted, onThrowableUsed, onCollision as onWeaponCollision, onCrouchChange as onNovaCrouchChange, tryNovaLaser, isNovaCrouching, tryNovaCrescent } from "./weapons/service.js";
 import { parseWeaponInfo } from "./combatFx/service.js";
-import { initQuestSystem, onQuestPlayerJoin, onQuestTick, onQuestMobKilled, onQuestCrateOpened, onQuestDamageDealt, onQuestDamageTaken, onQuestDungeonEntered, onQuestRoomDiscovered, onQuestMobDespawned, onQuestEntityDeleted, onQuestPlayerLeave, onQuestInteract, onQuestClickNear } from "./quest/service.js";
+import { initQuestSystem, onQuestPlayerJoin, onQuestTick, onQuestMobKilled, onQuestCrateOpened, onQuestDamageDealt, onQuestDamageTaken, onQuestDungeonEntered, onQuestRoomDiscovered, onQuestMobDespawned, onQuestEntityDeleted, onQuestPlayerLeave, onQuestInteract, onQuestClickNear, needsQuestArrow } from "./quest/service.js";
 import { QUEST_NPC_POS } from "./quest/config.js";
 import { onDamaged as onArmorDamaged, onDealingDamage as onArmorDealingDamage, onMobKilled as onArmorMobKilled, tick as tickArmors, forgetPlayer as forgetArmorAbility, getTemporaryDefense as armorTempDefense, refreshArmorDescriptions, getArmorLevel as getArmorLevelForHeat } from "./armor/service.js";
 import { shouldRunTutorial, onTutorialJoin, onTutorialCrateOpened, onTutorialDungeonEntered, tickTutorialHighlight } from "./tutorial/service.js";
@@ -269,6 +269,56 @@ function syncPlayerSpawnState(playerId) {
 }
 function tickSpawnCheck() {
   for (const pid of [...spawnMode.keys()]) syncPlayerSpawnState(pid);
+}
+
+// Lobby quest arrow — yellow arrow to Quest NPC when no quest or quest finished, only at spawn, never overrides tutorial
+function refreshLobbyQuestArrow(playerId) {
+  try {
+    if (!isAtSpawn(playerId)) {
+      // left spawn (entered dungeon) → clear quest arrow
+      try { if (typeof api.setClientOption === "function") api.setClientOption(playerId, "groundArrowPath", null); } catch(_){}
+      try { if (typeof api.clearDirectionArrow === "function") api.clearDirectionArrow(playerId, "quest-npc"); } catch(_){}
+      return;
+    }
+    // Tutorial has priority — it already manages groundArrowPath (red/green)
+    try { if (shouldRunTutorial(api, playerId)) return; } catch(_){}
+    let need = false;
+    try { need = needsQuestArrow(api, playerId); } catch(_){}
+    if (need) {
+      // yellow arrow to Quest NPC — stays until quest taken or claimed and new quest not needed
+      try {
+        if (typeof api.setClientOption === "function") {
+          api.setClientOption(playerId, "groundArrowPath", { colour: "yellow", target: QUEST_NPC_POS });
+        }
+      } catch(_){}
+      // also set direction arrow for clients that support it (more visible)
+      try {
+        if (typeof api.setDirectionArrow === "function") {
+          api.setDirectionArrow(playerId, "quest-npc", QUEST_NPC_POS, [{ str: "Quest NPC", style:{color:"#ffff55"}}], true, { color: "#ffff00" });
+        }
+      } catch(_){}
+    } else {
+      // quest active and not completed → clear quest arrow only if it was ours
+      try {
+        if (typeof api.setClientOption === "function") {
+          api.setClientOption(playerId, "groundArrowPath", null);
+        }
+      } catch(_){}
+      try { if (typeof api.clearDirectionArrow === "function") api.clearDirectionArrow(playerId, "quest-npc"); } catch(_){}
+    }
+  } catch(_){}
+}
+function tickLobbyQuestArrows() {
+  try {
+    const ids = typeof api.getPlayerIds === "function" ? api.getPlayerIds() : [];
+    for (const pid of ids) {
+      try { refreshLobbyQuestArrow(pid); } catch(_){}
+    }
+  } catch(_){}
+}
+function clearLobbyQuestArrow(playerId) {
+  try { if (typeof api.setClientOption === "function") api.setClientOption(playerId, "groundArrowPath", null); } catch(_){}
+  try { if (typeof api.clearDirectionArrow === "function") api.clearDirectionArrow(playerId, "quest-npc"); } catch(_){}
 }
 
 // One service for the whole world: two players in the same level see the same
@@ -2552,6 +2602,7 @@ tick = () => {
   try { tickRoomEvents(api, service()); } catch(e) { reportErrorToOwner(e); }
   try { tickTutorialHighlight(api); } catch(e) { reportErrorToOwner(e); }
   try { onQuestTick(api); } catch(e) { reportErrorToOwner(e); }
+  try { tickLobbyQuestArrows(); } catch(e) { reportErrorToOwner(e); }
   // ranks time tracking
   try {
     rankTickCounter++;
@@ -2613,12 +2664,15 @@ onPlayerJoin = (playerId) => {
   try { refreshRanksShop(playerId); } catch(e) { reportErrorToOwner(e); }
   try { initPassForPlayer(api, playerId); } catch(e) { reportErrorToOwner(e); }
   try { onQuestPlayerJoin(api, playerId); } catch(e) { reportErrorToOwner(e); }
+  try { refreshLobbyQuestArrow(playerId); } catch(e) { reportErrorToOwner(e); }
   // Tutoriel: premier join → clé + flèche rouge crate, remplace welcome
   try {
     if (shouldRunTutorial(api, playerId) && onTutorialJoin(api, playerId)) {
       // tuto a pris le relais — pas de welcome normal
     } else {
       api.sendMessage(playerId, [cStr("Welcome to Dungeon Break!", MSG_COLORS.gold)]);
+      // if no quest or quest finished, show yellow arrow to NPC (not during tutorial)
+      try { refreshLobbyQuestArrow(playerId); } catch(_){}
     }
   } catch(e) { reportErrorToOwner(e); }
   // Give Wood Sword only if player has no weapon at all (Sword/Dagger/Spear/Club/Mace/Whip/Bow/Crossbow/Boomerang/Staff/Blade)
@@ -2671,6 +2725,7 @@ onPlayerToggledShopMenu = (playerId, isOpen) => {
 };
 
 onPlayerLeave = (playerId) => {
+  try { clearLobbyQuestArrow(playerId); } catch(_){}
   try { clearFinishForPlayer(playerId); } catch(_){}
   try { cleanupReviveForPlayer(String(playerId)); } catch(_){}
   try { removePlayerFromTeam(String(playerId)); } catch(_){}
@@ -2759,9 +2814,9 @@ onPlayerChat = (playerId, chatMessage, channelName) => {
  */
 onPlayerClick = (playerId, wasAltClick, x, y, z, block, targetEId) => {
   // Quest NPC interaction — double-click (block-pirate style), crouch+double reroll
-  try { if (targetEId && onQuestInteract(api, playerId, targetEId)) return; } catch(_) {}
+  try { if (targetEId && onQuestInteract(api, playerId, targetEId)) { try { refreshLobbyQuestArrow(playerId); } catch(_){} return; } } catch(_) {}
   // Mobile fallback: tap near NPC without entity aim (block-pirate npcNearPoint, radius 3)
-  try { if (!targetEId && onQuestClickNear(api, playerId, x, y, z)) return; } catch(_) {}
+  try { if (!targetEId && onQuestClickNear(api, playerId, x, y, z)) { try { refreshLobbyQuestArrow(playerId); } catch(_){} return; } } catch(_) {}
   // Nova Blade: every click = crescent projectile, crouch+click = laser
   try {
     let heldName = null;

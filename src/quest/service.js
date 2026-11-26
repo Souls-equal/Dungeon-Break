@@ -301,10 +301,10 @@ function addProgress(api, playerId, type, amount = 1, meta) {
     if (state.progress >= state.target) {
       state.completed = true;
 
-      // Minimal completion hint (flying only, not chat flood)
+      // Minimal completion hint (flying only, not chat flood) — prolonged for visibility (lime)
       try {
         if (typeof api.sendFlyingMiddleMessage === "function") {
-          api.sendFlyingMiddleMessage(playerId, [{ str: "Quest complete! Click NPC", style: { color: "#55FF55" } }], 400, 600);
+          api.sendFlyingMiddleMessage(playerId, [{ str: "Quest complete! Click NPC", style: { color: "#55FF55" } }], 500, 1400);
         }
       } catch(_){}
     }
@@ -684,6 +684,15 @@ export function onQuestClickNear(api, playerId, x, y, z) {
   const dx = x - QUEST_NPC_POS[0], dy = y - QUEST_NPC_POS[1], dz = z - QUEST_NPC_POS[2];
   if (dx*dx+dy*dy+dz*dz > 9) return false;
   return onQuestInteract(api, playerId, npcId);
+}
+
+export function needsQuestArrow(api, playerId) {
+  try {
+    const state = loadQuestState(api, playerId);
+    if (!state) return true; // no quest → go get one
+    if (state.completed && !state.claimed) return true; // finished → go claim
+    return false;
+  } catch(_) { return false; }
 }
 
 export function _resetForTests() {
