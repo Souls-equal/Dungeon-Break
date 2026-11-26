@@ -64,6 +64,7 @@ import { QUEST_NPC_POS } from "./quest/config.js";
 import { onDamaged as onArmorDamaged, onDealingDamage as onArmorDealingDamage, onMobKilled as onArmorMobKilled, tick as tickArmors, forgetPlayer as forgetArmorAbility, getTemporaryDefense as armorTempDefense, refreshArmorDescriptions, getArmorLevel as getArmorLevelForHeat } from "./armor/service.js";
 import { shouldRunTutorial, onTutorialJoin, onTutorialCrateOpened, onTutorialDungeonEntered, tickTutorialHighlight } from "./tutorial/service.js";
 import { refreshPassShop, initPassForPlayer, onPassBought, forgetPass } from "./pass/service.js";
+import { ROOM_EVENTS, tickRoomEvents } from "./dungeon/events.js";
 const OWNER_NAME = "K4miNoK4mi";
 function getOwnerId() {
   if (typeof api.getPlayerId === "function") {
@@ -270,19 +271,34 @@ function service() {
           // A logging failure must never break a build.
         }
       },
-      onRoomDiscovered: (playerId, chunkX, chunkZ, difficulty) => {
+      onRoomDiscovered: (playerId, chunkX, chunkZ, difficulty, roomData) => {
         try { onQuestRoomDiscovered(api, playerId); } catch(e) { reportErrorToOwner(e); }
 
         try {
           const newly = ranks().recordRoom(playerId);
           if (newly && newly.length) handleRankUnlocks(playerId, newly);
         } catch(e) { reportErrorToOwner(e); }
-        // NOTE: plus de particules génériques ici — elles étaient visibles seulement
-        // dans les salles ouvertes (coffre) car cachées par les murs ailleurs, d'où la
-        // confusion “salle à coffre”. La salle porte désormais son identité dans le
-        // bloc coin `[0,0,0]` (getBlockData/setBlockData) : kind/event/templateIndex.
-        // Si un effet est voulu, lire `getRoomData` et n'afficher que pour kind==="chest"
-        // ou eventId précis, plutôt que pour chaque découverte.
+        // Exemple d'event : roomData.eventId === "lavaTrap" vient du coin [0,0,0] de la salle
+        // (posé soit dans templates.js, soit directement sur le chunk template via setBlockData).
+        // On n'affiche des particules QUE pour les salles qui le demandent — plus de particule générique trompeuse.
+        try {
+          if (roomData && roomData.eventId) {
+            const cfg = ROOM_EVENTS[roomData.eventId];
+            if (cfg) {
+              const cx = chunkX * 32 + 16, cz = chunkZ * 32 + 16;
+              let y = 0; try { const p = api.getPosition(playerId); if(p) y = p[1]; } catch(_){}
+              const col = cfg.particleColor || DIFFICULTY_COLOR[difficulty.id] || "#FF4400";
+              // burst d'entrée : anneau au centre, bien visible même avec murs bas
+              if (cfg.eventId === "lavaTrap" || cfg.label.includes("Lava")) {
+                // réutilise un preset existant (magma) pour l'exemple — remplace par ton preset si tu veux
+                spawnParticles(api, [cx, y+0.5, cz], PRESETS.magmaBurn(), { radius: 1.0, height: 1.0 });
+              } else {
+                spawnParticles(api, [cx, y+0.5, cz], PRESETS.roomClear(col), { radius: 1.0, height: 1.0 });
+              }
+              if (cfg.message) api.sendMessage(playerId, [{str: cfg.message, style:{color: cfg.messageColor || "#ff5500"}}]);
+            }
+          }
+        } catch(e) { reportErrorToOwner(e); }
       },
     });
   }
@@ -2392,6 +2408,7 @@ tick = () => {
   try { tickArmors(api); } catch(e) { reportErrorToOwner(e); }
   try { tickArmorShimmer(api); } catch(e) { reportErrorToOwner(e); }
   try { tickLavaDamage(); } catch(e) { reportErrorToOwner(e); }
+  try { tickRoomEvents(api, service()); } catch(e) { reportErrorToOwner(e); }
   try { tickTutorialHighlight(api); } catch(e) { reportErrorToOwner(e); }
   try { onQuestTick(api); } catch(e) { reportErrorToOwner(e); }
   // ranks time tracking

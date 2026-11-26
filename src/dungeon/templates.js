@@ -49,7 +49,11 @@
  * 2. The room's floor is **read** from the template, not configured: the loader
  *    walks up the middle column to find the first solid block.
  *
- * No cell of a room is reserved for this generator: it writes nothing, ever.
+ * No cell of a room is reserved for this generator: it writes nothing, ever,
+ * except the single corner block `[0,0,0]` (air au-dessus du sol) qui porte
+ * l'identité de la salle via `setBlockData` (`kind`/`eventId`) — voir `events.js`
+ * pour un exemple complet (lavaTrap). Un builder peut aussi poser la data directement
+ * sur le chunk template : `api.setBlockData(srcX, srcY, srcZ, {kind:"event", eventId:"lavaTrap"})`.
  *
  * ---------------------------------------------------------------------------
  * PICKING A ROOM
