@@ -98,7 +98,7 @@ function safeSendMessage(playerId, message) {
 
 // Discord header & periodic save - inline str/icon, no helpers (used once)
 let $t = 0;
-function applyDiscordHeader(playerId){ try{ api.setClientOptions(playerId, { ambientLightColourOverride: "#083783", canRecordReplays: true, droppedItemScale: 1.6, headerChips: [ { content: [{ str: "Discord:", style: { color: "#5865F2", fontWeight: "bold" } }], showBackground: true }, { content: [{ str: "discord.gg/5bkQYTDEUs", style: { color: "#CBD5E1" } }], showBackground: true }, { content: [{ icon: "fa-solid fa-brands fa-discord", style: { color: "#7DD3FC" } }, { str: " Join Now! ", style: { color: "#FFD700", fontWeight: "bold" } }], showBackground: false } ], hideCoordinates: false, lightingOverride: true }); }catch(_){} }
+function applyDiscordHeader(playerId){ try{ api.setClientOptions(playerId, { ambientLightColourOverride: "#083783", canRecordReplays: true, droppedItemScale: 1.6, headerChips: [ { content: [{ str: "Discord:", style: { color: "#5865F2", fontWeight: "bold" } }, { str: " discord.gg/5bkQYTDEUs ", style: { color: "#CBD5E1" } }, { icon: "fa-solid fa-brands fa-discord", style: { color: "#7DD3FC" } }, { str: " Join Now!", style: { color: "#FFD700", fontWeight: "bold" } }], showBackground: true } ], hideCoordinates: false, lightingOverride: true }); }catch(_){} }
 let doPeriodicSave = () => { $t++; if($t % 2 == 0){ const msgs = [{ icon: "fa-solid fa-brands fa-discord", style: { color: "#7DD3FC" } }, { str: " Found a bug or a glitch? Tell us on the Discord: ", style: { color: "#FFD700" } }, { str: "discord.gg/5bkQYTDEUs", style: { color: "#7DD3FC", fontWeight: "bold" } }, { str: ".", style: { color: "#FFD700" } }]; try{ api.broadcastMessage(msgs); }catch(_){ try{ const ids = typeof api.getPlayerIds==="function"?api.getPlayerIds():[]; for(const pid of ids) try{ api.sendMessage(pid, msgs); }catch(_){} }catch(_){} } } };
 
 const LOBBY_CONFIG = {
@@ -798,9 +798,9 @@ function isDowned(playerId) { return downedPlayers.has(String(playerId)); }
 function setDownedPose(playerId, downed) {
   try {
     if (downed) {
-      if (typeof api.setPlayerPose === "function") api.setPlayerPose(playerId, "sleeping");
+      if (typeof api.setPlayerPose === "function") api.setPlayerPose(playerId, "sleeping", [0,-0.5,0]);
       // also ensure sleeping pose sticks: try setting again after tick
-      try { scheduleTimeout(()=>{ try{ if(isDowned(playerId)) api.setPlayerPose(playerId, "sleeping"); }catch(_){} }, 1); } catch(_){}
+      try { scheduleTimeout(()=>{ try{ if(isDowned(playerId)) api.setPlayerPose(playerId, "sleeping", [0,-0.5,0]); }catch(_){} }, 1); } catch(_){}
     } else {
       if (typeof api.setPlayerPose === "function") api.setPlayerPose(playerId, "standing");
       try { scheduleTimeout(()=>{ try{ api.setPlayerPose(playerId, "standing"); }catch(_){} }, 1); } catch(_){}
@@ -994,7 +994,7 @@ function tickRevive() {
         if (horiz > 1.0) {
           try { api.setPosition(downedId, [info.pos[0], info.pos[1], info.pos[2]]); } catch(_){}
           try { api.setVelocity(downedId, [0,0,0]); } catch(_){}
-          try { if (typeof api.setPlayerPose==="function") api.setPlayerPose(downedId, "sleeping"); } catch(_){}
+          try { if (typeof api.setPlayerPose==="function") api.setPlayerPose(downedId, "sleeping", [0,-0.5,0]); } catch(_){}
         }
       }
     } catch(_){}
@@ -1016,7 +1016,7 @@ function tickRevive() {
     let revivers = [];
     for (const pid of members) {
       if (String(pid)===String(downedId)) continue;
-      if (isDowned(pid)) continue;
+      if (isDowned(pid) || downedPlayers.has(String(pid))) continue;
       // must be in dungeon (same team, but check position exists)
       let ppos = null;
       try { ppos = api.getPosition(pid); } catch(_){}
