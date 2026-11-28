@@ -3342,8 +3342,9 @@ onRespawnRequest = (playerId) => {
   try { applyBlessingOptions(playerId, baseClientOptions()); } catch(e) { reportErrorToOwner(e); }
   try { applyMusic(playerId); } catch(e) { reportErrorToOwner(e); }
   api.setClientOption(playerId, "middleTextUpper", "");
-  // pas de message gris "permanent stay" à la mort — silencieux
+  // "permanent stay" et "but XP kept" retirés — endRun silencieux, puis message minimal non conditionné par hadSomething
   endRun(playerId, "");
+  try { api.sendMessage(playerId, [cStr("You died", MSG_COLORS.gray)]); } catch(_){}
   // XP: restaure si Bloxd l'a réduit à la mort (sauvegarde périodique via tick)
   try { restoreXpIfNeeded(playerId); } catch(_){}
   try { cleanupReviveForPlayer(String(playerId)); } catch(_){}
