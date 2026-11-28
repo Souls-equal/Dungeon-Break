@@ -1843,6 +1843,43 @@ function auraLevelOf(playerId) {
   }
   return 1;
 }
+function totalAuraOf(playerId) {
+  try {
+    const info = api.getAuraInfo(playerId);
+    if (info && Number.isFinite(info.totalAura)) return info.totalAura;
+    if (info && Number.isFinite(info.aura)) return info.aura;
+  } catch(_){}
+  return null;
+}
+// XP (aura) save — survit à la mort native Bloxd qui retire de l'XP
+const savedAura = new Map(); // pidStr -> totalAura max vu
+function saveXpForPlayer(playerId) {
+  try {
+    const cur = totalAuraOf(playerId);
+    if (cur === null || !Number.isFinite(cur)) return;
+    const k = String(playerId);
+    const prev = savedAura.get(k);
+    if (prev === undefined || cur > prev) savedAura.set(k, cur);
+  } catch(_){}
+}
+function restoreXpIfNeeded(playerId) {
+  const k = String(playerId);
+  const saved = savedAura.get(k);
+  if (saved === undefined) return;
+  try {
+    const cur = totalAuraOf(playerId);
+    if (cur === null || !Number.isFinite(cur)) return;
+    if (saved > cur) {
+      if (typeof api.setTotalAura === "function") api.setTotalAura(playerId, saved);
+      else if (typeof api.setAuraLevel === "function") api.setAuraLevel(playerId, Math.floor(saved / (AURA_PER_LEVEL || 50)));
+      else if (typeof api.applyAuraChange === "function") api.applyAuraChange(playerId, saved - cur);
+      // keep saved as is (max)
+    } else if (cur > saved) {
+      // legitimate gain after restore window — update saved
+      savedAura.set(k, cur);
+    }
+  } catch(_){}
+}
 
 /** The game's clock, in ticks, for the timed blessings. */
 function tickNow() {
@@ -2605,7 +2642,7 @@ onPlayerBoughtShopItem = (playerId, categoryKey, itemKey, itemOrInput, userInput
   try { removePlayerFromTeam(String(playerId)); } catch(_){}
   service().teleportToSpawn(playerId);
   try{ clearAllArrows(playerId); }catch{}
-  endRun(playerId, [cStr("Run over — permanent stay", MSG_COLORS.gray)]);
+  endRun(playerId, ""); // no "permanent stay" message — retired
   stopLobbyCountdown(playerId);
   try { spawnMode.set(String(playerId), true); } catch(e) { reportErrorToOwner(e); }
   try { ensureSurvivalGamemode(playerId); } catch(e) { reportErrorToOwner(e); }
@@ -2661,6 +2698,12 @@ tick = () => {
         } catch(e) { reportErrorToOwner(e); }
       }
     }
+    // XP save every 2s (40 ticks) — survit à la mort native qui réduit l'aura
+    if (rankTickCounter % 40 === 0) {
+      try {
+        for (const pid of ids) { try { saveXpForPlayer(pid); } catch(_){} }
+      } catch(_){}
+    }
   } catch(e) { reportErrorToOwner(e); }
 };
 
@@ -2702,6 +2745,7 @@ onPlayerJoin = (playerId) => {
   try { initPassForPlayer(api, playerId); } catch(e) { reportErrorToOwner(e); }
   try { onQuestPlayerJoin(api, playerId); } catch(e) { reportErrorToOwner(e); }
   try { refreshLobbyQuestArrow(playerId); } catch(e) { reportErrorToOwner(e); }
+  try { saveXpForPlayer(playerId); } catch(e) { reportErrorToOwner(e); }
   // Tutoriel: premier join → clé + flèche rouge crate, remplace welcome
   try {
     if (shouldRunTutorial(api, playerId) && onTutorialJoin(api, playerId)) {
@@ -2788,6 +2832,7 @@ onPlayerLeave = (playerId) => {
     api.setClientOption(playerId, "middleTextUpper", "");
   } catch(e) { reportErrorToOwner(e); }
   shopOpen.delete(playerId);
+  try { savedAura.delete(String(playerId)); } catch(_){}
   try { spawnMode.delete(String(playerId)); } catch(e) { reportErrorToOwner(e); }
   try {
     closeShop(playerId);
@@ -3297,8 +3342,11 @@ onRespawnRequest = (playerId) => {
   try { applyBlessingOptions(playerId, baseClientOptions()); } catch(e) { reportErrorToOwner(e); }
   try { applyMusic(playerId); } catch(e) { reportErrorToOwner(e); }
   api.setClientOption(playerId, "middleTextUpper", "");
-  endRun(playerId, [cStr("You died — run lost, permanent stay", MSG_COLORS.gray)]);
-  // XP gardé en mourrant: on ne reset plus l'aura, on garde le niveau
+  // "permanent stay" et "but XP kept" retirés — endRun silencieux, puis message minimal non conditionné par hadSomething
+  endRun(playerId, "");
+  try { api.sendMessage(playerId, [cStr("You died", MSG_COLORS.gray)]); } catch(_){}
+  // XP: restaure si Bloxd l'a réduit à la mort (sauvegarde périodique via tick)
+  try { restoreXpIfNeeded(playerId); } catch(_){}
   try { cleanupReviveForPlayer(String(playerId)); } catch(_){}
   try { removePlayerFromTeam(String(playerId)); } catch(_){}
   blessings().forget(accountKeyOf(playerId));
@@ -3315,7 +3363,8 @@ onRespawnRequest = (playerId) => {
   } catch(_) { showPoints(playerId, 0); }
   refreshBlessingTiles(playerId);
   closeShop(playerId);
-  api.sendMessage(playerId, [cStr("You died — but XP kept", MSG_COLORS.green)])
+  // sauvegarde l'XP restaurée pour le prochain cycle
+  try { saveXpForPlayer(playerId); } catch(_){}
   return LOBBY_POSITION;
 };
 
